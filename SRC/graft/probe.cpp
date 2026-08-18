@@ -1,3 +1,7 @@
+// Copyright (C) 2025-2026 6wingSerap
+// SPDX-License-Identifier: GPL-3.0-or-later WITH LicenseRef-GRAFT-plugin-exception-1.0
+// Этот файл линкуется в КАЖДЫЙ плагин, поэтому едет с исключением: мод на GRAFT ничего
+// не обязан — даже закрытый и платный. См. LICENSE-EXCEPTION.
 #include <windows.h>
 
 #include "graft/script.hpp"

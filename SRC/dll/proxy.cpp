@@ -1,3 +1,5 @@
+// Copyright (C) 2025-2026 6wingSerap
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Точка входа graft-модуля: DLL под именем dwmapi.dll рядом с DayZDiag_x64.exe /
 // DayZServer_x64.exe. Движок импортирует dwmapi статически, поэтому наш код грузится
 // вместе с exe — до main() и до регистрации нативов.

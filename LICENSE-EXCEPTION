@@ -1,0 +1,103 @@
+                    GRAFT plugin exception, version 1.0
+
+This is an additional permission granted under section 7 of the GNU General
+Public License, version 3 or later ("the GPL"), by the copyright holders of
+GRAFT. It is granted for the whole of GRAFT, and it accompanies every copy of
+GRAFT that carries this file.
+
+Plain intent, in one sentence: writing a mod on top of GRAFT puts you under no
+obligation whatsoever — keep your sources closed, charge money, do as you like —
+while changing GRAFT itself, or building something that takes its place, keeps
+the full force of the GPL.
+
+The operative text follows; where the two disagree, the operative text governs.
+
+
+0. DEFINITIONS
+
+   "The Library" means the software conveyed under the GPL together with this
+   file.
+
+   "The Interface" means the header files of the Library, the source files of
+   the Library that its own build links into a Plugin, the plugin ABI declared
+   in them, and the documented plugin entry point. These, and only these, are
+   the files that carry this exception (see section 5).
+
+   "The Host" means the part of the Library that is loaded into the game
+   process, locates the game's registration points, installs hooks, and loads
+   plugins.
+
+   "A Plugin" means a work that uses the Interface in order to be loaded by the
+   Host and to register its own functions, classes and methods through it, and
+   that is neither
+
+     (a) derived from any source file of the Library other than the files
+         that carry this exception (see section 5), nor
+
+     (b) a work that provides, in whole or in substantial part, the function of
+         the Host, or that is intended to be used in place of the Host.
+
+   "Generated Declarations" means text emitted by the Library's tools that
+   declares the entry points of a Plugin for consumption by the game's script
+   compiler.
+
+   Using the Interface includes including its header files, instantiating or
+   inlining anything they define, and linking, statically or dynamically, with
+   the Library.
+
+
+1. GRANT
+
+   You may use the Interface in a Plugin and convey that Plugin, in source form
+   or in object form, under terms of your choice — including terms that keep its
+   source code private and terms that charge a fee — without the Plugin becoming
+   subject to the GPL, and without any requirement of the GPL arising from that
+   use. This holds even though code defined in the Interface is inlined or
+   linked into, and conveyed as part of, the object form of the Plugin.
+
+   Generated Declarations are not covered by the GPL. You may convey them under
+   terms of your choice.
+
+
+2. WHAT IS NOT GRANTED
+
+   This permission says nothing about the Library itself. Conveying the Library,
+   modified or unmodified, and conveying any work covered by clause (a) or (b) of
+   the definition of a Plugin, remain governed by the GPL in full — including its
+   requirement to convey the corresponding source of the whole work.
+
+   In particular, this permission is not a way to close the Host: a work that
+   replaces or reimplements the Host is not a Plugin, whatever it is named and
+   however it is packaged.
+
+
+3. MODIFIED VERSIONS
+
+   If you modify the Library and convey your modified version, you may extend
+   this exception to it — you are encouraged to, so that plugin authors keep
+   their freedom — but you are not obliged to. If you choose not to, remove this
+   file and the notices that reference it from your version. Removing them does
+   not relieve you of any obligation of the GPL.
+
+   The permission in section 1 is granted by the copyright holders of the
+   Library for the Library. It does not extend, by itself, to a modified version
+   conveyed by someone else.
+
+
+4. SEVERABILITY AND SCOPE
+
+   Nothing here limits, waives, or adds a condition to any permission the GPL
+   already grants. If any part of this exception is held unenforceable, the
+   remainder stands, and the GPL applies without the unenforceable part.
+
+
+5. HOW TO APPLY
+
+   Source files of the Library covered by this exception carry, near the top:
+
+       SPDX-License-Identifier: GPL-3.0-or-later WITH LicenseRef-GRAFT-plugin-exception-1.0
+
+   Every other file of the Library — the Host, the tools, the tests — carries
+   the plain identifier, without the exception:
+
+       SPDX-License-Identifier: GPL-3.0-or-later
