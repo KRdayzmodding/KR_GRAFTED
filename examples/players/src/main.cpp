@@ -40,6 +40,7 @@ struct player_row {
 // меньше: у unordered_map тот же трюк требует своих хешера и компаратора.
 map<string, player_row, less<>> g_players;
 float g_since_scan = 0;
+float g_uptime = 0;   // сколько игрового времени C++ уже отработал своим тиком
 
 // Корень объектного графа. Пусто до первого кадра — это не ошибка, а «ещё рано».
 graft::dayz::CGame game() {
@@ -75,6 +76,7 @@ void scan_players() {
 // Точка входа: своего потока у библиотеки нет и быть не должно — всё обязано идти по
 // скриптовому. Библиотека будит нас раз в кадр сама, dt — движковый timeslice.
 GRAFT_ON_TICK(dt) {
+    g_uptime += dt;
     g_since_scan += dt;
     if (g_since_scan < 5.0f) {
         return;
@@ -84,6 +86,11 @@ GRAFT_ON_TICK(dt) {
 }
 
 // ── Что мод может спросить у нас ─────────────────────────────────────────────
+
+// Тик виден снаружи даже на пустом сервере: секунды копит С++, а не скрипт.
+float ExampleUptime() {
+    return g_uptime;
+}
 
 int ExamplePlayersKnown() {
     return static_cast<int>(g_players.size());
@@ -110,7 +117,8 @@ int ExampleDebugMonitor() {
 }
 
 GRAFT_BINDINGS("1_Core") {
-    bind.global<&ExamplePlayersKnown>("ExamplePlayersKnown")
+    bind.global<&ExampleUptime>("ExampleUptime")
+        .global<&ExamplePlayersKnown>("ExamplePlayersKnown")
         .global<&ExamplePlayerReport>("ExamplePlayerReport")
         .global<&ExampleDebugMonitor>("ExampleDebugMonitor");
 }

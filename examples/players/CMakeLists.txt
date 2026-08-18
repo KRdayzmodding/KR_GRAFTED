@@ -41,9 +41,14 @@ if(NOT EXISTS "${GRAFT_API_DIR}/graft/dayz/3_Game.hpp")
         "и передай путь: -DGRAFT_API_DIR=<куда>")
 endif()
 
+# SCRIPTS_DIR: объявления печатаются ПРЯМО В МОД, а не рядом с DLL. Так пример
+# читается целиком — открыл mod/ и видишь весь скриптовый код, включая тот, что
+# написан не рукой. В своём проекте так делать не обязательно: по умолчанию они
+# ложатся рядом с DLL, а в мод их забирает deploy.ps1 (см. examples/hello).
 graft_plugin(example_players
     NAME    EXAMPLE_PLAYERS
     VERSION 1
     SOURCES src/main.cpp src/plugin.cpp
-    MODULES 1_Core)
+    MODULES 1_Core
+    SCRIPTS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/mod/EXAMPLE_PLAYERS/scripts")
 target_include_directories(example_players PRIVATE "${GRAFT_API_DIR}")

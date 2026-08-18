@@ -22,8 +22,13 @@ endif()
 include("${GRAFT_BOOT_FILE}")
 graft_import(graft https://github.com/KRdayzmodding/KR_GRAFTED TAG main)
 
+# SCRIPTS_DIR: объявления печатаются ПРЯМО В МОД, а не рядом с DLL. Так пример
+# читается целиком — открыл mod/ и видишь весь скриптовый код, включая тот, что
+# написан не рукой. В своём проекте так делать не обязательно: по умолчанию они
+# ложатся рядом с DLL, а в мод их забирает deploy.ps1 (см. examples/hello).
 graft_plugin(example_graft
     NAME    EXAMPLE_GRAFT
     VERSION 1
     SOURCES src/natives.cpp src/plugin.cpp
-    MODULES 1_Core)
+    MODULES 1_Core
+    SCRIPTS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/mod/EXAMPLE_GRAFT/scripts")

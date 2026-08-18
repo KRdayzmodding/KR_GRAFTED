@@ -183,7 +183,10 @@ int cmd_apigen(int argc, char** argv) {
         const std::string text = graft::enf::mirror(all, module, previous);
         std::ofstream(out_dir / file, std::ios::binary) << text;
         std::println("{:<12} -> {}", module, (out_dir / file).string());
-        previous = "graft/dayz/" + file;
+        // Сосед по каталогу — простым именем: зеркало кладут куда угодно, и подставлять
+        // ему свой путь нельзя. Полный путь тут ещё и заставлял clang-cl ругаться
+        // (-Wmicrosoft-include): такой include находится только по правилам MSVC.
+        previous = file;
     }
 
     // Разница между «разобрано» и «выпущено» — не потеря, а перечень осознанных отказов.

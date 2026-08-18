@@ -8,15 +8,54 @@
 Или разверни шаблон командой `graft new MYMOD E:\source` — она копирует
 [hello](../hello/), в котором есть ещё пресеты, `.gitignore` и `deploy.ps1`.
 
+```
+CMakeLists.txt                                    graft_import + graft_plugin
+CMakePresets.json                                 release и debug, артефакты в out/<пресет>
+src/plugin.cpp                                    паспорт плагина: GRAFT_PLUGIN("EXAMPLE_GRAFT", 1)
+src/natives.cpp                                   нативы на все типы + привязка
+mod/EXAMPLE_GRAFT/$PBOPREFIX$                     EXAMPLE_GRAFT
+mod/EXAMPLE_GRAFT/config.cpp                      CfgPatches/CfgMods: 1_Core и 5_Mission
+mod/EXAMPLE_GRAFT/scripts/1_Core/example_class.c  class ExampleGraft {} — хозяин нативных методов
+mod/EXAMPLE_GRAFT/scripts/1_Core/grafted_natives_EXAMPLE_GRAFT.c
+                                                  ^ объявления нативов, печатает сборка
+mod/EXAMPLE_GRAFT/scripts/5_Mission/example_demo.c   вызовы и Print в лог
+deploy.ps1                                        собрать -> PBO -> разложить по игре
+.gitignore                                        build/ out/ dist/
+```
+
+Сгенерированный файл лежит прямо в моде и в репозитории (`SCRIPTS_DIR` в
+[CMakeLists.txt](CMakeLists.txt)): пример должен показывать мод целиком. Вот он весь —
+ровно то, что напечатала сборка, читая собранную DLL:
+
+```c
+proto native int ExampleAdd(int p0, int p1);
+proto native owned string ExampleGreet(string p0);
+proto native int ExampleSum(array<int> p0);
+proto native int ExampleCountAbove(array<int> p0, int p1);
+proto native int ExampleFillSquares(out array<int> p0, int p1);
+proto native vector ExampleScale(vector p0, float p1);
+
+modded class ExampleGraft
+{
+    proto native int Version();
+}
+```
+
+Обрати внимание на `modded`: методы **добавляются** к типу, а объявить сам тип — твоё
+дело, это [scripts/1_Core/example_class.c](mod/EXAMPLE_GRAFT/scripts/1_Core/example_class.c)
+на две строки. У шаблонного класса иначе — см. [hashmap](../hashmap/), там генератор
+печатает класс целиком.
+
 ## Из чего состоит
 
 | Файл | Правишь? |
 |---|---|
 | [src/natives.cpp](src/natives.cpp) | **да** — сюда пишешь свои нативы |
 | [src/plugin.cpp](src/plugin.cpp) | **да** — имя и версия плагина, одна строчка |
-| [mod/EXAMPLE_GRAFT/](mod/EXAMPLE_GRAFT/) | **да** — config.cpp, класс-хозяин, тесты |
-| `build/EXAMPLE_GRAFT.scripts/<модуль>/grafted_natives_<ПЛАГИН>.c` | нет, печатает сборка |
+| [mod/EXAMPLE_GRAFT/](mod/EXAMPLE_GRAFT/) | **да** — config.cpp, класс-хозяин, демонстрация в 5_Mission |
+| `out/<пресет>/EXAMPLE_GRAFT.scripts/<модуль>/grafted_natives_<ПЛАГИН>.c` | нет, печатает сборка |
 | [CMakeLists.txt](CMakeLists.txt) | ничего: `graft_import` тянет библиотеку сам |
+| [CMakePresets.json](CMakePresets.json), [deploy.ps1](deploy.ps1) | по вкусу: сборка и раскладка по игре |
 | [../README.md](../README.md) | что ещё есть в примерах |
 
 ## Хост и плагины
@@ -132,12 +171,29 @@ node.field<int, "m_id">();              // а не node.field<int>("m_id")
 контекстов, хеш в движке, `VirtualQuery`); форма с именем в типе — один раз за процесс.
 Строковые формы оставлены для случая, когда имя действительно приезжает в рантайме.
 
-## Сборка
+## Сборка и запуск
 
 ```bat
-cmake -B build -G Ninja
-cmake --build build          :: DLL и <ИМЯ>.scripts в build/
+graft install "C:\DayZServer"       :: один раз на игру: хост рядом с exe
+cmake --preset release
+cmake --build --preset release      :: DLL и EXAMPLE_GRAFT.scripts в out/release/
+powershell -File deploy.ps1 -Game "C:\DayZServer"    :: объявления -> мод -> PBO -> игра
 ```
+
+Запуск с `-mod=@EXAMPLE_GRAFT;` — и в script-логе профиля появляется вся демонстрация:
+
+```
+[EXAMPLE_GRAFT] Add(2, 40) = 42
+[EXAMPLE_GRAFT] Greet("dayz") = hello, dayz
+[EXAMPLE_GRAFT] Version() = 1
+[EXAMPLE_GRAFT] Sum([1,2,39]) = 42
+[EXAMPLE_GRAFT] CountAbove([4,8,15], 5) = 2
+[EXAMPLE_GRAFT] FillSquares(4) -> 0,1,4,9
+[EXAMPLE_GRAFT] Scale(<1,2,3>, 2.5) = <2.500000, 5.000000, 7.500000>
+```
+
+Без пресета тоже можно, но тип сборки задай явно: пустой `CMAKE_BUILD_TYPE` даёт
+отладочную сборку. `cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release`.
 
 Весь CMake проекта — это:
 
@@ -155,30 +211,30 @@ graft_plugin(example_graft
 
 ## Мод
 
-`mod/EXAMPLE_GRAFT/` — шаблон. Рабочий каталог мода должен лежать под `P:\`
-**реальной папкой** (dzrun пропускает симлинки), имя папки = stem PBO:
+Своей рукой в моде написаны ровно два файла:
 
-```
-xcopy /E /I mod\EXAMPLE_GRAFT P:\EXAMPLE_GRAFT
-cmake -B build -G Ninja
-```
+| Файл | Что в нём |
+|---|---|
+| [scripts/1_Core/example_class.c](mod/EXAMPLE_GRAFT/scripts/1_Core/example_class.c) | `class ExampleGraft {}` — пустой хозяин для нативных методов |
+| [scripts/5_Mission/example_demo.c](mod/EXAMPLE_GRAFT/scripts/5_Mission/example_demo.c) | `modded class MissionBase.OnInit` — зовёт каждый натив и печатает ответ |
+
+Третий файл, `scripts/1_Core/grafted_natives_EXAMPLE_GRAFT.c`, печатает сборка. В PBO он
+лежать обязан, в репозитории ему делать нечего — за это отвечает строка
+`mod/*/scripts/*/grafted_natives_*.c` в [.gitignore](.gitignore).
 
 Генератор раскладывает объявления по модулям сам: натив с игровым типом в сигнатуре
 (`Object`, `EntityAI`) описывается в отдельном блоке `GRAFT_BINDINGS("3_Game")` и
-попадает в `build/EXAMPLE_GRAFT.scripts/3_Game/...` — в 1_Core таких типов ещё нет.
+попадает в `EXAMPLE_GRAFT.scripts/3_Game/...` — в 1_Core таких типов ещё нет.
 
-Проверка связи: сьюта `example::graft` через dayz-mcp `run_suites(["example::graft"])` —
-мод и сьюту предварительно завести в `dayz-mcp.config.json`. Что нашлось и что
-зарегистрировалось — в `<каталог игры>/graft.log`, а `graft doctor <каталог игры>`
-скажет то же самое человеческим языком.
+Не завелось — `graft doctor <каталог игры>` и `graft.log` рядом с exe: там видно, что
+нашлось и что зарегистрировалось.
 
 ## Дальше
 
-Пример побольше — шаблонный скриптовый класс, у которого всё хранилище живёт в C++
-(`CppHashMap<K,V>` поверх `std::unordered_map`), — лежит в самом репозитории:
-[../../tests/plugins/hashmap.cpp](../../tests/plugins/hashmap.cpp). Он там, а не здесь,
-потому что его гоняет сьюта `seraph::graft`, а в примерах свой сервер не поднимается.
-См. [../README.md](../README.md).
+| Пример | Что добавляет |
+|---|---|
+| [../hashmap/](../hashmap/) | шаблонный скриптовый класс: `CppHashMap<K,V>` поверх `std::unordered_map`, состояние объекта целиком в C++ |
+| [../players/](../players/) | обратное направление: тик, зеркало движкового API, чтение полей движковых объектов |
 
 ## Тесты без игры
 
@@ -193,6 +249,10 @@ target_link_libraries(example_tests PRIVATE graft::client GTest::gtest_main)
 Блоки `GRAFT_BINDINGS` в таком экзешнике просто наполняют реестр и никуда не ходят —
 движок нужен только тем нативам, которые сами зовут его (`graft::ref`, `world.hpp`).
 Их и оставляют на сьюту в игре.
+
+Как выглядит сьюта uTest поверх graft-нативов — [../../tests/mod/SIXW_GRAFT/scripts/3_Game/seraph_graft_test.c](../../tests/mod/SIXW_GRAFT/scripts/3_Game/seraph_graft_test.c).
+В примере её нет намеренно: фреймворку тестов нужен свой мод в зависимостях, а примеру
+хватает `Print` в лог.
 
 ## Что важно знать
 

@@ -1,6 +1,5 @@
-// PBO-часть примера: объявляет класс-хозяин нативных методов, подхватывает
-// сгенерённые `proto native` и (опционально) сьюту uTest.
-// KR_CORE нужен только тестам — если сьюта не нужна, убери его и scripts/3_Game.
+// PBO-часть примера. Зависимость только от ванильных данных: ни CF, ни фреймворка
+// тестов примеру не нужно.
 class CfgPatches
 {
     class EXAMPLE_GRAFT
@@ -9,7 +8,7 @@ class CfgPatches
         weapons[] = {};
         ammo[] = {};
         requiredVersion = 0.1;
-        requiredAddons[] = {"DZ_Data", "JM_CF_Scripts", "KR_CORE"};
+        requiredAddons[] = {"DZ_Data"};
     };
 };
 
@@ -22,15 +21,17 @@ class CfgMods
 
         class defs
         {
+            // 1_Core — класс-хозяин (example_class.c) и объявления от генератора.
             class engineScriptModule
             {
                 value = "";
                 files[] = {"EXAMPLE_GRAFT/scripts/1_Core"};
             };
-            class gameScriptModule
+            // 5_Mission — демонстрация: отсюда нативы зовут.
+            class missionScriptModule
             {
                 value = "";
-                files[] = {"EXAMPLE_GRAFT/scripts/3_Game"};
+                files[] = {"EXAMPLE_GRAFT/scripts/5_Mission"};
             };
         };
     };
