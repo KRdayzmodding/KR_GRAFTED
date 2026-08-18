@@ -154,9 +154,11 @@ std::vector<std::wstring> candidates(const std::wstring& game_dir) {
         const std::wstring base = absolute(mod) ? widen(mod) : game_dir + L"\\" + widen(mod);
         list_dlls(base + L"\\graft", out);
     }
-    // Общая папка рядом с exe — для разработки и для установок, где всё лежит в одном
-    // моде (PBO собраны в @CLIENT/addons, отдельных папок под мод нет).
-    list_dlls(game_dir + L"\\graft", out);
+    // Общая папка рядом с exe: <игра>/#GRAFTED/*.dll. Одно хранилище на установку —
+    // для разработки и для сервера, где всё лежит в одном моде (PBO собраны в
+    // @CLIENT/addons, отдельных папок под мод нет). Имя с решётки, чтобы папка не
+    // терялась среди @модов и не путалась с ними: это не мод.
+    list_dlls(game_dir + L"\\#GRAFTED", out);
     return out;
 }
 

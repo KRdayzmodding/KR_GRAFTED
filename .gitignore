@@ -6,3 +6,4 @@ re/bin/
 re/out/
 .vscode
 .claude
+examples/players/src/graft/

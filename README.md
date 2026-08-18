@@ -17,8 +17,11 @@ GRAFT_ON_TICK(dt) { /* ... */ }
 ```
 
 ```
-@MYMOD/graft/MYMOD.grafted.dll                   плагин
+@MYMOD/graft/MYMOD.grafted.dll                   плагин — едет вместе со своим модом
 @MYMOD/scripts/1_Core/grafted_natives_MYMOD.c    объявления, генерятся сборкой
+
+<игра>/dwmapi.dll                                хост, один на установку
+<игра>/#GRAFTED/*.grafted.dll                    общее хранилище плагинов
 ```
 
 `graft` — механизм (namespace, макросы, каталоги, `graft.exe`).

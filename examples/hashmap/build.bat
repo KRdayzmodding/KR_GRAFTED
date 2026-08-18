@@ -14,6 +14,6 @@ cmake --build build || exit /b 1
 
 if /I "%~1"=="deploy" (
     if not exist "%GAME_DIR%\#GRAFTED" mkdir "%GAME_DIR%\#GRAFTED"
-    copy /Y "build\EXAMPLE_GRAFT.grafted.dll" "%GAME_DIR%\#GRAFTED\" || exit /b 1
-    echo Deployed EXAMPLE_GRAFT.grafted.dll to %GAME_DIR%\#GRAFTED
+    copy /Y "build\EXAMPLE_HASHMAP.grafted.dll" "%GAME_DIR%\#GRAFTED\" || exit /b 1
+    echo Deployed EXAMPLE_HASHMAP.grafted.dll to %GAME_DIR%\#GRAFTED
 )

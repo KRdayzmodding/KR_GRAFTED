@@ -266,13 +266,16 @@ int cmd_install(int argc, char** argv) {
         }
     }
     std::error_code ec;
-    fs::create_directories(game / "graft", ec);
+    fs::create_directories(game / "#GRAFTED", ec);
     fs::copy_file(source, target, fs::copy_options::overwrite_existing, ec);
     if (ec) {
         return fail("не скопировать: " + ec.message() + " (игра запущена?)");
     }
     std::println("graft: хост установлен -> {}", target.string());
-    std::println("graft: плагины клади в {}", (game / "graft").string());
+    // Два места, и оба настоящие: общая папка удобна на разработке, папка мода едет
+    // вместе с модом. Печатаем оба, чтобы выбор был осознанным, а не единственным.
+    std::println("graft: плагины клади в {} или в <мод>\\graft рядом с игрой",
+                 (game / "#GRAFTED").string());
     return 0;
 }
 
@@ -281,7 +284,7 @@ int cmd_install(int argc, char** argv) {
 std::vector<fs::path> plugin_files(const fs::path& game) {
     std::vector<fs::path> out;
     std::error_code ec;
-    for (const fs::path& dir : {game / "graft"}) {
+    for (const fs::path& dir : {game / "#GRAFTED"}) {
         if (!fs::is_directory(dir, ec)) {
             continue;
         }
@@ -291,9 +294,11 @@ std::vector<fs::path> plugin_files(const fs::path& game) {
             }
         }
     }
-    // Папки модов рядом с игрой: <мод>/graft/*.dll.
+    // Папки модов рядом с игрой: <мод>/graft/*.dll. Мод узнаётся по наличию graft/, а
+    // не по префиксу @: хост идёт по -mod= и о префиксах не знает, а имя папки выбирает
+    // её автор. Префикс знал только этот обход — и ровно поэтому врал.
     for (const auto& item : fs::directory_iterator(game, ec)) {
-        if (!item.is_directory() || item.path().filename().string().rfind("@", 0) != 0) {
+        if (!item.is_directory()) {
             continue;
         }
         const fs::path dir = item.path() / "graft";

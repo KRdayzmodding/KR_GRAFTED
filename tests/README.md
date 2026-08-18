@@ -51,11 +51,15 @@ coverage.bat show     :: html с построчной раскраской
 | Плагин | Исходник | Роль |
 |---|---|---|
 | `SIXW_GRAFT` | [plugins/natives.cpp](plugins/natives.cpp) | матрица покрытия ABI: по нативу на каждый поддерживаемый тип |
-| `SIXW_HASHMAP` | [plugins/cpp_hashmap.cpp](plugins/cpp_hashmap.cpp) | шаблонный скриптовый класс `CppHashMap<K,V>` поверх `std::unordered_map` |
+| `EXAMPLE_HASHMAP` | [../examples/hashmap/src/cpp_hashmap.cpp](../examples/hashmap/src/cpp_hashmap.cpp) | шаблонный скриптовый класс `CppHashMap<K,V>` поверх `std::unordered_map` |
 
 Плагина именно **два**, и это не деление по смыслу: сьюта гоняет оба в одном процессе,
 поэтому «два плагина уживаются» проверяется обычным прогоном, а не отдельным ритуалом,
 который забудут запустить. Сломается сосуществование — покраснеет половина кейсов.
+
+Второй живёт в [../examples/hashmap/](../examples/hashmap/) и оттуда же собирается корневым
+`CMakeLists.txt`: он и пример, и фикстура, копии исходника нет. Пример без тестов быстро
+расходится с кодом — этот не может.
 
 Часть нативов намеренно написана обычным C++ (`int`, `std::string_view`, `std::string`,
 `std::vector`, `std::array<float,3>`, неконстантная ссылка вместо `out`), часть — в

@@ -158,11 +158,14 @@ if(TARGET graft_api)
     target_include_directories(sixw_graft PRIVATE "${GRAFT_API_DIR}")
 endif()
 
-graft_plugin(sixw_hashmap
-    NAME     SIXW_HASHMAP
+# Второй плагин — это пример examples/hashmap, собранный здесь же. Копии исходника нет:
+# расходиться нечему. Он существует ради проверки, а не ради удобства — сьюта гоняет два
+# плагина в одном процессе, поэтому «два плагина уживаются» краснеет обычным прогоном.
+graft_plugin(example_hashmap
+    NAME     EXAMPLE_HASHMAP
     VERSION  1
-    SOURCES  "${CMAKE_CURRENT_SOURCE_DIR}/tests/plugins/cpp_hashmap.cpp"
-             "${CMAKE_CURRENT_SOURCE_DIR}/tests/plugins/hashmap_plugin.cpp"
+    SOURCES  "${CMAKE_CURRENT_SOURCE_DIR}/examples/hashmap/src/cpp_hashmap.cpp"
+             "${CMAKE_CURRENT_SOURCE_DIR}/examples/hashmap/src/plugin.cpp"
     MOD_SCRIPTS "${GRAFT_MOD_SCRIPTS}")
 
 # Объявления класса Graft (лицо менеджера) — из реестра самого хоста.

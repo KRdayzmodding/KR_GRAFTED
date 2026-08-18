@@ -11,6 +11,6 @@ if /I "%~1"=="deploy" (
     REM Plugins too: host and plugin agree on GRAFT_ABI_VERSION, so a stale plugin is
     REM rejected wholesale and every native silently returns zero. Copying only the host
     REM once cost a full red suite -- never again.
-    copy /Y "build\clang-release\*.grafted.dll" "F:\SteamLibrary\steamapps\common\DayZ\graft\" || exit /b 1
+    copy /Y "build\clang-release\*.grafted.dll" "F:\SteamLibrary\steamapps\common\DayZ\#GRAFTED\" || exit /b 1
     echo Deployed dwmapi.dll and plugins to game dir.
 )
