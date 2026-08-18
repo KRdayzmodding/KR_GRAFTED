@@ -1,10 +1,10 @@
 # База компиляции — та, что пишет CMake (CMAKE_EXPORT_COMPILE_COMMANDS). Отсюда clangd
 # берёт и флаги, и include-пути: дублировать их руками не нужно и вредно — разъедутся.
 CompileFlags:
-  CompilationDatabase: "build/clang-release"
+  CompilationDatabase: "build/release"
   Remove:
     # CMAKE_CXX_STANDARD даёт C++23, а наши цели поднимаются до C++26 отдельным флагом
-    # (см. seraph_std в CMakeLists). Обе строки едут в одну команду, и убрать надо
+    # (см. graft_std в CMakeLists). Обе строки едут в одну команду, и убрать надо
     # именно эту: иначе языковой сервер разбирает проект НЕ ТЕМ стандартом, которым он
     # собирается, и показывает ошибки там, где их нет.
     - "-clang:-std=*"

@@ -268,7 +268,7 @@ int cmd_install(int argc, char** argv) {
         }
     }
     std::error_code ec;
-    fs::create_directories(game / "#GRAFTED", ec);
+    fs::create_directories(game / "grafted", ec);
     fs::copy_file(source, target, fs::copy_options::overwrite_existing, ec);
     if (ec) {
         return fail("не скопировать: " + ec.message() + " (игра запущена?)");
@@ -276,8 +276,8 @@ int cmd_install(int argc, char** argv) {
     std::println("graft: хост установлен -> {}", target.string());
     // Два места, и оба настоящие: общая папка удобна на разработке, папка мода едет
     // вместе с модом. Печатаем оба, чтобы выбор был осознанным, а не единственным.
-    std::println("graft: плагины клади в {} или в <мод>\\graft рядом с игрой",
-                 (game / "#GRAFTED").string());
+    std::println("graft: плагины клади в {} или в @МОД\\grafted рядом с игрой",
+                 (game / "grafted").string());
     return 0;
 }
 
@@ -286,7 +286,7 @@ int cmd_install(int argc, char** argv) {
 std::vector<fs::path> plugin_files(const fs::path& game) {
     std::vector<fs::path> out;
     std::error_code ec;
-    for (const fs::path& dir : {game / "#GRAFTED"}) {
+    for (const fs::path& dir : {game / "grafted"}) {
         if (!fs::is_directory(dir, ec)) {
             continue;
         }
@@ -296,14 +296,14 @@ std::vector<fs::path> plugin_files(const fs::path& game) {
             }
         }
     }
-    // Папки модов рядом с игрой: <мод>/graft/*.dll. Мод узнаётся по наличию graft/, а
-    // не по префиксу @: хост идёт по -mod= и о префиксах не знает, а имя папки выбирает
+    // Папки модов рядом с игрой: @МОД/grafted/*.dll. Мод узнаётся по наличию grafted/,
+    // а не по префиксу @: хост идёт по -mod= и о префиксах не знает, а имя папки выбирает
     // её автор. Префикс знал только этот обход — и ровно поэтому врал.
     for (const auto& item : fs::directory_iterator(game, ec)) {
         if (!item.is_directory()) {
             continue;
         }
-        const fs::path dir = item.path() / "graft";
+        const fs::path dir = item.path() / "grafted";
         if (!fs::is_directory(dir, ec)) {
             continue;
         }
@@ -315,6 +315,44 @@ std::vector<fs::path> plugin_files(const fs::path& game) {
     }
     std::sort(out.begin(), out.end());
     return out;
+}
+
+// Обратная сторона install: игра возвращается в исходное состояние. Снимаем ровно то,
+// что клали сами, — хост и пустую общую папку. Плагины в модах не наши: мод ставил
+// пользователь, и удалять чужой каталог за компанию нельзя. Их просто перечисляем.
+int cmd_uninstall(int argc, char** argv) {
+    if (argc < 3) {
+        return fail("uninstall <каталог игры>");
+    }
+    const fs::path game = argv[2];
+    if (!fs::is_directory(game)) {
+        return fail("нет каталога " + game.string());
+    }
+    const fs::path host = game / "dwmapi.dll";
+    std::error_code ec;
+    if (!fs::exists(host)) {
+        std::println("graft: хоста нет — снимать нечего");
+    } else if (!is_our_host(host)) {
+        return fail("в " + game.string() + " лежит ЧУЖАЯ dwmapi.dll — не трогаю");
+    } else if (!fs::remove(host, ec)) {
+        return fail("не снять хост: " + ec.message() + " (игра запущена?)");
+    } else {
+        std::println("graft: хост снят -> {}", host.string());
+    }
+    // remove() удаляет каталог, только если он пуст: чужие плагины в общей папке
+    // переживут снятие хоста, и это правильно — их туда клали не мы.
+    if (fs::remove(game / "grafted", ec)) {
+        std::println("graft: пустая {} убрана", (game / "grafted").string());
+    }
+    const auto left = plugin_files(game);
+    if (!left.empty()) {
+        std::println("graft: плагины остались лежать в модах — без хоста они мертвы,");
+        std::println("       удаляй вместе с самим модом:");
+        for (const fs::path& path : left) {
+            std::println("       {}", path.string());
+        }
+    }
+    return 0;
 }
 
 int cmd_list(int argc, char** argv) {
@@ -421,20 +459,37 @@ int cmd_doctor(int argc, char** argv) {
     return 0;
 }
 
+// Шаблон — пример hello: самый маленький рабочий мод. Ищем его вверх от exe: инструмент
+// живёт в build/<пресет>/bin, а исходники — в корне репозитория, и глубина вложенности
+// зависит от пресета. Не нашли — путь передаётся третьим аргументом.
+fs::path find_template() {
+    wchar_t self[MAX_PATH];
+    GetModuleFileNameW(nullptr, self, MAX_PATH);
+    fs::path dir = fs::path{self}.parent_path();
+    for (int up = 0; up < 6 && !dir.empty(); ++up) {
+        // Ищем именно КОРЕНЬ исходников, а не первый попавшийся examples/hello: рядом с
+        // exe лежит каталог сборки примера с тем же именем, и он не шаблон.
+        if (fs::is_regular_file(dir / "cmake" / "graft_plugin.cmake")) {
+            return dir / "examples" / "hello";
+        }
+        dir = dir.parent_path();
+    }
+    return {};
+}
+
 int cmd_new(int argc, char** argv) {
     if (argc < 4) {
         return fail("new <имя> <куда> [шаблон]");
     }
     const std::string name = argv[2];
     const fs::path dest = fs::path{argv[3]} / name;
-    fs::path templ = argc > 4 ? fs::path{argv[4]} : fs::path{};
-    if (templ.empty()) {
-        wchar_t self[MAX_PATH];
-        GetModuleFileNameW(nullptr, self, MAX_PATH);
-        templ = fs::path{self}.parent_path().parent_path().parent_path() / "example";
+    const fs::path templ = argc > 4 ? fs::path{argv[4]} : find_template();
+    if (templ.empty() || !fs::is_directory(templ)) {
+        return fail("не найден шаблон (передай путь третьим аргументом: graft new "
+                    "<имя> <куда> <шаблон>)");
     }
-    if (!fs::is_directory(templ)) {
-        return fail("не найден шаблон " + templ.string() + " (передай путь третьим аргументом)");
+    if (fs::exists(dest)) {
+        return fail(dest.string() + " уже существует");
     }
     std::error_code ec;
     fs::copy(templ, dest, fs::copy_options::recursive, ec);
@@ -443,7 +498,8 @@ int cmd_new(int argc, char** argv) {
     }
     fs::remove_all(dest / "build", ec);
     std::println("graft: шаблон развёрнут -> {}", dest.string());
-    std::println("graft: поправь имя плагина в src/plugin.cpp и мод в mod/");
+    std::println("graft: имя плагина правится в CMakeLists.txt (NAME) и в src/hello.cpp");
+    std::println("graft: собрать -> cmake -B build && cmake --build build");
     return 0;
 }
 
@@ -451,6 +507,7 @@ int usage() {
     std::print(
         "graft — обслуживание graft-установки\n\n"
         "  graft install  <каталог игры> [dwmapi.dll]   поставить хост\n"
+        "  graft uninstall <каталог игры>               снять хост\n"
         "  graft list     <каталог игры>                что установлено\n"
         "  graft doctor   <каталог игры>                почему не работает\n"
         "  graft protogen <плагин.dll|--host> <scripts> объявления для PBO\n"
@@ -469,6 +526,9 @@ int main(int argc, char** argv) {
     const std::string cmd = argv[1];
     if (cmd == "install") {
         return cmd_install(argc, argv);
+    }
+    if (cmd == "uninstall") {
+        return cmd_uninstall(argc, argv);
     }
     if (cmd == "list") {
         return cmd_list(argc, argv);

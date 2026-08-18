@@ -25,16 +25,16 @@
 Сперва зеркало движкового API (один раз, и заново после патча игры):
 
 ```
-graft apigen E:/DayZ/PDrive/scripts src/graft/dayz
+graft apigen P:/scripts src/graft/dayz
 ```
 
 Дефайны игры ему **не нужны**: он печатает объединение всех веток препроцессора, а чего
 в конкретной сборке нет — то не найдётся в рантайме и вернёт нулевое значение со строкой
 в `graft.log`. Стоит это ровно столько же, сколько обычный переход в натив.
 
-```
-build.bat            :: собрать
-build.bat deploy     :: и положить в <игра>\graft\
+```bat
+cmake -B build -G Ninja
+cmake --build build          :: DLL и <ИМЯ>.scripts в build/
 ```
 
 Хост (`dwmapi.dll`) ставится один раз на игру: `graft install <каталог игры>`.

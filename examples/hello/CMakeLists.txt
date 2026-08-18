@@ -1,14 +1,11 @@
 cmake_minimum_required(VERSION 3.30)
-project(example_hashmap CXX C)
+project(hello_graft CXX C)
 
-# Пример шаблонного скриптового класса: `CppHashMap<K,V>` в скрипте — обычный
-# `std::unordered_map` в C++.
+# Самый маленький мод на graft: одна функция в C++, один вызов в скрипте.
+# Весь проект — этот файл, src/hello.cpp и папка мода. Больше ничего нет.
 #
-# От minimal отличается ровно одним: класс не привязывается по имени, а
-# РАЗВОРАЧИВАЕТСЯ. Ты пишешь один шаблон обычными типами, библиотека инстанциирует его
-# по всем поддерживаемым и на каждом вызове выбирает нужную инстанциацию по имени
-# скриптового класса объекта ("CppHashMap<string,int>"). Своей рукой в моде для этого
-# класса не написано ни строчки — объявления печатает генератор.
+# Сборка кладёт рядом с DLL каталог HELLO_GRAFT.scripts — готовые объявления для PBO.
+# Забрать их в мод и собрать PBO — твоё дело: graft мод не собирает.
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(MSVC)
@@ -25,8 +22,8 @@ endif()
 include("${GRAFT_BOOT_FILE}")
 graft_import(graft https://github.com/KRdayzmodding/KR_GRAFTED TAG main)
 
-graft_plugin(example_hashmap
-    NAME    EXAMPLE_HASHMAP
+graft_plugin(hello
+    NAME    HELLO_GRAFT
     VERSION 1
-    SOURCES src/cpp_hashmap.cpp src/plugin.cpp
-    MODULES 1_Core)
+    SOURCES src/hello.cpp
+    MODULES 3_Game)

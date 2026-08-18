@@ -40,8 +40,8 @@ Print(counts.Get("zombies"));   // 12
 ## Сборка
 
 ```bat
-build.bat            :: EXAMPLE_HASHMAP.grafted.dll + объявления в mod/
-build.bat deploy     :: плюс копия в <игра>\graft\
+cmake -B build -G Ninja
+cmake --build build          :: DLL и <ИМЯ>.scripts в build/
 ```
 
 Эти же исходники собирает и корневой `CMakeLists.txt` — вторым плагином репозитория,

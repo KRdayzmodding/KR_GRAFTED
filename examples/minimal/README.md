@@ -14,30 +14,30 @@
 | [src/natives.cpp](src/natives.cpp) | **да** — сюда пишешь свои нативы |
 | [src/plugin.cpp](src/plugin.cpp) | **да** — имя и версия плагина, одна строчка |
 | [mod/EXAMPLE_GRAFT/](mod/EXAMPLE_GRAFT/) | **да** — config.cpp, класс-хозяин, тесты |
-| `mod/EXAMPLE_GRAFT/scripts/<модуль>/grafted_natives_<ПЛАГИН>.c` | нет, генерится сборкой |
-| [CMakeLists.txt](CMakeLists.txt) | только пути (`GRAFT_ROOT`, `EXAMPLE_MOD_SCRIPTS`) |
+| `build/EXAMPLE_GRAFT.scripts/<модуль>/grafted_natives_<ПЛАГИН>.c` | нет, печатает сборка |
+| [CMakeLists.txt](CMakeLists.txt) | один путь: `GRAFT_ROOT` |
 | [../README.md](../README.md) | что ещё есть в примерах |
-| [build.bat](build.bat) | `GAME_DIR`, а после копирования — и `GRAFT_ROOT` |
+| [CMakeLists.txt](CMakeLists.txt) | ничего: `graft_import` тянет библиотеку сам |
 
 ## Хост и плагины
 
 Рядом с exe живёт **один** `dwmapi.dll` — это хост: он находит точки движка, ставит
 хуки и грузит плагины. Пересобирать его не нужно никому и никогда.
 
-Твой мод собирается в **плагин** — `<ИМЯ>.grafted.dll`, который хост подхватит из
-`<мод>/graft/` (плагин едет вместе со своим модом) или из `<каталог игры>/#GRAFTED/`
-(общее хранилище на установку). Плагинов может быть сколько угодно, они не мешают друг
-другу и могут быть собраны разными компиляторами.
+Твой мод собирается в **плагин** — `<ИМЯ>.grafted.dll`. Он едет вместе со своим модом:
+папка `grafted/` по соседству с `addons/`. Плагинов может быть сколько угодно, они не
+мешают друг другу и могут быть собраны разными компиляторами.
 
 ```
 DayZ.exe
  └─ dwmapi.dll                      хост, один на игру: graft install <каталог игры>
-      ├─ @MYMOD/graft/MYMOD.grafted.dll        плагин внутри своего мода
-      ├─ @OTHER/graft/OTHER.grafted.dll
-      └─ #GRAFTED/EXAMPLE_GRAFT.grafted.dll    общее хранилище рядом с exe
+      ├─ @MYMOD/addons/MYMOD.pbo               мод как обычно
+      ├─ @MYMOD/grafted/MYMOD.grafted.dll      плагин — по соседству с addons
+      ├─ @OTHER/grafted/OTHER.grafted.dll
+      └─ grafted/EXAMPLE_GRAFT.grafted.dll     та же папка рядом с exe, для разработки
 ```
 
-В `#GRAFTED/` нет ничего кроме плагинов: хост открывает оттуда КАЖДЫЙ `.dll`.
+В `grafted/` нет ничего кроме плагинов: хост открывает оттуда КАЖДЫЙ `.dll`.
 
 **Скорость от этого не страдает.** Движок зовёт трамплин плагина напрямую — при
 регистрации он получает сырой адрес, и дальше ходит по нему сам. Через границу между
@@ -135,20 +135,19 @@ node.field<int, "m_id">();              // а не node.field<int>("m_id")
 ## Сборка
 
 ```bat
-build.bat            :: EXAMPLE_GRAFT.grafted.dll + объявления в mod/
-build.bat deploy     :: то же + копия плагина в <игра>\graft\ (правь GAME_DIR)
+cmake -B build -G Ninja
+cmake --build build          :: DLL и <ИМЯ>.scripts в build/
 ```
 
 Весь CMake проекта — это:
 
 ```cmake
-add_subdirectory("${GRAFT_ROOT}" ... EXCLUDE_FROM_ALL)
-include("${GRAFT_ROOT}/cmake/graft_plugin.cmake")
+graft_import(graft https://github.com/KRdayzmodding/KR_GRAFTED TAG main)
 
 graft_plugin(example_graft
     NAME EXAMPLE_GRAFT VERSION 1
     SOURCES src/natives.cpp src/plugin.cpp
-    MOD_SCRIPTS P:/EXAMPLE_GRAFT/scripts)
+    MODULES 1_Core 3_Game)
 ```
 
 `NAME` попадает в три места сразу: имя DLL, паспорт плагина и суффикс служебного натива
@@ -161,12 +160,12 @@ graft_plugin(example_graft
 
 ```
 xcopy /E /I mod\EXAMPLE_GRAFT P:\EXAMPLE_GRAFT
-cmake -B build -DEXAMPLE_MOD_SCRIPTS=P:/EXAMPLE_GRAFT/scripts -DGRAFT_ROOT=E:/source/KR_GRAFT
+cmake -B build -G Ninja
 ```
 
 Генератор раскладывает объявления по модулям сам: натив с игровым типом в сигнатуре
 (`Object`, `EntityAI`) описывается в отдельном блоке `GRAFT_BINDINGS("3_Game")` и
-попадает в `scripts/3_Game/grafted_natives_EXAMPLE_GRAFT.c` — в 1_Core таких типов ещё нет.
+попадает в `build/EXAMPLE_GRAFT.scripts/3_Game/...` — в 1_Core таких типов ещё нет.
 
 Проверка связи: сьюта `example::graft` через dayz-mcp `run_suites(["example::graft"])` —
 мод и сьюту предварительно завести в `dayz-mcp.config.json`. Что нашлось и что

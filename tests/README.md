@@ -5,9 +5,13 @@
 
 | Что | Где | Чем запускается |
 |---|---|---|
-| Юнит-тесты (gtest) | `*_test.cpp` | `build\clang-release\seraph_tests.exe` |
+| Юнит-тесты (gtest) | `*_test.cpp` | `cmake --build --preset tests` + `ctest --preset release` |
 | Нативы-фикстуры | [plugins/](plugins/) | собираются в два плагина |
 | Скриптовая сьюта | [mod/SIXW_GRAFT/](mod/SIXW_GRAFT/) | dayz-mcp `run_suites(["seraph::graft"])` |
+
+Всё тестовое собирается подпроектом [CMakeLists.txt](CMakeLists.txt) (`GRAFT_BUILD_TESTS`,
+включён когда репозиторий собирают сам по себе) и ложится в общую выходную папку
+`out/<конфиг>/tests/` — отдельно от хоста и примеров.
 
 ## Юнит-тесты
 
@@ -32,12 +36,12 @@
 
 ## Покрытие
 
-```
-coverage.bat          :: цифры
-coverage.bat show     :: html с построчной раскраской
+```bat
+cmake --preset coverage
+cmake --build --preset coverage    :: цифры + html в build/coverage/coverage/
 ```
 
-**75.7% по строкам** на момент последнего замера — и это потолок для оффлайнового
+**73.7% по строкам** на момент последнего замера — и это потолок для оффлайнового
 измерения, а не лень. Половина библиотеки исполняется ТОЛЬКО внутри игры: трамплины
 зовёт движок (`marshal.hpp`, `dispatch.hpp`), доступ к script-контекстам требует его
 указателей (`script_host.cpp` — 10%), журнал пишется рядом с exe (`log_host.cpp` — 0%).
@@ -51,15 +55,19 @@ coverage.bat show     :: html с построчной раскраской
 | Плагин | Исходник | Роль |
 |---|---|---|
 | `SIXW_GRAFT` | [plugins/natives.cpp](plugins/natives.cpp) | матрица покрытия ABI: по нативу на каждый поддерживаемый тип |
-| `EXAMPLE_HASHMAP` | [../examples/hashmap/src/cpp_hashmap.cpp](../examples/hashmap/src/cpp_hashmap.cpp) | шаблонный скриптовый класс `CppHashMap<K,V>` поверх `std::unordered_map` |
+| `SIXW_HASHMAP` | [plugins/hashmap.cpp](plugins/hashmap.cpp) | шаблонный скриптовый класс `SeraphHashMap<K,V>` поверх `std::unordered_map` |
 
 Плагина именно **два**, и это не деление по смыслу: сьюта гоняет оба в одном процессе,
 поэтому «два плагина уживаются» проверяется обычным прогоном, а не отдельным ритуалом,
 который забудут запустить. Сломается сосуществование — покраснеет половина кейсов.
 
-Второй живёт в [../examples/hashmap/](../examples/hashmap/) и оттуда же собирается корневым
-`CMakeLists.txt`: он и пример, и фикстура, копии исходника нет. Пример без тестов быстро
-расходится с кодом — этот не может.
+Второй плагин — **свой**, не пример. Раньше им собирался [../examples/hashmap/](../examples/hashmap/),
+и это стоило обеим сторонам свободы: правка примера роняла сьюту, а правка сьюты
+требовала лезть в пример. Теперь у теста свой класс (`SeraphHashMap`) и своё имя, а у
+примера свои (`CppHashMap`, `EXAMPLE_HASHMAP`) — поэтому мод примеров и мод тестов
+уживаются в одной игре: имена скриптовых классов у движка глобальны на всю установку.
+Что пример не сгнил, проверяет таргет `examples` — он собирает каждый
+отдельным проектом (ExternalProject), ровно как его собирает пользователь.
 
 Часть нативов намеренно написана обычным C++ (`int`, `std::string_view`, `std::string`,
 `std::vector`, `std::array<float,3>`, неконстантная ссылка вместо `out`), часть — в
@@ -67,9 +75,26 @@ coverage.bat show     :: html с построчной раскраской
 
 ## Скриптовая сьюта
 
-`mod/SIXW_GRAFT` — **junction** на `E:\DayZ\PDrive\SIXW_GRAFT`: моды экосистемы живут
-под `P:\`, а dzrun жёстко пропускает reparse-точки, поэтому исходник мода должен быть
-реальным каталогом там. Правится он в любом из двух путей — это одни и те же файлы.
+`mod/SIXW_GRAFT` — обычный каталог **в репозитории**: и рукописная сьюта, и объявления,
+которые печатает сборка. Раньше он жил на `P:\`, и проверить библиотеку мог только тот,
+у кого этот диск смонтирован.
+
+PBO этого мода проект НЕ собирает — как и для любого другого мода. Порядок обычный:
+собрать тесты, забрать объявления и упаковать своим инструментом (dzrun, MakePbo,
+Addon Builder — чем пользуешься):
+
+```bat
+cmake --build --preset tests
+xcopy /E /Y out\release\tests\SIXW_GRAFT.scripts   tests\mod\SIXW_GRAFT\scripts
+xcopy /E /Y out\release\tests\SIXW_HASHMAP.scripts tests\mod\SIXW_GRAFT\scripts
+xcopy /E /Y out\release\tests\graft.scripts        tests\mod\SIXW_GRAFT\scripts
+```
+
+Дальше мод ставится рядом с игрой как обычно: PBO в `@SIXW_GRAFT\addons\`, плагины —
+в `@SIXW_GRAFT\grafted\`.
+
+Мод зависит от `KR_CORE` — в нём живёт uTest. Без него соберётся всё, кроме прогона
+самой сьюты.
 
 Внутри 86 кейсов:
 
@@ -83,8 +108,26 @@ coverage.bat show     :: html с построчной раскраской
   Меряет минимумом из шести раундов и сравнивает ОТНОШЕНИЕ к `map.Count()`:
   миллисекунды плавают на ±30%, отношение — нет.
 
-Объявления `scripts/<модуль>/grafted_natives_*.c` генерируются сборкой (`graft protogen`,
-POST_BUILD) — править руками нечего.
+Объявления `grafted_natives_*.c` печатает сборка рядом с плагинами
+(`out/<конфиг>/tests/<ИМЯ>.scripts`) — в `mod/SIXW_GRAFT` их нет и в репозитории тоже.
+Забрать их в мод и упаковать PBO — обычный ручной шаг, как в любом моде (см. выше).
 
-Регистрация в песочнице MCP: `dayz-mcp.config.json → utest.sandboxPbos.client +=
-"SIXW_GRAFT"`.
+Зеркало движкового API фикстуре нужно для целевого сценария («игроки и их steam id»).
+Готовится один раз и подключается путём — скрипты игры сборка не ищет:
+
+```bat
+graft apigen P:/scripts build/gen/graft/dayz
+cmake --preset release -DGRAFT_API_DIR=build/gen
+```
+
+Зеркало движкового API фикстуре нужно для целевого сценария («игроки и их steam id»).
+Готовится один раз и подключается путём — скрипты игры сборка не ищет:
+
+```bat
+graft apigen P:/scripts build/gen/graft/dayz
+cmake --preset release -DGRAFT_API_DIR=build/gen
+```
+
+Прогон в песочнице MCP: мод должен быть собран и положен в игру и перечислен в
+`dayz-mcp.config.json → utest.mods` как `@SIXW_GRAFT`. Пересобирать PBO под каждый
+прогон песочнице не нужно — PBO пересобирается тогда, когда меняется сьюта.

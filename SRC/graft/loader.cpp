@@ -150,17 +150,16 @@ void list_dlls(const std::wstring& dir, std::vector<std::wstring>& out) {
 
 std::vector<std::wstring> candidates(const std::wstring& game_dir) {
     std::vector<std::wstring> out;
-    // Плагин едет вместе со своим модом: <мод>/graft/*.dll. Порядок — как в -mod=,
-    // то есть тот же, в каком движок разбирает скрипты.
+    // Плагин едет вместе со своим модом: @МОД/grafted/*.dll, по соседству с addons.
+    // Порядок — как в -mod=, то есть тот же, в каком движок разбирает скрипты.
     for (const std::string& mod : plugins::mod_dirs(narrow(GetCommandLineW()))) {
         const std::wstring base = absolute(mod) ? widen(mod) : game_dir + L"\\" + widen(mod);
-        list_dlls(base + L"\\graft", out);
+        list_dlls(base + L"\\grafted", out);
     }
-    // Общая папка рядом с exe: <игра>/#GRAFTED/*.dll. Одно хранилище на установку —
-    // для разработки и для сервера, где всё лежит в одном моде (PBO собраны в
-    // @CLIENT/addons, отдельных папок под мод нет). Имя с решётки, чтобы папка не
-    // терялась среди @модов и не путалась с ними: это не мод.
-    list_dlls(game_dir + L"\\#GRAFTED", out);
+    // Та же папка, но рядом с exe: <игра>/grafted/*.dll. Одно имя на оба места, чтобы
+    // не держать в голове два. Нужна для разработки и для установок, где всё лежит в
+    // одном моде (PBO собраны в @CLIENT/addons, отдельных папок под мод нет).
+    list_dlls(game_dir + L"\\grafted", out);
     return out;
 }
 

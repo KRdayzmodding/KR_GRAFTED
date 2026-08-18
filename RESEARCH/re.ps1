@@ -1,10 +1,15 @@
 <#
-  RE-обёртка над IDA Pro 8.3 (headless) для DayZServer_x64.exe.
+  RE-обёртка над IDA Pro (headless) для исполняемых файлов DayZ.
 
-  .\re\re.ps1 import            — скопировать бинарь в re\bin (Steam-каталог не трогаем)
-  .\re\re.ps1 analyze           — авто-анализ, создаёт re\bin\<name>.i64 (долго, 5-20 мин)
-  .\re\re.ps1 run <script.py>   — прогнать IDAPython-скрипт по готовой .i64
-  .\re\re.ps1 gui               — открыть .i64 в графической IDA
+  .\RESEARCH\re.ps1 import          — скопировать бинарь в RESEARCH\bin (Steam не трогаем)
+  .\RESEARCH\re.ps1 analyze         — авто-анализ, создаёт .i64 (долго, 5-20 мин)
+  .\RESEARCH\re.ps1 run <script.py> — прогнать IDAPython-скрипт по готовой .i64
+  .\RESEARCH\re.ps1 gui             — открыть .i64 в графической IDA
+
+  Пути к своей машине — в переменных окружения, в репозитории их нет:
+    GRAFT_IDA_DIR      каталог IDA (там idat64.exe)
+    GRAFT_GAME_DIR     каталог игры (DayZDiag_x64.exe)
+    GRAFT_SERVER_DIR   каталог сервера (DayZServer_x64.exe), нужен только для -On server
 
   ponytail: одна обёртка вместо фреймворка. Ghidra здесь не нужна — она в C:\tools
   как запасной декомпилятор, подключим только если Hex-Rays на чём-то сломается.
@@ -20,10 +25,17 @@ param(
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 
-$IdaDir = 'F:\SOFT\IDA Pro 8.3'
+$IdaDir = $env:GRAFT_IDA_DIR
+if (-not $IdaDir) { throw 'Задай GRAFT_IDA_DIR — каталог IDA (там idat64.exe)' }
 $Target = switch ($On) {
-    'diag' { 'F:\SteamLibrary\steamapps\common\DayZ\DayZDiag_x64.exe' }
-    'server' { 'F:\SteamLibrary\steamapps\common\DayZServer\DayZServer_x64.exe' }
+    'diag' {
+        if (-not $env:GRAFT_GAME_DIR) { throw 'Задай GRAFT_GAME_DIR — каталог игры' }
+        Join-Path $env:GRAFT_GAME_DIR 'DayZDiag_x64.exe'
+    }
+    'server' {
+        if (-not $env:GRAFT_SERVER_DIR) { throw 'Задай GRAFT_SERVER_DIR — каталог сервера' }
+        Join-Path $env:GRAFT_SERVER_DIR 'DayZServer_x64.exe'
+    }
 }
 $Root = Split-Path -Parent $PSCommandPath
 $BinDir = Join-Path $Root 'bin'

@@ -1,7 +1,9 @@
 {
   "version": 6,
-  "cmakeMinimumRequired": { "major": 3, "minor": 30 },
-
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 30
+  },
   "configurePresets": [
     {
       "name": "base",
@@ -9,68 +11,87 @@
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/${presetName}",
       "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang-cl",
+        "CMAKE_CXX_COMPILER": "clang-cl",
         "CMAKE_COLOR_DIAGNOSTICS": "ON"
       }
     },
-
     {
-      "name": "msvc-debug",
-      "displayName": "MSVC  |  Debug",
+      "name": "release",
+      "displayName": "Release",
       "inherits": "base",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_C_COMPILER":   "cl",
-        "CMAKE_CXX_COMPILER": "cl"
+        "CMAKE_BUILD_TYPE": "Release"
       }
     },
     {
-      "name": "msvc-release",
-      "displayName": "MSVC  |  Release",
+      "name": "debug",
+      "displayName": "Debug",
       "inherits": "base",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_C_COMPILER":   "cl",
-        "CMAKE_CXX_COMPILER": "cl"
-      }
-    },
-
-    {
-      "name": "clang-debug",
-      "displayName": "Clang-CL  |  Debug",
-      "inherits": "base",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_C_COMPILER":   "clang-cl",
-        "CMAKE_CXX_COMPILER": "clang-cl"
-      }
-    },
-    {
-      "name": "clang-release",
-      "displayName": "Clang-CL  |  Release",
-      "inherits": "base",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_C_COMPILER":   "clang-cl",
-        "CMAKE_CXX_COMPILER": "clang-cl"
-      }
-    },
-
-    {
-      "name": "clang-asan",
-      "displayName": "Clang-CL  |  Debug + ASAN",
-      "inherits": "clang-debug",
-      "cacheVariables": {
-        "CMAKE_C_FLAGS":   "/fsanitize=address",
-        "CMAKE_CXX_FLAGS": "/fsanitize=address"
+        "CMAKE_BUILD_TYPE": "Debug"
       }
     }
   ],
-
   "buildPresets": [
-    { "name": "msvc-debug",     "configurePreset": "msvc-debug"     },
-    { "name": "msvc-release",   "configurePreset": "msvc-release"   },
-    { "name": "clang-debug",    "configurePreset": "clang-debug"    },
-    { "name": "clang-release",  "configurePreset": "clang-release"  },
-    { "name": "clang-asan",     "configurePreset": "clang-asan"     }
+    {
+      "name": "release",
+      "configurePreset": "release"
+    },
+    {
+      "name": "debug",
+      "configurePreset": "debug"
+    },
+    {
+      "name": "tests",
+      "configurePreset": "release",
+      "targets": [
+        "tests"
+      ]
+    },
+    {
+      "name": "examples",
+      "configurePreset": "release",
+      "targets": [
+        "examples"
+      ]
+    },
+    {
+      "name": "mount",
+      "configurePreset": "release",
+      "targets": [
+        "mount"
+      ]
+    },
+    {
+      "name": "unmount",
+      "configurePreset": "release",
+      "targets": [
+        "unmount"
+      ]
+    },
+    {
+      "name": "coverage",
+      "configurePreset": "debug",
+      "targets": [
+        "coverage"
+      ]
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
   ]
 }

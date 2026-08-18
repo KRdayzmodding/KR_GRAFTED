@@ -17,17 +17,158 @@ GRAFT_ON_TICK(dt) { /* ... */ }
 ```
 
 ```
-@MYMOD/graft/MYMOD.grafted.dll                   плагин — едет вместе со своим модом
-@MYMOD/scripts/1_Core/grafted_natives_MYMOD.c    объявления, генерятся сборкой
-
 <игра>/dwmapi.dll                                хост, один на установку
-<игра>/#GRAFTED/*.grafted.dll                    общее хранилище плагинов
+@MYMOD/addons/MYMOD.pbo                          мод как обычно
+@MYMOD/grafted/MYMOD.grafted.dll                 плагин — по соседству с addons
+@MYMOD/scripts/1_Core/grafted_natives_MYMOD.c    объявления, печатает сборка
 ```
 
 `graft` — механизм (namespace, макросы, каталоги, `graft.exe`).
 `grafted` — результат (артефакты, сгенерированные объявления, `IsGrafted("MYMOD")`).
 
 Словарь: подвой — движок, привой — плагин, сращение — точка регистрации, обвязка — guard.
+
+## Устройство репозитория
+
+| Где | Что |
+|---|---|
+| [INCLUDE/graft/](INCLUDE/graft/), [SRC/](SRC/) | сам graft: библиотека, `graft.exe`, хост `dwmapi.dll` |
+| [cmake/](cmake/) | `graft.boot.cmake` (`graft_import`), `graft_plugin()`, покрытие |
+| [tests/](tests/) | тестовое окружение: gtest, два плагина-фикстуры и мод со скриптовой сьютой |
+| [examples/](examples/) | самостоятельные проекты-примеры, начиная с [hello](examples/hello/) |
+| [RESEARCH/](RESEARCH/) | база знаний по движку: что найдено в бинаре и чем перепроверить |
+
+Тесты и примеры не пересекаются: сборка библиотеки и тестов в `examples/` не заглядывает
+вовсе, а примеры собираются своими проектами — ровно так, как их собирает пользователь.
+Раньше вторым плагином фикстуры собирался пример, и правка примера роняла сьюту.
+
+## Сборка
+
+Нужен CMake 3.30+, Ninja и clang-cl. Собирается из «x64 Native Tools Command Prompt
+for VS» (или Developer PowerShell) — clang-cl берёт оттуда SDK и STL.
+
+```bat
+cmake --preset release
+cmake --build --preset release
+```
+
+Это **только graft**: библиотека, `graft.exe` и хост `dwmapi.dll`. Тесты и примеры в
+`ALL` не входят и на обычной сборке не трогаются — у каждой части свой таргет:
+
+| Команда | Что собирает | Куда кладёт |
+|---|---|---|
+| `cmake --build --preset release` | библиотека, `graft.exe`, `dwmapi.dll` | `out/release/graft/` |
+| `cmake --build --preset tests` | фикстуры-плагины и юнит-тесты | `out/release/tests/` |
+| `ctest --preset release` | прогон юнит-тестов | — |
+| `cmake --build --preset examples` | четыре примера, каждый своим проектом | `out/release/examples/<имя>/` |
+| `cmake --build --preset coverage` | покрытие (нужен `-DGRAFT_COVERAGE=ON`) | консоль + `build/debug/coverage/` |
+| `cmake --build --preset mount` | поставить хост в `GRAFT_GAME_DIR` | `<игра>/dwmapi.dll` |
+| `cmake --build --preset unmount` | снять хост оттуда же | — |
+
+Артефакты и промежуточное разведены: в `build/<конфиг>/` — кэш, объектники и `.lib`,
+в `out/<конфиг>/` — только то, что забирают руками:
+
+```
+out/release/graft/dwmapi.dll                          хост, чистой DLL
+out/release/graft/graft.exe                           инструмент
+out/release/tests/SIXW_GRAFT.grafted.dll              фикстуры
+out/release/tests/SIXW_GRAFT.scripts/1_Core/...       их объявления
+out/release/examples/hello/HELLO_GRAFT.grafted.dll    пример
+out/release/examples/hello/HELLO_GRAFT.scripts/3_Game/...
+```
+
+`debug` и `release` лежат в `out/` рядом и не мешают друг другу. PBO проект не собирает
+и папки `@МОД` не раскладывает: сборка даёт DLL и каталог `<ИМЯ>.scripts` с
+объявлениями, дальше это дело мододела и его обычного инструмента.
+
+Каталоги в дереве повторяют это же деление: [SRC/](SRC/) — сам graft, [tests/](tests/) —
+его тесты, [examples/](examples/) — примеры. Ни один таргет из одной части не собирает
+другую.
+
+| Опция | По умолчанию | Что делает |
+|---|---|---|
+| `GRAFT_GAME_DIR` | пусто | каталог игры или сервера для `mount` / `unmount` |
+| `GRAFT_API_DIR` | пусто | готовое зеркало движкового API (см. `graft apigen`) |
+| `GRAFT_BUILD_TESTS` | `ON` | подключать каталог тестов |
+| `GRAFT_BUILD_EXAMPLES` | `ON` | подключать каталог примеров |
+| `GRAFT_COVERAGE` | `OFF` | инструментация для llvm-cov |
+
+Личных путей в репозитории нет — свои держи в `CMakeUserPresets.json` (он в
+`.gitignore`), это штатный механизм CMake:
+
+```json
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "dev",
+      "inherits": "release",
+      "cacheVariables": { "GRAFT_GAME_DIR": "C:/DayZServer" }
+    }
+  ]
+}
+```
+
+Дальше вместо `--preset release` пишешь `--preset dev`.
+
+## Свой плагин
+
+Весь проект мода — один CMakeLists:
+
+```cmake
+file(DOWNLOAD https://raw.githubusercontent.com/KRdayzmodding/KR_GRAFTED/main/cmake/graft.boot.cmake
+     "${CMAKE_BINARY_DIR}/graft.boot.cmake")
+include("${CMAKE_BINARY_DIR}/graft.boot.cmake")
+graft_import(graft https://github.com/KRdayzmodding/KR_GRAFTED TAG main)
+
+graft_plugin(mymod NAME MYMOD VERSION 1 SOURCES src/natives.cpp MODULES 3_Game)
+```
+
+```bat
+cmake -B build -G Ninja
+cmake --build build
+```
+
+`graft_import` качает graft (или берёт локальный исходник, если передать
+`-DGRAFT_SOURCE_DIR=C:/src/graft`) и кэширует его в `~/.graft` — второй мод той же
+версией ничего не качает заново.
+
+Сборка кладёт рядом:
+
+```
+build/MYMOD.grafted.dll                                   плагин
+build/MYMOD.scripts/3_Game/grafted_natives_MYMOD.c        объявления для PBO
+```
+
+Объявления — артефакт сборки, как `.pb.cc` у protobuf: в исходниках их нет, руками их
+не пишут, разъехаться с C++ они не могут. **Мод graft не собирает**: копируешь `.c`
+в свой PBO, `.dll` в `@MYMOD/grafted/` рядом с `addons/` — и всё. Хост ставится один
+раз: `graft install <каталог игры>`.
+
+Зеркало движкового API (когда C++ сам ходит в игру) — тоже отдельной командой, скрипты
+игры сборка не ищет:
+
+```bat
+graft apigen P:/scripts include/graft/dayz
+```
+
+## Монтирование и демонтирование
+
+Монтируется ровно одна вещь — сам graft: `dwmapi.dll` рядом с exe игры. Моды кладёт и
+убирает мододел, graft о них не знает.
+
+```bat
+graft install   "C:\DayZServer"    :: = cmake --build --preset mount
+graft uninstall "C:\DayZServer"    :: = cmake --build --preset unmount
+graft list      "C:\DayZServer"    :: что установлено
+graft doctor    "C:\DayZServer"    :: почему не работает
+```
+
+- **Чужую `dwmapi.dll` не трогаем.** `install` на неё ругается и останавливается,
+  `uninstall` её не удаляет: мирить два прокси мы не умеем и делать вид не будем.
+- **Чужие моды не удаляем.** `uninstall` снимает хост и пустую `<игра>/grafted/`, а
+  плагины, лежащие в модах, только перечисляет — без хоста они просто мертвы.
+- **Строку `-mod=` правишь ты.** О твоём ярлыке мы не знаем.
 
 ## Лицензия
 

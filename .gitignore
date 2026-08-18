@@ -1,9 +1,12 @@
-out
+build/
+out/
 .cache
 .vs
-build/
-re/bin/
-re/out/
+RESEARCH/bin/
+RESEARCH/out/
 .vscode
 .claude
 examples/players/src/graft/
+CMakeUserPresets.json
+# объявления печатает сборка рядом с DLL — в исходниках их нет
+grafted_natives_*.c
