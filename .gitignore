@@ -1,0 +1,8 @@
+out
+.cache
+.vs
+build/
+re/bin/
+re/out/
+.vscode
+.claude

@@ -1,0 +1,29 @@
+# База компиляции — та, что пишет CMake (CMAKE_EXPORT_COMPILE_COMMANDS). Отсюда clangd
+# берёт и флаги, и include-пути: дублировать их руками не нужно и вредно — разъедутся.
+CompileFlags:
+  CompilationDatabase: "build/clang-release"
+  Remove:
+    # CMAKE_CXX_STANDARD даёт C++23, а наши цели поднимаются до C++26 отдельным флагом
+    # (см. seraph_std в CMakeLists). Обе строки едут в одну команду, и убрать надо
+    # именно эту: иначе языковой сервер разбирает проект НЕ ТЕМ стандартом, которым он
+    # собирается, и показывает ошибки там, где их нет.
+    - "-clang:-std=*"
+    - "-m*"
+  Add:
+    # Спеллинг именно такой: в режиме драйвера cl голый -std= не действует, его надо
+    # прокинуть в clang через /clang:.
+    - "/clang:-std=c++2c"
+    - "-Wno-unknown-warning-option"
+
+Diagnostics:
+  UnusedIncludes: None
+  ClangTidy:
+    Add:
+      - bugprone-*
+      - performance-*
+      - readability-*
+    Remove:
+      # Проект живёт на reinterpret_cast по движковой памяти — это его суть, а не запах.
+      - readability-magic-numbers
+      - readability-identifier-length
+      - bugprone-easily-swappable-parameters

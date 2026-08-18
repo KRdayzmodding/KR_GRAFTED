@@ -1,0 +1,236 @@
+---
+Language: Cpp
+# Basic Options
+BasedOnStyle: Microsoft
+Standard: Latest
+UseTab: Never
+TabWidth: 4
+IndentWidth: 4
+ColumnLimit: 0
+MaxEmptyLinesToKeep: 1
+
+# Indentation
+AccessModifierOffset: -4
+IndentCaseLabels: true
+NamespaceIndentation: None
+
+# Line Breaking
+SeparateDefinitionBlocks: Always
+AllowShortBlocksOnASingleLine: Always  # Разрешаем короткие блоки на одной строке
+AllowShortIfStatementsOnASingleLine: WithoutElse  # Разрешаем короткие if без else на одной строке
+AllowShortLoopsOnASingleLine: true  # Разрешаем короткие циклы на одной строке
+AllowShortFunctionsOnASingleLine: All  # Разрешаем все короткие функции на одной строке
+AlwaysBreakTemplateDeclarations: Yes
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterClass: false  # Скобка на той же строке после class
+  AfterControlStatement: false  # Скобка на той же строке после if/for/while
+  AfterEnum: false  # Скобка на той же строке после enum
+  AfterFunction: false  # Скобка на той же строке после функции
+  AfterNamespace: false  # Скобка на той же строке после namespace
+  AfterStruct: false  # Скобка на той же строке после struct
+  AfterUnion: false  # Скобка на той же строке после union
+  BeforeCatch: false  # Скобка catch на той же строке
+  BeforeElse: false  # Скобка else на той же строке
+  IndentBraces: false  # Не добавляем отступ для скобок
+  SplitEmptyFunction: false  # Пустые функции в одну строку
+  SplitEmptyRecord: false  # Пустые классы/структуры в одну строку
+  SplitEmptyNamespace: false  # Пустые пространства имен в одну строку
+
+# Alignment
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: true
+AlignConsecutiveDeclarations: true
+AlignEscapedNewlines: Left
+AlignOperands: true
+AlignTrailingComments: true
+PointerAlignment: Left
+AlignConsecutiveMacros:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: true
+  AlignCompound: true
+
+# {Enabled: true, AcrossEmptyLines: false, AcrossComments: true}
+# Spacing
+SpaceAfterCStyleCast: false
+SpaceAfterLogicalNot: false
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeParens: ControlStatements
+SpaceInEmptyBlock: false
+SpaceInEmptyParentheses: false
+SpacesBeforeTrailingComments: 1
+SpacesInAngles: false
+SpacesInCStyleCastParentheses: false
+SpacesInContainerLiterals: false
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+IndentPPDirectives: BeforeHash
+
+
+# Other
+AllowAllParametersOfDeclarationOnNextLine: false
+BinPackArguments: false
+BinPackParameters: false
+BreakConstructorInitializers: BeforeColon
+ConstructorInitializerAllOnOneLineOrOnePerLine: true
+Cpp11BracedListStyle: true
+FixNamespaceComments: true
+IncludeBlocks: Preserve
+IndentWrappedFunctionNames: false
+KeepEmptyLinesAtTheStartOfBlocks: false
+ReflowComments: false
+SortIncludes: true
+SortUsingDeclarations: true
+
+# Penalties to control line breaking
+PenaltyBreakAssignment: 120
+PenaltyBreakBeforeFirstCallParameter: 100
+PenaltyBreakComment: 120
+PenaltyBreakFirstLessLess: 0
+PenaltyBreakString: 120
+PenaltyExcessCharacter: 1
+PenaltyReturnTypeOnItsOwnLine: 120
+
+# Extra spacing
+SpaceBeforeRangeBasedForLoopColon: true
+SpaceBeforeInheritanceColon: true
+SpaceBeforeCpp11BracedList: false
+SpacesInConditionalStatement: false
+
+# Added for better control over empty lines and alignment
+AllowShortLambdasOnASingleLine: All
+EmptyLineBeforeAccessModifier: LogicalBlock
+EmptyLineAfterAccessModifier: Never
+SpaceAroundPointerQualifiers: Default
+IndentRequiresClause: true
+InsertTrailingCommas: None
+RequiresClausePosition: OwnLine
+IntegerLiteralSeparator:
+  Binary: 0
+  Decimal: 0
+  Hex: 0
+PPIndentWidth: -1
+
+
+
+
+
+
+
+
+
+#  ЕСЛИ НУЖНО ФОРМАТИРОВАНИЕ НА НОВОЙ СТРОЧКЕ
+# ---
+# Language: Cpp
+# # Basic Options
+# BasedOnStyle: Microsoft
+# Standard: Latest
+# UseTab: Never
+# TabWidth: 4
+# IndentWidth: 4
+# ColumnLimit: 0
+# MaxEmptyLinesToKeep: 2
+
+# # Indentation
+# AccessModifierOffset: -4
+# IndentCaseLabels: true
+# NamespaceIndentation: None
+
+# # Line Breaking
+# SeparateDefinitionBlocks: Always
+# AllowShortBlocksOnASingleLine: Never
+# AllowShortIfStatementsOnASingleLine: Never
+# AllowShortLoopsOnASingleLine: false
+# AllowShortFunctionsOnASingleLine: Empty
+# AlwaysBreakTemplateDeclarations: Yes
+# BreakBeforeBraces: Custom
+# BraceWrapping:
+#   AfterClass: true
+#   AfterControlStatement: true
+#   AfterEnum: true
+#   AfterFunction: true
+#   AfterNamespace: true
+#   AfterStruct: true
+#   AfterUnion: true
+#   BeforeCatch: true
+#   BeforeElse: true
+#   IndentBraces: false
+#   SplitEmptyFunction: true
+#   SplitEmptyRecord: true
+#   SplitEmptyNamespace: true
+
+# # Alignment
+# AlignAfterOpenBracket: Align
+# AlignConsecutiveAssignments: true
+# AlignConsecutiveDeclarations: true
+# AlignEscapedNewlines: Left
+# AlignOperands: true
+# AlignTrailingComments: true
+# PointerAlignment: Left
+# AlignConsecutiveMacros:
+#   Enabled: true
+#   AcrossEmptyLines: false
+#   AcrossComments: true
+#   AlignCompound: true
+
+# # {Enabled: true, AcrossEmptyLines: false, AcrossComments: true}
+# # Spacing
+# SpaceAfterCStyleCast: false
+# SpaceAfterLogicalNot: false
+# SpaceBeforeAssignmentOperators: true
+# SpaceBeforeParens: ControlStatements
+# SpaceInEmptyBlock: false
+# SpaceInEmptyParentheses: false
+# SpacesBeforeTrailingComments: 1
+# SpacesInAngles: false
+# SpacesInCStyleCastParentheses: false
+# SpacesInContainerLiterals: false
+# SpacesInParentheses: false
+# SpacesInSquareBrackets: false
+# IndentPPDirectives: BeforeHash
+
+
+# # Other
+# AllowAllParametersOfDeclarationOnNextLine: false
+# BinPackArguments: false
+# BinPackParameters: false
+# BreakConstructorInitializers: BeforeColon
+# ConstructorInitializerAllOnOneLineOrOnePerLine: true
+# Cpp11BracedListStyle: true
+# FixNamespaceComments: true
+# IncludeBlocks: Preserve
+# IndentWrappedFunctionNames: false
+# KeepEmptyLinesAtTheStartOfBlocks: true
+# ReflowComments: false
+# SortIncludes: true
+# SortUsingDeclarations: true
+
+# # Penalties to control line breaking
+# PenaltyBreakAssignment: 120
+# PenaltyBreakBeforeFirstCallParameter: 100
+# PenaltyBreakComment: 120
+# PenaltyBreakFirstLessLess: 0
+# PenaltyBreakString: 120
+# PenaltyExcessCharacter: 1
+# PenaltyReturnTypeOnItsOwnLine: 120
+
+# # Extra spacing
+# SpaceBeforeRangeBasedForLoopColon: true
+# SpaceBeforeInheritanceColon: true
+# SpaceBeforeCpp11BracedList: false
+# SpacesInConditionalStatement: false
+
+# # Added for better control over empty lines and alignment
+# AllowShortLambdasOnASingleLine: Empty
+# EmptyLineBeforeAccessModifier: LogicalBlock
+# EmptyLineAfterAccessModifier: Never
+# SpaceAroundPointerQualifiers: Default
+# IndentRequiresClause: true
+# InsertTrailingCommas: None
+# RequiresClausePosition: OwnLine
+# IntegerLiteralSeparator:
+#   Binary: 0
+#   Decimal: 0
+#   Hex: 0
+# PPIndentWidth: -1
