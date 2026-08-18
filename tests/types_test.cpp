@@ -184,9 +184,33 @@ TEST(Ref, WorksAsMapKey) {
 
 // Контейнерные вьюхи — полноценные ranges, значит работают std::ranges-алгоритмы.
 static_assert(std::input_iterator<graft::array<graft::i32>::iterator>);
+// ...а ещё СТАРЫЕ шаблоны стандартной библиотеки: им нужен iterator_category, без него
+// std::iterator_traits пуст и vector(begin, end) не компилируется (диагностика при этом
+// про что угодно, кроме настоящей причины).
+static_assert(std::is_same_v<std::iterator_traits<graft::array<graft::i32>::iterator>::iterator_category,
+                             std::input_iterator_tag>);
 static_assert(std::ranges::input_range<graft::array<graft::i32>>);
 static_assert(std::ranges::input_range<graft::set<graft::f32>>);
 static_assert(std::ranges::input_range<graft::map<graft::i32, graft::i32>>);
+
+TEST(ArrayView, CopiesThroughIteratorPair) {
+    FakeArray fake({3, 17, 8});
+    const graft::array<graft::i32> a{fake.ptr()};
+
+    const std::vector<graft::i32> copy(a.begin(), a.end());
+    EXPECT_EQ(copy, (std::vector<graft::i32>{3, 17, 8}));
+    EXPECT_EQ(std::ranges::to<std::vector<graft::i32>>(a), copy);
+}
+
+TEST(ArrayView, AssignNeedsEngineResize) {
+    FakeArray fake({1, 2, 3});
+    const graft::array<graft::i32> a{fake.ptr()};
+
+    // Размер меняет только движковый Resize, а вне игры его нет: assign обязан честно
+    // отказаться, а не записать мимо памяти.
+    EXPECT_FALSE(a.assign(std::vector<graft::i32>{9, 8}));
+    EXPECT_EQ(a.size(), 3);
+}
 
 TEST(ArrayView, WorksWithRangesAlgorithms) {
     FakeArray fake({4, 8, 15, 16, 23, 42});

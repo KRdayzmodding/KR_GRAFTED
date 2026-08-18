@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH LicenseRef-GRAFT-plugin-exception-1.0
 // Мод на GRAFT ничего не обязан — даже закрытый и платный. См. LICENSE-EXCEPTION.
 #pragma once
+#include <concepts>
 #include <cstring>
+#include <iterator>
+#include <ranges>
 
 #include "graft/enf_type.hpp"
 
@@ -52,8 +55,15 @@ struct container_view {
     // выполнены, поэтому работают std::ranges-алгоритмы и views.
     class iterator {
     public:
+        // iterator_category нужен не концептам C++20, а СТАРЫМ шаблонам стандартной
+        // библиотеки: без него std::iterator_traits пуст, и `std::vector<T>(begin, end)`
+        // не считает это итератором вовсе (диагностика при этом нечитаемая).
+        using iterator_category = std::input_iterator_tag;
+        using iterator_concept = std::input_iterator_tag;
         using difference_type = std::ptrdiff_t;
         using value_type = T;
+        using reference = T;
+        using pointer = void;
 
         iterator() = default;
         iterator(const container_view* owner, i32 index) : owner_(owner), index_(index) {}
@@ -111,6 +121,31 @@ struct container_view {
         reinterpret_cast<void(__fastcall*)(void*, i32)>(fn.impl)(ptr, index);
         return true;
     }
+    // Записать пачкой: движковый Resize + поэлементная запись. Через итератор вьюхи
+    // писать нельзя (он отдаёт элемент по значению), поэтому обычный путь такой:
+    // скопировал в свой контейнер -> посчитал обычным C++ -> вернул сюда.
+    //
+    //   auto v = std::ranges::to<std::vector<int>>(values);
+    //   std::ranges::sort(v, std::greater{});
+    //   values.assign(v);
+    //
+    // Простую сортировку делает и сам движок: values.sort() / values.sort(true).
+    template <class R>
+    bool assign(R&& range) const
+        requires plain_element<T> && std::ranges::forward_range<R> &&
+                 std::convertible_to<std::ranges::range_value_t<R>, T>
+    {
+        const auto n = std::ranges::distance(range);
+        if (n < 0 || !resize(static_cast<i32>(n))) {
+            return false;
+        }
+        T* out = data();
+        for (auto&& value : range) {
+            *out++ = static_cast<T>(value);
+        }
+        return true;
+    }
+
     bool sort(bool reverse = false) const {
         const script::method fn = detail::engine_method<Kind, "Sort">();
         if (!ptr || !fn.callable()) {
@@ -199,8 +234,12 @@ struct map {
 
     class iterator {
     public:
+        using iterator_category = std::input_iterator_tag;
+        using iterator_concept = std::input_iterator_tag;
         using difference_type = std::ptrdiff_t;
         using value_type = pair;
+        using reference = pair;
+        using pointer = void;
 
         iterator() = default;
         iterator(const map* owner, std::int64_t slot) : owner_(owner), slot_(slot) {}

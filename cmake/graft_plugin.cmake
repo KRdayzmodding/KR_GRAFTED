@@ -22,6 +22,16 @@
 # Не указаны — каталог всё равно наполнится, просто без точных зависимостей.
 #
 # SCRIPTS_DIR — куда класть каталог с объявлениями (по умолчанию рядом с DLL).
+#
+# Печатает объявления graft.exe. По умолчанию он собирается вместе с проектом (один раз,
+# ~20 секунд); если он уже стоит в системе — укажи готовый и сборка станет короче:
+#
+#   cmake -B build -DGRAFT_TOOL=C:/tools/graft.exe
+#
+# Версия инструмента должна совпадать с версией библиотеки: он читает дескрипторы из
+# собранной DLL, и формат этот менялся.
+set(GRAFT_TOOL "" CACHE FILEPATH "готовый graft.exe вместо сборки инструмента")
+
 function(graft_plugin target)
     cmake_parse_arguments(P "" "NAME;VERSION;SCRIPTS_DIR" "SOURCES;MODULES" ${ARGN})
     if(NOT P_NAME)
@@ -53,12 +63,19 @@ function(graft_plugin target)
         list(APPEND byproducts "${scripts}/${module}/grafted_natives_${P_NAME}.c")
     endforeach()
 
+    if(GRAFT_TOOL)
+        set(tool "${GRAFT_TOOL}")
+    else()
+        set(tool "$<TARGET_FILE:graft::tool>")
+    endif()
     add_custom_command(TARGET ${target} POST_BUILD
-        COMMAND "$<TARGET_FILE:graft::tool>" protogen "$<TARGET_FILE:${target}>" "${scripts}"
+        COMMAND "${tool}" protogen "$<TARGET_FILE:${target}>" "${scripts}"
         BYPRODUCTS ${byproducts}
         COMMENT "graft protogen ${P_NAME} -> ${P_NAME}.scripts"
         VERBATIM)
-    add_dependencies(${target} graft_tool)
+    if(NOT GRAFT_TOOL)
+        add_dependencies(${target} graft_tool)
+    endif()
 
     # Где лежат объявления — свойство таргета: его читают и сборка мода, и IDE, и
     # чужие скрипты, которым надо забрать сгенерированное.

@@ -9,7 +9,10 @@ project(example_players CXX C)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(MSVC)
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")   # без зависимости от MSVC-рантайма
+    # Статический рантайм: у игроков MSVC-редиста нет. Форма с $<CONFIG:Debug> обязательна —
+    # graft наследует ЭТО значение, и обе половины должны совпасть (иначе линкер ругнётся
+    # на _ITERATOR_DEBUG_LEVEL).
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
 # ── graft ────────────────────────────────────────────────────────────────────

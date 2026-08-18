@@ -59,6 +59,7 @@ function(graft_import name url)
 
     # Кэш общий на машину: каталог на (имя, тег). Одна и та же версия скачивается и
     # собирается один раз, дальше её берут все проекты.
+    file(TO_CMAKE_PATH "${G_CACHE}" G_CACHE)
     set(FETCHCONTENT_BASE_DIR "${G_CACHE}/${name}-${G_TAG}" CACHE PATH "" FORCE)
     message(STATUS "graft_import: ${name} <- ${url}@${G_TAG} (кэш ${G_CACHE})")
     FetchContent_Declare(${name}

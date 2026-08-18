@@ -496,10 +496,14 @@ int cmd_new(int argc, char** argv) {
     if (ec) {
         return fail("не скопировать шаблон: " + ec.message());
     }
-    fs::remove_all(dest / "build", ec);
+    // Каталоги сборки шаблона новому проекту не нужны: развёрнутый проект должен быть
+    // чистым, а не приезжать с чужими бинарями внутри.
+    for (const char* junk : {"build", "out", "dist"}) {
+        fs::remove_all(dest / junk, ec);
+    }
     std::println("graft: шаблон развёрнут -> {}", dest.string());
     std::println("graft: имя плагина правится в CMakeLists.txt (NAME) и в src/hello.cpp");
-    std::println("graft: собрать -> cmake -B build && cmake --build build");
+    std::println("graft: собрать -> cmake --preset release && cmake --build --preset release");
     return 0;
 }
 

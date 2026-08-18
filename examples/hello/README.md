@@ -5,16 +5,18 @@
 
 ```
 CMakeLists.txt                             graft_import + graft_plugin, больше ничего
+CMakePresets.json                          release и debug, артефакты в out/<пресет>
 src/hello.cpp                              паспорт плагина + функция + привязка
 mod/HELLO_GRAFT/config.cpp                 обычный мод DayZ
 mod/HELLO_GRAFT/scripts/5_Mission/hello.c  вызов из скрипта
+deploy.ps1                                 собрать -> PBO -> разложить по игре
 ```
 
-Сборка добавляет к этому два файла — и оба в каталоге сборки, не в исходниках:
+Сборка добавляет к этому два файла — и оба в `out/`, не в исходниках:
 
 ```
-build/HELLO_GRAFT.grafted.dll
-build/HELLO_GRAFT.scripts/3_Game/grafted_natives_HELLO_GRAFT.c
+out/release/HELLO_GRAFT.grafted.dll
+out/release/HELLO_GRAFT.scripts/3_Game/grafted_natives_HELLO_GRAFT.c
 ```
 
 Итог в игре — строка в script-логе:
@@ -51,20 +53,24 @@ proto native owned string HelloGraft(string p0);
 graft install "C:\DayZServer"
 
 :: 2. собрать: graft подтянется сам, объявления появятся рядом с DLL
-cmake -B build -G Ninja
-cmake --build build
+cmake --preset release
+cmake --build --preset release
 
-:: 3. забрать к себе в мод и собрать PBO своим обычным способом
-xcopy /E /Y build\HELLO_GRAFT.scripts mod\HELLO_GRAFT\scripts
+:: 3. забрать к себе в мод, упаковать PBO, положить в игру
+powershell -File deploy.ps1 -Game "C:\DayZServer"
 
-:: 4. положить рядом с игрой: DLL в @МОД\grafted\, PBO как обычно в @МОД\addons\
-copy build\HELLO_GRAFT.grafted.dll "C:\DayZServer\@HELLO_GRAFT\grafted\"
-
-:: 5. запустить с -mod=@HELLO_GRAFT и посмотреть script-лог
+:: 4. запустить с -mod=@HELLO_GRAFT и посмотреть script-лог
 ```
 
-Правишь C++ — повторяешь шаги 2 и 4. Шаг 3 нужен только когда изменился список нативов:
-объявления печатаются на каждой сборке, но меняются редко.
+Правишь C++ — повторяешь шаги 2 и 3; `deploy.ps1` делает оба.
+
+Без пресета тоже можно, но тип сборки задай явно:
+`cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release`. Пустой `CMAKE_BUILD_TYPE` даёт
+отладочную сборку, и это редко то, что кладут в мод.
+
+Сгенерированные объявления в `mod/` лежать обязаны — иначе PBO не соберётся, — но в
+репозиторий не едут: за это отвечает строка `mod/*/scripts/*/grafted_natives_*.c`
+в [.gitignore](.gitignore).
 
 Горячей перезагрузки нет: регистрация происходит один раз на старте движка. Поменял
 C++ — перезапусти игру.

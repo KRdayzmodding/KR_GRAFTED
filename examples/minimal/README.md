@@ -5,7 +5,8 @@
 каталог, переименовываешь — дальше правишь только [src/natives.cpp](src/natives.cpp),
 [src/plugin.cpp](src/plugin.cpp) и [mod/](mod/).
 
-Или разверни шаблон командой: `graft new MYMOD E:\source`.
+Или разверни шаблон командой `graft new MYMOD E:\source` — она копирует
+[hello](../hello/), в котором есть ещё пресеты, `.gitignore` и `deploy.ps1`.
 
 ## Из чего состоит
 
@@ -15,9 +16,8 @@
 | [src/plugin.cpp](src/plugin.cpp) | **да** — имя и версия плагина, одна строчка |
 | [mod/EXAMPLE_GRAFT/](mod/EXAMPLE_GRAFT/) | **да** — config.cpp, класс-хозяин, тесты |
 | `build/EXAMPLE_GRAFT.scripts/<модуль>/grafted_natives_<ПЛАГИН>.c` | нет, печатает сборка |
-| [CMakeLists.txt](CMakeLists.txt) | один путь: `GRAFT_ROOT` |
-| [../README.md](../README.md) | что ещё есть в примерах |
 | [CMakeLists.txt](CMakeLists.txt) | ничего: `graft_import` тянет библиотеку сам |
+| [../README.md](../README.md) | что ещё есть в примерах |
 
 ## Хост и плагины
 
@@ -100,7 +100,7 @@ struct StringTable {                                   // обычный кла�
 };
 
 GRAFT_BINDINGS("1_Core") {
-    bind.klass<StringTable>("ExampleTable")
+    bind.class_<StringTable>("ExampleTable")
         .method<&StringTable::Set>("Set")
         .method<&StringTable::Count>("Count");
 }
@@ -176,9 +176,23 @@ cmake -B build -G Ninja
 
 Пример побольше — шаблонный скриптовый класс, у которого всё хранилище живёт в C++
 (`CppHashMap<K,V>` поверх `std::unordered_map`), — лежит в самом репозитории:
-[../../tests/plugins/cpp_hashmap.cpp](../../tests/plugins/cpp_hashmap.cpp). Он там, а не здесь,
+[../../tests/plugins/hashmap.cpp](../../tests/plugins/hashmap.cpp). Он там, а не здесь,
 потому что его гоняет сьюта `seraph::graft`, а в примерах свой сервер не поднимается.
 См. [../README.md](../README.md).
+
+## Тесты без игры
+
+Нативы — обычные функции C++, и `graft::client` — обычная статическая библиотека, так что
+логику плагина гоняют обычным тестовым фреймворком, не поднимая DayZ:
+
+```cmake
+add_executable(example_tests tests/logic_test.cpp src/natives.cpp)
+target_link_libraries(example_tests PRIVATE graft::client GTest::gtest_main)
+```
+
+Блоки `GRAFT_BINDINGS` в таком экзешнике просто наполняют реестр и никуда не ходят —
+движок нужен только тем нативам, которые сами зовут его (`graft::ref`, `world.hpp`).
+Их и оставляют на сьюту в игре.
 
 ## Что важно знать
 
@@ -196,7 +210,15 @@ cmake -B build -G Ninja
   маршалируемая форма. Строку через `out` вернуть нельзя вообще — ею владеет движок;
   отдавай её возвратом (`std::string`).
 - **`std::vector<T>` возвратом не отдать** — память массива принадлежит движку. Заполняй
-  через `out`-ссылку на `graft::array<T>`.
+  через `out`-ссылку на `graft::array<T>`: поэлементно `set(i, v)`, пачкой `assign(range)`,
+  а простую сортировку сделает сам движок — `values.sort()` / `values.sort(true)`.
+  Итератор вьюхи не пишущий, поэтому `std::ranges::sort` прямо по ней не пройдёт:
+  скопируй (`std::ranges::to<std::vector<int>>(values)`), посчитай, верни `assign`.
+- **Движковых путей в C++ нет.** `$profile:`, `$saves:`, `$CurrentDir:` понимает только
+  скрипт. Для `std::ofstream` это обычное имя файла, а `:` на NTFS открывает
+  АЛЬТЕРНАТИВНЫЙ ПОТОК: файл «сохраняется» успешно и исчезает бесследно. Рабочий каталог
+  процесса — каталог игры. Принимай из скрипта относительное имя, проверяй его
+  (`:`, `..`, абсолютный путь — отказ) и раскрывай в свой каталог сам.
 - **В теле `co_routine` (uTest-кейсы) нельзя `&&`** — компилятор Enforce на нём падает.
 - **Горячей перезагрузки нет.** Регистрация происходит один раз на старте движка,
   скриптовая сторона лежит в PBO. Перезапуск игры.

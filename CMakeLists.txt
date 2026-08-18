@@ -35,14 +35,22 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 #   out/<конфиг>/examples/<пример>/  плагин примера и его объявления
 #
 # Конфигурация — в имени каталога, поэтому debug и release лежат рядом и не дерутся.
-string(TOLOWER "${CMAKE_BUILD_TYPE}" GRAFT_CONFIG)
-if(NOT GRAFT_CONFIG)
-    set(GRAFT_CONFIG "release")
-endif()
-set(GRAFT_OUT "${CMAKE_SOURCE_DIR}/out/${GRAFT_CONFIG}" CACHE PATH "куда кладутся артефакты")
+#
+# ВСЁ ЭТО — только когда graft собирают сам по себе. В чужом проекте у нас нет никаких
+# прав на его дерево: ни складывать graft.exe в его исходники, ни двигать его .lib.
+# Там graft.exe уезжает в каталог сборки потребителя (см. SRC/CMakeLists.txt).
+if(PROJECT_IS_TOP_LEVEL)
+    string(TOLOWER "${CMAKE_BUILD_TYPE}" GRAFT_CONFIG)
+    if(NOT GRAFT_CONFIG)
+        set(GRAFT_CONFIG "release")
+    endif()
+    # Не CACHE: иначе смена CMAKE_BUILD_TYPE в том же каталоге сборки не переезжает и
+    # release-артефакты продолжают падать в out/debug.
+    set(GRAFT_OUT "${CMAKE_SOURCE_DIR}/out/${GRAFT_CONFIG}")
 
-# Импортные библиотеки, .exp и статические .lib — мусор сборки, в out/ им нечего делать.
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+    # Импортные библиотеки, .exp и статические .lib — мусор сборки, в out/ им нечего делать.
+    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+endif()
 
 # C++26 для нашего кода: clang-cl не знает /std:c++26, прокидываем в clang-драйвер.
 add_library(graft_std INTERFACE)
@@ -52,7 +60,11 @@ target_compile_options(graft_std INTERFACE
 )
 
 # Статический runtime: и хост, и плагины едут к чужим людям, MSVC-редиста у них нет.
-if(MSVC)
+#
+# Только для своей сборки: в чужом проекте выбор рантайма — его дело, а наши статические
+# библиотеки должны совпасть с ЕГО выбором, иначе линковка падает на _ITERATOR_DEBUG_LEVEL.
+# Ничего не задав, мы наследуем его CMAKE_MSVC_RUNTIME_LIBRARY — и совпадаем всегда.
+if(MSVC AND PROJECT_IS_TOP_LEVEL)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
