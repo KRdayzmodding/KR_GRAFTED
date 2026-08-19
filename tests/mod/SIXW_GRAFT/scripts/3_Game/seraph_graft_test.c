@@ -1894,6 +1894,20 @@ class SERAPH_GRAFT_TEST : uTestSuite
 
     // Шаг 7. И их steam id — то, ради чего всё это. Пропускаем, если на сервере пусто:
     // проверять нечего, а красный кейс на пустом сервере ничего не значит.
+    // Шаг 8. Возврат ОБЪЕКТА из движкового натива. Правило x64 ABI: структура с базовым
+    // классом (а зеркало всё такое) возвращается через скрытый буфер, движок же кладёт
+    // указатель в rax. Разъедется — сюда приедет не тот объект, и это ловится сверкой с
+    // указателем, пришедшим из скрипта. Стоило steam id: GetIdentity отдавал мусор,
+    // GetPlainId у него — пустую строку.
+    [TEST_CASE("Out_ObjectReturnIsTheSameObjectAsInScript").IN(SERAPH_GRAFT_TEST)];
+    void Out_ObjectReturnIsTheSameObjectAsInScript(co_call ctx)
+    {
+        co_routine coro = co_new(ctx);
+        GraftTick(0.0, GetGame());
+        bool same = SeraphGraftObjectReturnMatches(GetGame().GetMission());
+        assert(same, "true", same.ToString(), "натив вернул тот же объект, что видит скрипт");
+    }
+
     [TEST_CASE("Out_SteamIdsFromCppMatchScript").IN(SERAPH_GRAFT_TEST)];
     void Out_SteamIdsFromCppMatchScript(co_call ctx)
     {

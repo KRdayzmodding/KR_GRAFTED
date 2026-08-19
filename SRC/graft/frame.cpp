@@ -9,6 +9,7 @@
 #include "graft/frame.hpp"
 #include "graft/guard.hpp"
 #include "graft/loader.hpp"
+#include "graft/stages.hpp"
 #include "graft/script.hpp"
 
 // Кадр БЕЗ строки в скрипте.
@@ -76,6 +77,7 @@ void __fastcall hook_prepare(void* self, void* frame, std::uint32_t index, std::
         // здесь уронило бы игру на её собственном коде.
         ::graft::detail::guarded<void>(reinterpret_cast<void*>(&hook_prepare), [&] {
             loader::set_script_root(self);
+            stage::note_frame();
             loader::run_ticks(static_cast<float>(dt));
         });
     } else {

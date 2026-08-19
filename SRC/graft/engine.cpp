@@ -17,6 +17,7 @@
 #include "graft/native.hpp"
 #include "graft/plugins.hpp"
 #include "graft/scan.hpp"
+#include "graft/stages.hpp"
 #include "graft/script.hpp"
 
 namespace graft {
@@ -174,11 +175,14 @@ void retry_pending() {
     g_retrying = false;
 }
 
+// Врезка сообщает ФАКТ и больше ничего: кто на него подписан — дело подписчиков
+// (см. install). Ни шапки, ни отложенных нативов здесь знать не надо.
 void* __fastcall hook_register_method(void* ctx, void* cls, const char* name, void* impl,
                                       unsigned ret_buf, char create) {
     script::note_context(ctx);
     void* result = g_orig_method(ctx, cls, name, impl, ret_buf, create);
-    retry_pending();
+    stage::note_registration(ctx, script::class_name(cls));
+    stage::pump();
     return result;
 }
 
@@ -199,8 +203,9 @@ void* __fastcall hook_register_global(void* ctx, const char* name, void* impl,
         script::set_register_method(reinterpret_cast<void*>(g_api.register_method));
         script::bind(ctx, reinterpret_cast<void*>(g_api.find_class),
                      reinterpret_cast<void*>(g_find_index));
-        script::available();   // самопроверка на ванильном string.Length, пишет в журнал
         register_all(ctx);
+        // Дальше движок начнёт разбирать модули; лестница поймает это сама.
+        stage::pump();
         g_busy = false;
     }
     return result;
@@ -265,11 +270,21 @@ void install() {
                     g_find_index ? rva(reinterpret_cast<void*>(g_find_index)) : 0));
     loader::mark("хуки установлены");
 
+    // Кто чего ждёт — записано здесь, одним списком, а не размазано по врезкам.
+    //
+    // Отложенные нативы ждут КЛАССА: игровые классы появляются не в первом слое, а в
+    // третьем-четвёртом, и раньше конца слоя их искать бессмысленно.
+    stage::on_layer_end([](const stage::layer&) { retry_pending(); });
+    // Шапка ждёт, когда движку станет чем печатать: кадр вызова Print собирается по
+    // шаблонам скриптовых переменных, а их приносит линковка модуля.
+    stage::on(stage::step::linked, [] { say_banner_to_game(); });
+
     // ТОЛЬКО ТЕПЕРЬ грузим плагины: LoadLibrary — это десятки миллисекунд на каждый,
     // а маяк движка может прийти в любой момент. Хуки уже стоят, поэтому опоздать
     // некуда: обработчик маяка просто увидит готовый реестр.
     loader::load(dir);
     loader::mark("плагины загружены");
+    stage::detail::reach(stage::step::armed);
 }
 
 void bind_pending() {

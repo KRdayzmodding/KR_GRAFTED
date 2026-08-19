@@ -974,6 +974,25 @@ f32 SeraphGraftLastDt() {
 // Собрать игроков и узнать их steam id — целиком из C++, ни строчки скрипта. Ровно то,
 // ради чего затевалось обратное направление.
 //
+// Возврат ОБЪЕКТА из движкового натива: тот ли это объект, что видит скрипт.
+//
+// Кейс сторожит правило x64 ABI, на котором библиотека однажды уже обожглась: тип зеркала
+// это struct с базовым классом, и MSVC такие возвращает через скрытый буфер, а движок
+// кладёт указатель в rax. Пока сверка идёт с указателем, пришедшим ИЗ СКРИПТА, никакая
+// перестановка регистров мимо не проедет.
+bool SeraphGraftObjectReturnMatches(graft::obj from_script) {
+#ifdef SERAPH_HAVE_DAYZ_API
+    const auto game = graft::cast<graft::dayz::CGame>(graft::game());
+    if (!game || !from_script.ptr) {
+        return false;
+    }
+    // Через ЗЕРКАЛО — ровно тем путём, каким мод зовёт движок.
+    return game.GetMission().ptr == from_script.ptr;
+#else
+    return false;
+#endif
+}
+
 text SeraphGraftPlayerIds() {
 #ifdef SERAPH_HAVE_DAYZ_API
     const auto game = graft::cast<graft::dayz::CGame>(graft::game());
@@ -1127,6 +1146,7 @@ GRAFT_BINDINGS("3_Game") {
         // Игровые классы (CGame, Man) появляются только здесь.
         .global<&SeraphGraftGameClass>("SeraphGraftGameClass")
         .global<&SeraphGraftPlayerIds>("SeraphGraftPlayerIds")
+        .global<&SeraphGraftObjectReturnMatches>("SeraphGraftObjectReturnMatches")
         .global<&SeraphGraftCallScriptFunction>("SeraphGraftCallScriptFunction");
 }
 

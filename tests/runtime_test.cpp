@@ -15,9 +15,102 @@
 #include "graft/engine.hpp"
 #include "graft/guard.hpp"
 #include "graft/loader.hpp"
+#include "graft/stages.hpp"
 #include "graft/native.hpp"
 
 namespace {
+
+// ── Лестница этапов ─────────────────────────────────────────────────────────
+// Движок не сообщает о своей готовности ничем, поэтому библиотека выражает её сама:
+// монотонная лестница и подписки на ступени. Правила проверяются без игры — сдвигать
+// лестницу руками умеет stage::detail::reach, ею же двигают врезки.
+
+namespace {
+
+// Лестница одна на процесс и назад не ходит, поэтому кейсы идут по возрастанию ступени и
+// сверяют то, что от неё зависит, а не «сбрасывают» её между собой.
+std::vector<int>& stage_marks() {
+    static std::vector<int> all;
+    return all;
+}
+
+}  // namespace
+
+TEST(Stages, StartsAtNothing) {
+    EXPECT_EQ(graft::stage::current(), graft::stage::step::none);
+    EXPECT_FALSE(graft::stage::reached(graft::stage::step::armed));
+}
+
+TEST(Stages, WakesSubscribersOnceInOrder) {
+    stage_marks().clear();
+    graft::stage::on(graft::stage::step::armed, [] { stage_marks().push_back(1); });
+    graft::stage::on(graft::stage::step::armed, [] { stage_marks().push_back(2); });
+    EXPECT_TRUE(stage_marks().empty());  // ступень ещё не достигнута — никого не будили
+
+    graft::stage::detail::reach(graft::stage::step::armed);
+    EXPECT_EQ(stage_marks(), (std::vector<int>{1, 2}));  // порядок подписки
+
+    // Повторный проход той же ступени не будит никого второй раз.
+    graft::stage::detail::reach(graft::stage::step::armed);
+    EXPECT_EQ(stage_marks().size(), 2u);
+    EXPECT_TRUE(graft::stage::reached(graft::stage::step::armed));
+}
+
+// Опоздавшего зовут сразу: иначе подписка зависела бы от порядка инициализации единиц
+// трансляции, а он не определён.
+TEST(Stages, LateSubscriberIsCalledImmediately) {
+    stage_marks().clear();
+    // Каждый кейс — свой процесс, поэтому ступень поднимает сам.
+    graft::stage::detail::reach(graft::stage::step::armed);
+    graft::stage::on(graft::stage::step::armed, [] { stage_marks().push_back(7); });
+    EXPECT_EQ(stage_marks(), (std::vector<int>{7}));
+}
+
+// Ступени можно перескакивать: ждавшие пропущенную получают своё на следующей.
+TEST(Stages, HigherStepWakesEveryoneBelow) {
+    stage_marks().clear();
+    graft::stage::on(graft::stage::step::linked, [] { stage_marks().push_back(10); });
+    graft::stage::on(graft::stage::step::running, [] { stage_marks().push_back(20); });
+
+    graft::stage::detail::reach(graft::stage::step::running);
+    EXPECT_EQ(stage_marks(), (std::vector<int>{10, 20}));
+    EXPECT_TRUE(graft::stage::reached(graft::stage::step::linked));
+    EXPECT_EQ(graft::stage::current(), graft::stage::step::running);
+}
+
+// ── Слои ────────────────────────────────────────────────────────────────────
+// Слой — скриптовый модуль движка. Границу видно по смене script-контекста: пришёл
+// другой — предыдущий дорегистрировался.
+
+namespace {
+
+std::vector<std::string>& layer_marks() {
+    static std::vector<std::string> all;
+    return all;
+}
+
+}  // namespace
+
+TEST(Stages, LayerBoundariesFollowTheContext) {
+    layer_marks().clear();
+    graft::stage::on_layer_begin([](const graft::stage::layer& one) {
+        layer_marks().push_back(std::format("+{} {}", one.index, one.first_class));
+    });
+    graft::stage::on_layer_end([](const graft::stage::layer& one) {
+        layer_marks().push_back(std::format("-{} {}..{}", one.index, one.first_class,
+                                            one.last_class));
+    });
+
+    int core = 0;
+    int game = 0;
+    graft::stage::note_registration(&core, "string");
+    graft::stage::note_registration(&core, "map");        // тот же слой — событий нет
+    graft::stage::note_registration(&game, "Object");     // другой контекст — граница
+    graft::stage::note_frame();                           // кадр закрывает последний слой
+
+    EXPECT_EQ(layer_marks(), (std::vector<std::string>{"+1 string", "-1 string..map",
+                                                       "+2 Object", "-2 Object..Object"}));
+}
 
 // ── Журналы ─────────────────────────────────────────────────────────────────
 // Каналов два: системный — наш файл в профиле сервера, пользовательский — журналы самой

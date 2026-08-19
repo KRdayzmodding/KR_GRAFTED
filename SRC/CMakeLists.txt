@@ -33,6 +33,7 @@ add_library(graft_host STATIC
     graft/objects.cpp
     graft/log_host.cpp
     graft/banner.cpp
+    graft/stages.cpp
 )
 target_link_libraries(graft_host PUBLIC graft_common)
 

@@ -322,6 +322,41 @@ consteval field_name<N> operator""_f() {
 
 // Ссылка на любой скриптовый объект: имя класса задаётся прямо в типе.
 //   graft::ref<"PlayerBase"> p   ->  PlayerBase p0
+namespace detail {
+
+// Возврат ОБЪЕКТА из движкового натива.
+//
+// Движок кладёт ссылку в RAX — как и всякий C++, возвращающий указатель. А тип зеркала
+// это struct С БАЗОВЫМ КЛАССОМ (Man_ : Entity_ : Object_ : ...), и MSVC такие возвращает
+// ЧЕРЕЗ СКРЫТЫЙ БУФЕР: правило x64 ABI прямо говорит «no base classes». Тогда rcx уезжает
+// под адрес возврата, объект съезжает в rdx, движок читает не тот регистр — и наружу
+// приезжает мусор, который потом молча ведёт себя как «объект есть, но пустой».
+//
+// Проверено на живом сервере, CGame.GetMission: через зеркало приходил 0x376cf200beb87d8c,
+// сырым вызовом — 0x24a84c617e0, ровно тот указатель, что видит скрипт. Оттуда же росло
+// «GetIdentity вернул объект, а GetPlainId у него пустой».
+//
+// Поэтому объектный возврат зовём как void* и ссылку собираем сами — заодно разворачивая
+// обёртку, ровно как это делается для аргументов, полей и элементов контейнеров.
+template <class R>
+concept object_return = requires { R::script_class; };
+
+template <class R, class... A>
+R call_native(void* impl, void* self, A... args) {
+    if constexpr (std::is_void_v<R>) {
+        reinterpret_cast<void(__fastcall*)(void*, A...)>(impl)(self, args...);
+    } else if constexpr (object_return<R>) {
+        void* raw = reinterpret_cast<void*(__fastcall*)(void*, A...)>(impl)(self, args...);
+        R out{};
+        out.ptr = script::deref_object(raw);
+        return out;
+    } else {
+        return reinterpret_cast<R(__fastcall*)(void*, A...)>(impl)(self, args...);
+    }
+}
+
+}  // namespace detail
+
 // Внутри — тот самый указатель, который движок кладёт в регистр.
 //
 // Наследник этой обёртки — обычный класс C++, отражающий скриптовый: его методы
@@ -355,7 +390,7 @@ struct ref {
                 return R{};
             }
         }
-        return reinterpret_cast<R(__fastcall*)(void*, A...)>(fn.impl)(ptr, args...);
+        return detail::call_native<R>(fn.impl, ptr, args...);
     }
 
     // То же, но промах виден в типе, а не превращается в ноль.
@@ -372,10 +407,10 @@ struct ref {
             return std::unexpected(miss::not_native);
         }
         if constexpr (std::is_void_v<R>) {
-            reinterpret_cast<void(__fastcall*)(void*, A...)>(fn.impl)(ptr, args...);
+            detail::call_native<void>(fn.impl, ptr, args...);
             return R{};
         } else {
-            return reinterpret_cast<R(__fastcall*)(void*, A...)>(fn.impl)(ptr, args...);
+            return detail::call_native<R>(fn.impl, ptr, args...);
         }
     }
     // Можно ли звать этот метод напрямую (существует и нативный).
@@ -400,7 +435,7 @@ struct ref {
                 return R{};
             }
         }
-        return reinterpret_cast<R(__fastcall*)(void*, A...)>(fn.impl)(ptr, args...);
+        return detail::call_native<R>(fn.impl, ptr, args...);
     }
 
     template <class R, name_t Method, class... A>
@@ -416,10 +451,10 @@ struct ref {
             return std::unexpected(miss::not_native);
         }
         if constexpr (std::is_void_v<R>) {
-            reinterpret_cast<void(__fastcall*)(void*, A...)>(fn.impl)(ptr, args...);
+            detail::call_native<void>(fn.impl, ptr, args...);
             return R{};
         } else {
-            return reinterpret_cast<R(__fastcall*)(void*, A...)>(fn.impl)(ptr, args...);
+            return detail::call_native<R>(fn.impl, ptr, args...);
         }
     }
 

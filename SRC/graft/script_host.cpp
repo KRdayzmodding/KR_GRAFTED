@@ -11,6 +11,7 @@
 
 #include "graft/engine.hpp"
 #include "graft/loader.hpp"
+#include "graft/stages.hpp"
 
 // Здесь остаётся только то, чему нужно состояние: script-контексты движка и адреса,
 // найденные сканом. Чистые чтения движковых структур живут inline в script.hpp —
@@ -95,16 +96,12 @@ bool register_method_late(const char* class_name, const char* name, void* impl, 
     return true;
 }
 
-// Самопроверка ленивая: в момент bind() ядро ещё регистрируется, и ванильные классы
-// доступны не все. `string.Length` есть в любом билде — если он находится и указывает
-// в образ игры, значит и обход дескрипторов верен.
+// Отвечает ли движок. Это ступень лестницы, а не собственная самопроверка: раньше здесь
+// стоял статик, который запоминал ПЕРВЫЙ ответ, — а первый раз спрашивают на маяке, когда
+// классы ещё не разобраны. Из-за этого в журнале навсегда оставалось «lookup failed», при
+// полностью рабочем API.
 bool available() {
-    static const bool ok = [] {
-        const bool hit = static_cast<bool>(find_method("string", "Length"));
-        log(hit ? "script api: ready" : "script api: lookup failed, disabled");
-        return hit;
-    }();
-    return ok;
+    return stage::reached(stage::step::linked);
 }
 
 void* root() {
