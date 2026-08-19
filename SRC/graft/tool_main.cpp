@@ -516,6 +516,17 @@ int cmd_new(int argc, char** argv) {
     for (const char* junk : {"build", "out", "dist"}) {
         fs::remove_all(dest / junk, ec);
     }
+    // Объявления шаблон держит в моде (иначе они пропадают вместе с каталогом сборки),
+    // но имя плагина в них — чужое. Свои напечатает первая же сборка.
+    std::vector<fs::path> generated;
+    for (const fs::directory_entry& e : fs::recursive_directory_iterator{dest, ec}) {
+        if (e.is_regular_file() && e.path().filename().string().starts_with("grafted_natives_")) {
+            generated.push_back(e.path());  // удаляем после обхода: не рвать итератор
+        }
+    }
+    for (const fs::path& file : generated) {
+        fs::remove(file, ec);
+    }
     std::println("graft: шаблон развёрнут -> {}", dest.string());
     std::println("graft: имя плагина правится в CMakeLists.txt (NAME) и в src/hello.cpp");
     std::println("graft: собрать -> cmake --preset release && cmake --build --preset release");

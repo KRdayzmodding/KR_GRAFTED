@@ -10,14 +10,14 @@ src/hello.cpp                              паспорт плагина + фу�
 mod/HELLO_GRAFT/config.cpp                 обычный мод DayZ
 mod/HELLO_GRAFT/scripts/5_Mission/hello.c  вызов из скрипта
 deploy.ps1                                 собрать -> PBO -> разложить по игре
-.gitignore                                 build/ out/ dist/ и сгенерированные объявления
+.gitignore                                 build/ out/ dist/
 ```
 
-Сборка добавляет к этому два файла — и оба в `out/`, не в исходниках:
+Сборка добавляет к этому два файла — DLL рядом с собой, объявления сразу в мод:
 
 ```
 out/release/HELLO_GRAFT.grafted.dll
-out/release/HELLO_GRAFT.scripts/3_Game/grafted_natives_HELLO_GRAFT.c
+mod/HELLO_GRAFT/scripts/3_Game/grafted_natives_HELLO_GRAFT.c
 ```
 
 Итог в игре — строка в script-логе:
@@ -53,11 +53,11 @@ proto native owned string HelloGraft(string p0);
 :: 1. один раз: поставить хост рядом с exe игры
 graft install "C:\DayZServer"
 
-:: 2. собрать: graft подтянется сам, объявления появятся рядом с DLL
+:: 2. собрать: graft подтянется сам, объявления лягут в мод
 cmake --preset release
 cmake --build --preset release
 
-:: 3. забрать к себе в мод, упаковать PBO, положить в игру
+:: 3. упаковать PBO и положить в игру
 powershell -File deploy.ps1 -Game "C:\DayZServer"
 
 :: 4. запустить с -mod=@HELLO_GRAFT и посмотреть script-лог
@@ -69,13 +69,14 @@ powershell -File deploy.ps1 -Game "C:\DayZServer"
 `cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release`. Пустой `CMAKE_BUILD_TYPE` даёт
 отладочную сборку, и это редко то, что кладут в мод.
 
-Сгенерированные объявления в `mod/` лежать обязаны — иначе PBO не соберётся, — но в
-репозиторий не едут: за это отвечает строка `mod/*/scripts/*/grafted_natives_*.c`
-в [.gitignore](.gitignore). В моде они появляются на шаге 3, их кладёт `deploy.ps1`.
+Сгенерированные объявления печатает сборка (`SCRIPTS_DIR` в CMakeLists.txt) прямо в
+`mod/`: без них PBO не соберётся, а каталог сборки чистят — файл, который живёт только
+там, рано или поздно пропадает. Лежит он и в репозитории: пример должен показывать мод
+целиком, а расхождение с C++ видно обычным `git diff`. Править его руками не нужно —
+следующая сборка перепишет.
 
-Остальные три примера сделаны наоборот: у них сборка пишет объявления сразу в мод
-(`SCRIPTS_DIR`), и файл лежит в репозитории — пример должен показывать мод целиком.
-Обе раскладки рабочие; здесь, в шаблоне, дерево исходников остаётся чистым.
+Свой проект волен хранить их и рядом с DLL (это умолчание `graft_plugin`), забирая в мод
+на шаге упаковки. `graft new` из клона шаблона их убирает: имя в них — чужое.
 
 Горячей перезагрузки нет: регистрация происходит один раз на старте движка. Поменял
 C++ — перезапусти игру.

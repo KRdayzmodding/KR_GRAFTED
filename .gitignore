@@ -10,9 +10,7 @@ examples/players/src/graft/
 CMakeUserPresets.json
 # объявления печатает сборка рядом с DLL — в исходниках их нет
 grafted_natives_*.c
-# ...кроме трёх примеров: там сборка печатает их ПРЯМО В МОД (SCRIPTS_DIR), и лежать они
+# ...кроме примеров: там сборка печатает их ПРЯМО В МОД (SCRIPTS_DIR), и лежать они
 # обязаны в репозитории — пример должен показывать мод целиком, включая тот скриптовый
-# код, который написан не рукой. hello остаётся с чистым деревом: его клонирует graft new.
-!examples/minimal/mod/*/scripts/*/grafted_natives_*.c
-!examples/hashmap/mod/*/scripts/*/grafted_natives_*.c
-!examples/players/mod/*/scripts/*/grafted_natives_*.c
+# код, который написан не рукой. Из клона шаблона (graft new) их убирает сам инструмент.
+!examples/*/mod/*/scripts/*/grafted_natives_*.c

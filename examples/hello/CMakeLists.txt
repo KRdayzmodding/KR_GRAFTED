@@ -4,8 +4,8 @@ project(hello_graft CXX C)
 # Самый маленький мод на graft: одна функция в C++, один вызов в скрипте.
 # Весь проект — этот файл, src/hello.cpp и папка мода. Больше ничего нет.
 #
-# Сборка кладёт рядом с DLL каталог HELLO_GRAFT.scripts — готовые объявления для PBO.
-# Забрать их в мод и собрать PBO — твоё дело: graft мод не собирает.
+# Сборка печатает в мод готовые объявления для PBO (scripts/3_Game). Собрать PBO и
+# положить в игру — твоё дело: graft мод не собирает, см. deploy.ps1.
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(MSVC)
@@ -25,8 +25,12 @@ endif()
 include("${GRAFT_BOOT_FILE}")
 graft_import(graft https://github.com/KRdayzmodding/KR_GRAFTED TAG main)
 
+# SCRIPTS_DIR: объявления печатаются ПРЯМО В МОД, а не рядом с DLL. Иначе они живут
+# только в каталоге сборки — а он чистится, и мод остаётся без объявлений, с которыми
+# PBO не собирается. Свой проект волен хранить их где угодно (см. deploy.ps1).
 graft_plugin(hello
     NAME    HELLO_GRAFT
     VERSION 1
     SOURCES src/hello.cpp
-    MODULES 3_Game)
+    MODULES 3_Game
+    SCRIPTS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/mod/HELLO_GRAFT/scripts")

@@ -16,19 +16,16 @@ $out  = Join-Path $root "out\$Preset"
 $mod  = Join-Path $root "mod\$Name"
 $dist = Join-Path $root "dist\@$Name"
 
-# 1. Собрать: DLL + <ИМЯ>.scripts с объявлениями.
+# 1. Собрать: DLL + объявления (их сборка печатает прямо в мод).
 cmake --build --preset $Preset
 if ($LASTEXITCODE) { throw "сборка упала" }
 
-# 2. Забрать объявления в мод. Это артефакт сборки: он в .gitignore, но в PBO обязан быть.
-Copy-Item -Recurse -Force (Join-Path $out "$Name.scripts\*") (Join-Path $mod "scripts")
-
-# 3. Упаковать PBO и положить плагин рядом с addons.
+# 2. Упаковать PBO и положить плагин рядом с addons.
 New-Item -ItemType Directory -Force "$dist\addons", "$dist\grafted" | Out-Null
 & $MakePbo -P -D $mod "$dist\addons\$Name.pbo"
 if ($LASTEXITCODE) { throw "MakePbo упал" }
 Copy-Item -Force (Join-Path $out "$Name.grafted.dll") "$dist\grafted\"
 
-# 4. Положить мод в игру. Хост ставится один раз: graft install <каталог игры>.
+# 3. Положить мод в игру. Хост ставится один раз: graft install <каталог игры>.
 Copy-Item -Recurse -Force $dist $Game
 Write-Host "готово: $Game\@$Name  (запускать с -mod=@$Name)"
