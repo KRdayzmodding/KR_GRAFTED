@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <cstddef>
 #include <format>
+#include <string>
 #include <string_view>
 
 #include "graft/callout.hpp"
@@ -25,20 +26,35 @@ namespace {
 // на строки приходится нам — в журнале у каждой записи своё время, а Print игры
 // многострочную строку одной записью и оставит.
 constexpr std::string_view kArt = R"(
-  ▄████  ██▀███   ▄▄▄        █████▐██████▒█████ ▓█████▄ 
- ██▒ ▀█▒▓██ ▒ ██▒▒████▄    ▓██   ▒  ▓██▒ ▒█   ▀ ▒██▀ ██▌
-▒██░▄▄▄░▓██ ░▄█ ▒▒██  ▀█▄  ▒████ ░  ▓██░ ░███   ░██   ██
-░▓█  ██▓▒██▀▀█▄  ░██▄▄▄▄██ ░▓█▒  ░  ▒▐█▓ ░▓█  ▄ ░▓█▄   █
-░▒▓███▀▒░██▓ ▒██▒ ▓█   ▓██▒░▒█░     ▒▐▌▒ ░▒████▒░▒██████
- ░▒   ▒ ░ ▒▓ ░▒▓░ ▒▒   ▓▒▐░ ▒▌░     ░ ░░  ░ ▒░ ░ ▒▒▓  ▓ 
-  ░   ░   ░▒ ░ ▒░  ▒   ▒▒ ░ ░         ░   ░ ░  ░ ░ ▒  ▒ 
-░ ░   ░   ░░   ░   ░   ▒    ░ ░     ░       ░    ░ ░  ▒ 
-      ░    ░           ░  ░                 ░  ░   ░  ░ 
+ㅤ                ▁▂▁                                
+ㅤ              □░▒▓▒░□     ▂▃▂                      
+ㅤ                """_ "__□░▒▓▒░□        v{},     
+ㅤ           ▁▂▂▁  __." --" """       ╓─<grafted>>   
+ㅤ         □░▒▓▓▒░□___ "_._  □░▒░□_.">╬═<"0x1"␀"     
+ㅤ           """"     "" , \_.   "_. ."              
+ㅤ                  ▁▂▁ _"__ \__./ ."                
+ㅤ                □░▒▓▒░□"  "_    ./                 
+ㅤ                  '''       (    )                 
+ㅤ       ╭───────────────────╯░░░░░░╰──────────────╮ 
+ㅤ       ┝───github.com/KRdayzmodding/KR_GRAFTED───┥ 
+ㅤ       │   by [KR] 6wingSeraph  &  Maintainers   │ 
+ㅤ       ╰──┰───────────────────────────────────┰──╯ 
+ㅤ  ▄████  ██▀███   ▄▄▄        █████▒▄▄▄█████▓▓█████ ▓█████▄ 
+ㅤ ██▒ ▀█▒▓██ ▒ ██▒▒████▄    ▓██   ▒ ▓  ██▒ ▓▒▓█   ▀ ▒██▀ ██▌
+ㅤ▒██░▄▄▄░▓██ ░▄█ ▒▒██  ▀█▄  ▒████ ░ ▒ ▓██░ ▒░▒███   ░██   █▌
+ㅤ░▓█  ██▓▒██▀▀█▄  ░██▄▄▄▄██ ░▓█▒  ░ ░ ▓██▓ ░ ▒▓█  ▄ ░▓█▄   ▌
+ㅤ░▒▓███▀▒░██▓ ▒██▒ ▓█   ▓██▒░▒█░      ▒██▒ ░ ░▒████▒░▒████▓ 
+ㅤ ░▒   ▒ ░ ▒▓ ░▒▓░ ▒▒   ▓▒█░ ▒ ░      ▒ ░░   ░░ ▒░ ░ ▒▒▓  ▒ 
+ㅤ  ░   ░   ░▒ ░ ▒░  ▒   ▒▒ ░ ░          ░     ░ ░  ░ ░ ▒  ▒ 
+ㅤ░ ░   ░   ░░   ░   ░   ▒    ░ ░      ░         ░    ░ ░  ░ 
+ㅤ      ░    ░           ░  ░                    ░  ░   ░    
 )";
 
-std::string tail() {
-    return std::format("      v{}  •  {}  by  {}", GRAFT_VERSION,
-                       "github.com/KRdayzmodding/KR_GRAFTED", "[KR] 6wingSeraph");
+// Версия в рисунке стоит заполнителем {}: арт рисуется в редакторе, и лезть в него из-за
+// смены версии незачем. Заполнитель на три знака короче трёхсегментной версии — после
+// подстановки строка возвращает ту ширину, с которой её рисовали.
+std::string art() {
+    return std::format(kArt, GRAFT_VERSION);
 }
 
 // Обход строк без копий: string_view нарезается по месту.
@@ -78,15 +94,15 @@ bool say_banner_to_game() {
     }
     // Пустая строка первой — она отделяет шапку от заголовка журнала.
     detail::to_script_log("");
-    for_each_line(kArt, [](std::string_view line) { detail::to_script_log(line); });
-    detail::to_script_log(tail());
+    const std::string banner = art();
+    for_each_line(banner, [](std::string_view line) { detail::to_script_log(line); });
     g_said_to_game = true;
     return true;
 }
 
 void say_banner() {
-    for_each_line(kArt, [](std::string_view line) { log(line); });
-    log(tail());
+    const std::string banner = art();
+    for_each_line(banner, [](std::string_view line) { log(line); });
 }
 
 }  // namespace graft
