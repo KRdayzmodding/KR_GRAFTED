@@ -54,14 +54,21 @@ void scan_players() {
     // считает ссылки сам, а мы ими не управляем, поэтому владения не изображаем.
     const auto players = graft::scratch<graft::array<graft::dayz::Man>>();
     if (!world || !players) {
+        // Молчать тут нельзя: «известно игроков: 0» в логе мода ничем не отличается от
+        // пустого сервера, и разбираться будет не с чем. Системный журнал для того и
+        // есть — он про библиотеку, а не про мод.
+        graft::log(world ? "[EXAMPLE_PLAYERS] нет array<Man> — сканировать нечем"
+                         : "[EXAMPLE_PLAYERS] корень объектного графа ещё не пришёл");
         return;
     }
     players.clear();
     world.GetPlayers(players);
 
+    int without_identity = 0;
     for (const graft::dayz::Man man : players) {
         const graft::dayz::PlayerIdentity id = man.GetIdentity();
         if (!id) {
+            ++without_identity;
             continue;  // игрок ещё не представился
         }
         // GetPlainId объявлен как `proto`, а не `proto native` — библиотека сама выбирает
@@ -78,6 +85,17 @@ void scan_players() {
             // тот, кто разбирает библиотеку.
             graft::print(format("новый игрок: {} ({})", row.name, steam));
         }
+    }
+
+    // Что движок отдал и сколько из этого пригодилось — по этой строке видно, чей ноль:
+    // движка (никого не вернул) или наш (вернул, а мы не разобрали). Пишем при смене
+    // картины, а не каждые пять секунд.
+    static int said = -1;
+    const int seen = static_cast<int>(players.size());
+    if (seen != said) {
+        said = seen;
+        graft::log(format("[EXAMPLE_PLAYERS] движок отдал {} игроков, без identity {}", seen,
+                          without_identity));
     }
 }
 
