@@ -39,9 +39,10 @@ modded class MissionBase
         byId.Set(2, "Livonia");
         Print("[EXAMPLE_HASHMAP] byId: 1=" + byId.Get(1) + " 2=" + byId.Get(2));
 
-        // Владение обычное: умер скриптовый объект — движок позвал ~CppHashMap, тот
-        // позвал NativeDispose_EXAMPLE_HASHMAP, и std::unordered_map в C++ снесён.
-        // Новая таблица про старую ничего не знает.
+        // Владение обычное: умер скриптовый объект — вместе с ним умер и
+        // std::unordered_map в C++. Ни деструктора, ни служебных вызовов в скрипте для
+        // этого не нужно, ровно как их не нужно ванильному map. Новая таблица про
+        // старую ничего не знает.
         delete kills;
         CppHashMap<string, int> fresh = new CppHashMap<string, int>;
         int empty = fresh.Count();

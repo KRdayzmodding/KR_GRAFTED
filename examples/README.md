@@ -74,7 +74,7 @@ DayZ.exe
 | `out`-массив: C++ растит и заполняет | [minimal](minimal/src/natives.cpp) | `values.resize(n)` / `values.set(i, v)` |
 | метод скриптового класса | [minimal](minimal/src/natives.cpp) | `struct ExampleGraft : graft::script_object<"ExampleGraft">` |
 | шаблонный скриптовый класс | [hashmap](hashmap/src/cpp_hashmap.cpp) | `bind.template_class<Table>("CppHashMap<Class K, Class V>")` |
-| состояние объекта живёт в C++ | [hashmap](hashmap/src/cpp_hashmap.cpp) | `std::unordered_map` в поле, освобождение — `NativeDispose_<ПЛАГИН>` |
+| состояние объекта живёт в C++ | [hashmap](hashmap/src/cpp_hashmap.cpp) | `std::unordered_map` в поле, освобождение — само, вместе со скриптовым объектом |
 | точка входа по тику | [players](players/src/main.cpp) | `GRAFT_ON_TICK(dt)` |
 | зеркало движкового API | [players](players/src/main.cpp) | `graft::dayz::CGame`, `man.GetIdentity()` |
 | поле движкового объекта | [players](players/src/main.cpp) | `world["m_DebugMonitorEnabled"_f]` |
