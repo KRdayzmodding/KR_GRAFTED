@@ -22,6 +22,8 @@ add_library(graft_common STATIC
     graft/log_script.cpp
 )
 target_include_directories(graft_common PUBLIC "${PROJECT_SOURCE_DIR}/INCLUDE")
+# Версия проекта — одна на всех: ею представляется шапка в журналах.
+target_compile_definitions(graft_common PUBLIC GRAFT_VERSION="${PROJECT_VERSION}")
 target_link_libraries(graft_common PUBLIC graft_std)
 
 # Только хост: поиск точек движка, доступ к script-контекстам, журнал.
@@ -30,6 +32,7 @@ add_library(graft_host STATIC
     graft/script_host.cpp
     graft/objects.cpp
     graft/log_host.cpp
+    graft/banner.cpp
 )
 target_link_libraries(graft_host PUBLIC graft_common)
 

@@ -46,33 +46,35 @@ namespace {
 // Print(void var) — маршалируемая глобаль: кадр вызова собирается вслепую, по донорским
 // шаблонам. Для `void`-параметра это ровно то, что делает и сам движок: настоящую
 // переменную он в любом случае берёт по фактическому аргументу.
-bool say_to_script_log(const std::string& text) {
+}  // namespace
+
+// Строка в журнал игры КАК ЕСТЬ, без имени плагина впереди: так печатается шапка.
+bool to_script_log(std::string_view text) {
     void* impl = script::find_global("Print");
     if (!impl) {
         return false;
     }
-    const value args[] = {value{text}};
+    const value args[] = {value{std::string{text}}};
     return call_proto(as_global(impl), nullptr, args).has_value();
 }
 
 // Error2(string title, string err) — а вот это `proto native`, обычный вызов двумя
 // строками. Заголовок пустой: он от окна с ошибкой, которого на сервере нет.
-bool say_to_crash_log(const std::string& text) {
+bool to_crash_log(std::string_view text) {
     void* impl = script::find_global("Error2");
     if (!impl) {
         return false;
     }
-    reinterpret_cast<void(__fastcall*)(const char*, const char*)>(impl)("", text.c_str());
+    const std::string zero_ended{text};
+    reinterpret_cast<void(__fastcall*)(const char*, const char*)>(impl)("", zero_ended.c_str());
     return true;
 }
-
-}  // namespace
 
 // Строка от имени плагина. Не дошла до игры — не теряем: уходит в системный журнал с
 // пометкой. Молчаливая потеря хуже строки не в том файле.
 bool say(bool bad, std::string_view who, std::string_view line) {
     const std::string text = std::format("[{}] {}", who, line);
-    if (bad ? say_to_crash_log(text) : say_to_script_log(text)) {
+    if (bad ? to_crash_log(text) : to_script_log(text)) {
         return true;
     }
     log((bad ? "! " : "~ ") + text);

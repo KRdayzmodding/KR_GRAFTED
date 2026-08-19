@@ -220,6 +220,7 @@ void install() {
     const std::wstring cmd = GetCommandLineW();
     const std::string profile = plugins::profile_dir(std::string(cmd.begin(), cmd.end()));
     set_log_dir(profile.empty() ? exe_dir : profile);
+    say_banner();
 
     const std::vector<scan::view> sections = sections_of(GetModuleHandleW(nullptr));
     g_api = scan::discover(sections);
