@@ -131,23 +131,6 @@ std::vector<entry> merge(const std::vector<entry>& all, std::vector<collision>& 
     return kept;
 }
 
-bool disposes_clash(const std::vector<entry>& all) {
-    // Освобождения именованы по плагину (NativeDispose_<ПЛАГИН>), поэтому обычная
-    // проверка коллизий их не поймает: имена-то разные. Ловим по классу.
-    const auto is_dispose = [](const entry& e) {
-        return e.desc && e.desc->class_name && e.desc->name &&
-               std::string_view{e.desc->name}.starts_with("NativeDispose");
-    };
-    std::vector<std::string_view> classes;
-    for (const entry& e : all | std::views::filter(is_dispose)) {
-        if (std::ranges::contains(classes, std::string_view{e.desc->class_name})) {
-            return true;
-        }
-        classes.emplace_back(e.desc->class_name);
-    }
-    return false;
-}
-
 std::string describe(const collision& c) {
     return std::format("! коллизия имён: {}{}{} занято плагином '{}', плагину '{}' отказано",
                        c.class_name, c.class_name.empty() ? "" : ".", c.name, c.first, c.second);

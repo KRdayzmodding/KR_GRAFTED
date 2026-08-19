@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH LicenseRef-GRAFT-plugin-exception-1.0
 // Мод на GRAFT ничего не обязан — даже закрытый и платный. См. LICENSE-EXCEPTION.
 #pragma once
+#include <cstring>
 #include <deque>
 #include <string>
 #include <unordered_map>
 
 #include "graft/guard.hpp"
+#include "graft/script.hpp"
 
 // Трамплины немаршалируемого пути (`proto native`): движок зовёт их напрямую, обычным
 // x64 fastcall. Здесь же — экземпляр класса C++ на скриптовый объект: поля живут ровно
@@ -92,6 +94,18 @@ memo<C>& last_instance() {
     return m;
 }
 
+
+// Скриптовый объект умер — умирает и его экземпляр C++ (с деструкторами полей). Зовёт
+// это движок: библиотека подписывается на разрушение объекта в instance_of.
+// ВНИМАНИЕ: сигнатура `void(void*)` — её адрес уходит в хост как callback.
+template <class C>
+void forget_instance(void* self) {
+    if constexpr (has_fields<C>) {
+        last_instance<C>() = {};  // память об этом объекте больше не годится
+        instances<C>().erase(self);
+    }
+}
+
 template <class C>
 C& instance_of(void* self) {
     const auto bind_self = [self](C& object) {
@@ -102,8 +116,15 @@ C& instance_of(void* self) {
     if constexpr (has_fields<C>) {
         memo<C>& m = last_instance<C>();
         if (m.self != self || !m.object) {
+            const bool fresh = !instances<C>().contains(self);
             m.object = &instances<C>()[self];
             m.self = self;
+            if (fresh) {
+                // Завели поля на этот объект — просим сказать, когда он умрёт. Скрипт об
+                // этом не знает и знать не должен: движок разрушает объект своим же
+                // виртуальным слотом, туда мы и встраиваемся (script::watch_object).
+                script::watch_object(self, &forget_instance<C>);
+            }
         }
         bind_self(*m.object);
         return *m.object;
@@ -113,22 +134,6 @@ C& instance_of(void* self) {
         bind_self(object);
         return object;
     }
-}
-
-// Скриптовый объект умер — умирает и его экземпляр C++ (с деструкторами полей).
-// Библиотека вешает его нативом NativeDispose сама, как только у класса есть поля.
-template <class C>
-void forget_instance(void* self) {
-    if constexpr (has_fields<C>) {
-        last_instance<C>() = {};  // память об этом объекте больше не годится
-        instances<C>().erase(self);
-    }
-}
-
-// Тот же импл нативным ABI — им пользуется привязка обычного класса.
-template <class C>
-void __fastcall forget_native(void* self) {
-    forget_instance<C>(self);
 }
 
 // Трамплин метода: движок кладёт объект в первый аргумент (это и есть this у ванильных

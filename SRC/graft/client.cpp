@@ -99,6 +99,12 @@ bool register_method_late(const char* class_name, const char* name, void* impl, 
     return g_host && g_host->register_method_late(class_name, name, impl, is_static, marshalled);
 }
 
+void watch_object(void* self, void (*forget)(void*)) {
+    if (g_host && g_host->watch_object) {
+        g_host->watch_object(self, forget);
+    }
+}
+
 void note_call_miss(const char* class_name, const char* name, void* self, const method& fn) {
     if (!g_host) {
         return;

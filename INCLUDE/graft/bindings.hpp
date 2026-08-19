@@ -16,20 +16,9 @@ inline const native* natives() {
     return detail::head();
 }
 
-// Имя служебного натива, освобождающего состояние объекта. Суффикс — метка плагина
-// (её ставит сборка: -DGRAFT_PLUGIN_TAG=имя), потому что двум плагинам, держащим
-// состояние на ОДНОМ скриптовом классе, нужен каждому свой: имя метода в классе одно
-// на всех, и второй просто затёр бы первого. Генератор зовёт из деструктора то имя,
-// которое здесь получилось.
-#ifdef GRAFT_PLUGIN_TAG
-#define GRAFT_DISPOSE_NAME "NativeDispose_" GRAFT_PLUGIN_TAG
-#else
-#define GRAFT_DISPOSE_NAME "NativeDispose"
-#endif
-
 // Сколько экземпляров класса C сейчас живёт на стороне C++ (по одному на скриптовый
 // объект, который хоть раз звал натив). Диагностика: если после смерти скриптовых
-// объектов число не падает, значит их скриптовый деструктор не зовёт NativeDispose.
+// объектов число не падает, значит до нас не дошло их разрушение.
 template <class C>
 std::size_t live_instances() {
     return detail::instances<C>().size();
@@ -76,22 +65,6 @@ public:
             if (const char* angle = std::strchr(class_name, '<')) {
                 declare_ = class_name;
                 class_name_ = detail::intern(std::string(class_name, static_cast<std::size_t>(angle - class_name)));
-            }
-            // У класса с полями экземпляр живёт вместе со скриптовым объектом, значит
-            // о смерти объекта надо узнавать — иначе движок переиспользует адрес и новый
-            // объект получит чужие поля. Выбора тут нет, поэтому натив вешается сам;
-            // скрипту остаётся позвать его из деструктора:
-            //   private proto native void NativeDispose();
-            //   void ~Класс() { NativeDispose(); }
-            if constexpr (detail::has_fields<C>) {
-                static bool registered = false;
-                if (!registered) {
-                    registered = true;
-                    static constexpr const char* no_args[] = {nullptr};
-                    put(GRAFT_DISPOSE_NAME,
-                        reinterpret_cast<void*>(&detail::forget_native<C>), false, "void",
-                        no_args);
-                }
             }
         }
 
@@ -164,12 +137,6 @@ public:
                     }
                 }
             }
-            // У шаблонного класса поля есть всегда (иначе он бы не был шаблонным по
-            // хранилищу), поэтому освобождение вешаем сразу — как и обычному классу.
-            using D = detail::dispose2<C, detail::script_param_types, detail::script_param_types>;
-            static constexpr const char* no_args[] = {nullptr};
-            detail::add({class_name_, GRAFT_DISPOSE_NAME, reinterpret_cast<void*>(&D::call), false, "void",
-                         no_args, nullptr, true, module_, true, declare_});
         }
 
         template <class Pick>

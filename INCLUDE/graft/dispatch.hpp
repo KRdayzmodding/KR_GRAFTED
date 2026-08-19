@@ -228,28 +228,6 @@ private:
     }
 };
 
-// Освобождение экземпляра нужной инстанциации — тем же выбором по имени класса.
-template <template <class...> class C, class KL, class VL>
-struct dispose2;
-
-template <template <class...> class C, class... K, class... V>
-struct dispose2<C, type_list<K...>, type_list<V...>> {
-    using slot = void (*)(void*);
-
-    template <class Kt>
-    static constexpr auto row() {
-        return std::array<slot, sizeof...(V)>{&forget_instance<C<Kt, V>>...};
-    }
-    static constexpr auto table =
-        std::array<std::array<slot, sizeof...(V)>, sizeof...(K)>{row<K>()...};
-
-    static std::int64_t __fastcall call(void* self, void***, void**) {
-        const auto slots = slots_of<2>(self);
-        table[slots.at[0]][slots.at[1]](self);
-        return 0;
-    }
-};
-
 // Имена для объявления. Метод шаблонного класса пишется обычными типами, поэтому какой
 // аргумент — параметр шаблона, а какой обычный тип, выясняем сравнением ДВУХ пробных
 // инстанциаций: C<int,float> и C<float,int>. Аргумент, который поменялся вместе с

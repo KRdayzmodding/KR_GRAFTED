@@ -124,27 +124,12 @@ std::string proto_file(const std::vector<const graft_native_desc*>& source, cons
         out += templated ? "\nclass " : "\nmodded class ";
         out += header;
         out += "\n{\n";
-        const char* dispose = nullptr;
         for (const graft_native_desc* n : all) {
             if (!n->class_name || std::strcmp(n->class_name, c) != 0) {
                 continue;
             }
-            // Освобождение состояния — служебный метод: прячем его и зовём из
-            // деструктора. Имя несёт суффикс плагина, чтобы два плагина, держащие
-            // состояние на одном классе, не спорили за один и тот же метод.
-            const bool is_dispose = std::strncmp(n->name, "NativeDispose", 13) == 0;
-            if (is_dispose) {
-                dispose = n->name;
-            }
-            out += is_dispose ? "    private " : "    ";
+            out += "    ";
             out += proto_decl(*n) + "\n";
-        }
-        if (dispose) {
-            out += "\n    void ~";
-            out.append(c);
-            out += "()\n    {\n        ";
-            out += dispose;
-            out += "();   // состояние объекта на стороне C++\n    }\n";
         }
         out += "}\n";
     }

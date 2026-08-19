@@ -13,10 +13,6 @@
 #
 #   graft_plugin(hello NAME HELLO_GRAFT VERSION 1 SOURCES src/hello.cpp)
 #
-# NAME попадает и в паспорт плагина, и в метку GRAFT_PLUGIN_TAG — от неё зависит имя
-# служебного натива NativeDispose_<NAME>, чтобы два плагина, держащие состояние на
-# одном скриптовом классе, не спорили за один метод.
-#
 # MODULES — модули, в которые плагин пишет объявления (из блоков GRAFT_BINDINGS).
 # Нужны только затем, чтобы ninja знал файлы поимённо и пересобирал зависящее от них.
 # Не указаны — каталог всё равно наполнится, просто без точных зависимостей.
@@ -43,7 +39,6 @@ function(graft_plugin target)
 
     add_library(${target} SHARED ${P_SOURCES})
     target_link_libraries(${target} PRIVATE graft::client)
-    target_compile_definitions(${target} PRIVATE GRAFT_PLUGIN_TAG="${P_NAME}")
 
     # Хост ищет ровно такие имена; префикса lib быть не должно.
     set_target_properties(${target} PROPERTIES OUTPUT_NAME "${P_NAME}.grafted" PREFIX "")

@@ -107,6 +107,10 @@ void api_note_fault(void* impl, uint32_t code, const void* at, const char* what)
     note_fault(impl, code, at, what);
 }
 
+void api_watch_object(void* self, void (*forget)(void*)) {
+    script::watch_object(self, forget);
+}
+
 const graft_host_api& host_api() {
     static const graft_host_api api{sizeof(graft_host_api),
                                     GRAFT_ABI_VERSION,
@@ -119,7 +123,8 @@ const graft_host_api& host_api() {
                                     &api_note_call_miss,
                                     &api_add_tick,
                                     &api_script_root,
-                                    &api_note_fault};
+                                    &api_note_fault,
+                                    &api_watch_object};
     return api;
 }
 
@@ -248,12 +253,6 @@ void load(const std::wstring& game_dir) {
     for (const plugins::collision& c : collisions()) {
         graft::log(plugins::describe(c));
     }
-    if (plugins::disposes_clash(registry())) {
-        graft::log(
-            "! два плагина держат состояние на одном скриптовом классе: у каждого свой "
-            "NativeDispose_*, а деструктор в скрипте может быть только один");
-    }
-
     mark(std::format("плагинов: {}, нативов: {}, коллизий: {}", rows().size(), registry().size(),
                      collisions().size())
              .c_str());

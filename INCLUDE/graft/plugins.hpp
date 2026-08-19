@@ -38,11 +38,6 @@ std::uint32_t check(const graft_plugin_info& info);
 // попадает в out. Возвращаются принятые записи.
 std::vector<entry> merge(const std::vector<entry>& all, std::vector<collision>& out);
 
-// Два плагина, держащие состояние на одном скриптовом классе, оба вешают свой
-// NativeDispose_* и оба печатают деструктор — Enforce этого не примет. Имена разные,
-// поэтому обычная проверка коллизий такое пропускает: смотрим отдельно.
-bool disposes_clash(const std::vector<entry>& all);
-
 std::string describe(const collision& c);
 const char* explain(std::uint32_t code);
 

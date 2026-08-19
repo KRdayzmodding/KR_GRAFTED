@@ -27,6 +27,7 @@ target_link_libraries(graft_common PUBLIC graft_std)
 add_library(graft_host STATIC
     graft/scan.cpp
     graft/script_host.cpp
+    graft/objects.cpp
     graft/log_host.cpp
 )
 target_link_libraries(graft_host PUBLIC graft_common)

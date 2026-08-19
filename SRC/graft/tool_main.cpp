@@ -426,11 +426,6 @@ int cmd_doctor(int argc, char** argv) {
         std::println("[!] {}", graft::plugins::describe(c));
         ++problems;
     }
-    if (graft::plugins::disposes_clash(all)) {
-        std::println("[!] два плагина держат состояние на одном скриптовом классе");
-        ++problems;
-    }
-
     const fs::path journal = game / "graft.log";
     if (!fs::exists(journal)) {
         std::println("[i] журнала graft.log нет — игра с этим хостом ещё не запускалась");
