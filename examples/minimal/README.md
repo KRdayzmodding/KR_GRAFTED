@@ -34,6 +34,8 @@ proto native int ExampleSum(array<int> p0);
 proto native int ExampleCountAbove(array<int> p0, int p1);
 proto native int ExampleFillSquares(out array<int> p0, int p1);
 proto native vector ExampleScale(vector p0, float p1);
+proto native bool ExampleSay(string p0);
+proto native bool ExampleComplain(string p0);
 
 modded class ExampleGraft
 {
@@ -190,7 +192,19 @@ powershell -File deploy.ps1 -Game "C:\DayZServer"    :: объявления -> 
 [EXAMPLE_GRAFT] CountAbove([4,8,15], 5) = 2
 [EXAMPLE_GRAFT] FillSquares(4) -> 0,1,4,9
 [EXAMPLE_GRAFT] Scale(<1,2,3>, 2.5) = <2.500000, 5.000000, 7.500000>
+[EXAMPLE_GRAFT] это строка в script-лог, её напечатал C++
+[EXAMPLE_GRAFT] Say -> true, Complain -> true
 ```
+
+Предпоследняя строка приехала не из скрипта: её написал плагин через `graft::print`, а
+это `Print` самой игры. Парная ей `graft::error` — это `Error2` игры, и её строку надо
+искать в `crash_<метка>.log` рядом:
+
+```
+Reason: [EXAMPLE_GRAFT] а это строка в crash-лог, тоже из C++ (демонстрация, не сбой)
+```
+
+Стек вызовов под ней дописывает движок — формат записи его, и убрать его нечем.
 
 Без пресета тоже можно, но тип сборки задай явно: пустой `CMAKE_BUILD_TYPE` даёт
 отладочную сборку. `cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release`.
@@ -225,8 +239,8 @@ graft_plugin(example_graft
 (`Object`, `EntityAI`) описывается в отдельном блоке `GRAFT_BINDINGS("3_Game")` и
 попадает в `EXAMPLE_GRAFT.scripts/3_Game/...` — в 1_Core таких типов ещё нет.
 
-Не завелось — `graft doctor <каталог игры>` и `graft.log` рядом с exe: там видно, что
-нашлось и что зарегистрировалось.
+Не завелось — `graft doctor <каталог игры>` и системный журнал `graft_<метка>.log` в
+профиле сервера: там видно, что нашлось и что зарегистрировалось.
 
 ## Дальше
 

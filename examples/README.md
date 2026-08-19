@@ -79,6 +79,8 @@ DayZ.exe
 | зеркало движкового API | [players](players/src/main.cpp) | `graft::dayz::CGame`, `man.GetIdentity()` |
 | поле движкового объекта | [players](players/src/main.cpp) | `world["m_DebugMonitorEnabled"_f]` |
 | буфер под `out` движка | [players](players/src/main.cpp) | `graft::scratch<graft::array<Man>>()` |
+| строка в script-лог игры из C++ | [players](players/src/main.cpp) | `graft::print("новый игрок: ...")` |
+| строка в crash-лог игры из C++ | [minimal](minimal/src/natives.cpp) | `graft::error(...)` — это `Error2` самой игры |
 
 Чего в примерах нет намеренно: матрица ABI по каждому типу, поля объектов на любую
 глубину, замеры горячего пути. Это [tests/](../tests/) — их гоняет сьюта `seraph::graft`
@@ -113,8 +115,10 @@ powershell -File deploy.ps1 -Game "C:\DayZServer"
 `out/<пресет>`), `.gitignore` и `deploy.ps1`. Копируешь каталог — получаешь рабочий
 проект, а не заготовку.
 
-Запуск: `-mod=@<ИМЯ>;`, смотреть script-лог в профиле сервера. Не завелось —
-`graft doctor "C:\DayZServer"` и `graft.log` рядом с exe.
+Запуск: `-mod=@<ИМЯ>;`, смотреть script-лог в профиле сервера — строки, которые плагин
+пишет через `graft::print`, лежат прямо в нём, вперемешку со скриптовыми. Рядом там же
+системный журнал библиотеки `graft_<метка>.log`. Не завелось — `graft doctor "C:\DayZServer"`
+и этот журнал.
 
 ## Собрать все четыре разом
 

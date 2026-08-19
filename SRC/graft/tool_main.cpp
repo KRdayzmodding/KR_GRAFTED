@@ -426,15 +426,32 @@ int cmd_doctor(int argc, char** argv) {
         std::println("[!] {}", graft::plugins::describe(c));
         ++problems;
     }
-    const fs::path journal = game / "graft.log";
-    if (!fs::exists(journal)) {
-        std::println("[i] журнала graft.log нет — игра с этим хостом ещё не запускалась");
+    // Журнал — по файлу на запуск, и если у сервера задан -profiles=, он лежит там же,
+    // где script- и crash-логи. Здесь смотрим то, что рядом с exe: самый свежий.
+    fs::path journal;
+    for (const fs::directory_entry& e : fs::directory_iterator(game)) {
+        const std::string name = e.path().filename().string();
+        if (name.starts_with("graft_") && e.path().extension() == ".log" &&
+            name > journal.filename().string()) {
+            journal = e.path();
+        }
+    }
+    if (journal.empty()) {
+        std::println("[i] журнала graft_*.log рядом с exe нет — либо игра с этим хостом ещё "
+                     "не запускалась, либо у сервера задан -profiles= и журнал лежит там");
     } else {
+        std::println("[i] журнал: {}", journal.filename().string());
         std::ifstream in(journal);
         std::string line;
         std::vector<std::string> complaints;
         while (std::getline(in, line)) {
-            if (!line.empty() && line[0] == '!') {
+            // Строку начинает время («12:03:55 | »), жалобу — восклицательный знак сразу
+            // за ним.
+            const std::size_t bar = line.find("| ");
+            const std::string_view body =
+                bar == std::string::npos ? std::string_view{line}
+                                         : std::string_view{line}.substr(bar + 2);
+            if (body.starts_with('!')) {
                 complaints.push_back(line);
             }
         }

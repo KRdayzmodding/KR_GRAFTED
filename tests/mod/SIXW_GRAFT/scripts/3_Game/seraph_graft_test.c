@@ -103,9 +103,49 @@ class SERAPH_GRAFT_TEST : uTestSuite
     void Manager_HostVersionsMatchTheBuild(co_call ctx)
     {
         co_routine coro = co_new(ctx);
-        assert(GraftVersion() == 4, "4", GraftVersion().ToString(), "версия интерфейса хоста");
+        assert(GraftVersion() == 5, "5", GraftVersion().ToString(), "версия интерфейса хоста");
         assert(GraftLayoutVersion() == 2, "2", GraftLayoutVersion().ToString(),
             "версия раскладки движка");
+    }
+
+    // ── Журналы ───────────────────────────────────────────────────────────────
+    // Пользовательский канал уходит в журналы САМОЙ ИГРЫ: Print в script-лог, Error2 в
+    // crash-лог. Зовутся они по ИМПЛУ, найденному по имени на регистрации, — через
+    // модуль скриптов до них не добраться (GameScript это 3_Game, а они в 1_Core).
+
+    bool AnyFileLike(string mask)
+    {
+        string name;
+        FileAttr attr;
+        FindFileHandle handle = FindFile("$profile:" + mask, name, attr, 0);
+        bool found = name != "";
+        CloseFindFile(handle);
+        return found;
+    }
+
+    [TEST_CASE("Log_EngineGlobalsAreFoundByName").IN(SERAPH_GRAFT_TEST)];
+    void Log_EngineGlobalsAreFoundByName(co_call ctx)
+    {
+        co_routine coro = co_new(ctx);
+        int found = SeraphGraftSayVia("Print", "[сьюта] глобаль движка позвана вслепую");
+        assert(found == 1, "1", found.ToString(), "Print нашёлся по имени и позвался");
+        int missing = SeraphGraftSayVia("НетТакойГлобали", "неважно");
+        assert(missing == -1, "-1", missing.ToString(), "чего нет — того нет, без падения");
+    }
+
+    [TEST_CASE("Log_UserChannelGoesToTheGameLogs").IN(SERAPH_GRAFT_TEST)];
+    void Log_UserChannelGoesToTheGameLogs(co_call ctx)
+    {
+        co_routine coro = co_new(ctx);
+        bool said = SeraphGraftSay("строка из C++ в script-лог");
+        assert(said, "true", said.ToString(), "Print игры дотянулся из C++");
+        bool cried = SeraphGraftCry("строка из C++ в crash-лог");
+        assert(cried, "true", cried.ToString(), "Error2 игры дотянулся из C++");
+        // crash-лог в профиле появился. Он мог появиться и без нас (движок пишет туда
+        // свои ошибки), поэтому кейс сторожит не «наша строка там одна», а то, что
+        // запись из C++ прошла и файл на месте.
+        assert(AnyFileLike("crash_*.log"), "true", AnyFileLike("crash_*.log").ToString(),
+            "crash-лог в профиле есть");
     }
 
     [TEST_CASE("Manager_BothPluginsLoaded").IN(SERAPH_GRAFT_TEST)];

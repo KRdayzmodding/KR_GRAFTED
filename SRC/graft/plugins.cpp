@@ -88,6 +88,20 @@ std::vector<std::string> mod_dirs(std::string_view cmdline) {
     return out;
 }
 
+std::string profile_dir(std::string_view cmdline) {
+    constexpr std::string_view key = "-profiles=";
+    const std::size_t at = find_switch(cmdline, key, 0);
+    if (at == std::string_view::npos) {
+        return {};
+    }
+    std::string_view path = value_at(cmdline, at + key.size());
+    // `-profiles=X\\` — законная запись, а мы к пути дописываем своё имя файла.
+    while (!path.empty() && (path.back() == '\\' || path.back() == '/')) {
+        path.remove_suffix(1);
+    }
+    return std::string{path};
+}
+
 std::uint32_t check(const graft_plugin_info& info) {
     // Обрезанная структура означает плагин из другого времени: полям верить нельзя,
     // и это тот же случай, что чужой ABI.

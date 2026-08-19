@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH LicenseRef-GRAFT-plugin-exception-1.0
 // Этот файл линкуется в КАЖДЫЙ плагин, поэтому едет с исключением: мод на GRAFT ничего
 // не обязан — даже закрытый и платный. См. LICENSE-EXCEPTION.
-#include <windows.h>
-
 #include <format>
 #include <unordered_map>
 #include <utility>
@@ -129,14 +127,11 @@ const std::vector<plugins::collision>& collisions() {
     return g_collisions;
 }
 
-// Отметка времени: ею размечены шаги установки. Порядок «хуки -> плагины -> маяк» —
-// единственное место в библиотеке с настоящей гонкой, и увидеть его перестановку можно
-// только так.
+// Веха установки. Порядок «хуки -> плагины -> маяк» — единственное место в библиотеке
+// с настоящей гонкой, и увидеть его перестановку можно только по журналу; время строке
+// ставит сам журнал.
 void mark(const char* what) {
-    SYSTEMTIME t{};
-    GetLocalTime(&t);
-    graft::log(std::format("[{:02}:{:02}:{:02}.{:03}] {}", t.wHour, t.wMinute, t.wSecond,
-                           t.wMilliseconds, what ? what : ""));
+    graft::log(what ? what : "");
 }
 
 }  // namespace graft::loader

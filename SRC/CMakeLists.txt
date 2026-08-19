@@ -19,6 +19,7 @@ add_library(graft_common STATIC
     graft/plugins.cpp
     graft/loader_state.cpp
     graft/frame_state.cpp
+    graft/log_script.cpp
 )
 target_include_directories(graft_common PUBLIC "${PROJECT_SOURCE_DIR}/INCLUDE")
 target_link_libraries(graft_common PUBLIC graft_std)

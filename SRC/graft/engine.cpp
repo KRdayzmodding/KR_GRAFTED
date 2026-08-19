@@ -185,6 +185,9 @@ void* __fastcall hook_register_method(void* ctx, void* cls, const char* name, vo
 void* __fastcall hook_register_global(void* ctx, const char* name, void* impl,
                                       unsigned ret_buf) {
     void* result = g_orig(ctx, name, impl, ret_buf);
+    // Заодно запоминаем чужую глобаль: другого способа узнать импл движковой функции без
+    // класса нет, а через них ходят журналы игры (Print, ErrorEx) — см. script::find_global.
+    script::note_global(name, impl);
     // Проход регистрации ядра — наш момент: скрипты модуля уже разобраны (FindClass
     // видит и классы мода), но ещё не слинкованы. На 1.29 проход ровно один; если
     // движок когда-то начнёт гонять его на каждый ctx — подсядем в каждый.
@@ -210,7 +213,13 @@ void install() {
     const std::size_t slash = path.find_last_of(L"\\/");
     const std::wstring dir = (slash == std::wstring::npos) ? L"." : path.substr(0, slash);
     // пути установок ASCII; ofstream на MSVC трактует narrow-путь как ANSI
-    set_log_path(std::string(dir.begin(), dir.end()) + "\\graft.log");
+    const std::string exe_dir(dir.begin(), dir.end());
+    // Журналы кладём туда же, куда игра кладёт свои script- и crash-логи: в профиль
+    // сервера. Админ ищет их там, а не рядом с exe, — и относительный путь из
+    // `-profiles=` разрешится от того же каталога, что и у самой игры.
+    const std::wstring cmd = GetCommandLineW();
+    const std::string profile = plugins::profile_dir(std::string(cmd.begin(), cmd.end()));
+    set_log_dir(profile.empty() ? exe_dir : profile);
 
     const std::vector<scan::view> sections = sections_of(GetModuleHandleW(nullptr));
     g_api = scan::discover(sections);

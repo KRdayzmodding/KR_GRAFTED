@@ -11,6 +11,7 @@
 //   graft::scratch<T>()    буфер под out-аргумент движка, один на процесс
 //   graft::borrowed<T>     чужая ссылка: действительна до конца вызова, и это проверяется
 //   obj["m_Field"_f]       поле объекта как lvalue
+//   graft::print()         строка в script-лог игры прямо из C++
 //
 // Зеркало движкового API нужно ВСЕГДА: пример написан против настоящих классов игры, а не
 // против ref<"CGame"> вручную. Генерится из скриптов игры один раз (и заново после патча):
@@ -66,10 +67,17 @@ void scan_players() {
         // GetPlainId объявлен как `proto`, а не `proto native` — библиотека сама выбирает
         // маршалируемый путь, снаружи разницы нет. Спрашиваем один раз: это вызов в
         // движок, а не чтение поля.
-        player_row& row = g_players[id.GetPlainId()];
+        const string steam = id.GetPlainId();
+        player_row& row = g_players[steam];
         row.name = id.GetName();
         row.position = man.GetOrigin();
         ++row.seen_ticks;
+        if (row.seen_ticks == 1) {
+            // Строка уходит в SCRIPT-ЛОГ игры — это Print самой игры, только позванный
+            // из C++. print(), а не log(), потому что читать её будет админ мода, а не
+            // тот, кто разбирает библиотеку.
+            graft::print(format("новый игрок: {} ({})", row.name, steam));
+        }
     }
 }
 

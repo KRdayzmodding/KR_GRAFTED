@@ -45,8 +45,9 @@ graft::script::method from_abi(const graft_method_info& info) {
 
 namespace graft {
 
-void set_log_path(std::string_view) {
-    // Журнал один на процесс и принадлежит хосту: плагину нечего им распоряжаться.
+void set_log_dir(std::string_view) {
+    // Каталог журналов один на процесс и принадлежит хосту: плагину нечего им
+    // распоряжаться — он и профиль сервера не знает.
 }
 
 void log(std::string_view line) {
@@ -56,6 +57,16 @@ void log(std::string_view line) {
         // только на пути журнала, который холодный.
         g_host->log(std::string{line}.c_str());
     }
+}
+
+// Имя подставляется само — то самое, которым плагин представился в GRAFT_PLUGIN.
+// Дальше обе строки идут общим путём (log_script.cpp) — в журналы самой игры.
+bool print(std::string_view line) {
+    return detail::say(false, graft_plugin_name_ ? graft_plugin_name_ : "plugin", line);
+}
+
+bool error(std::string_view line) {
+    return detail::say(true, graft_plugin_name_ ? graft_plugin_name_ : "plugin", line);
 }
 
 }  // namespace graft
@@ -72,6 +83,14 @@ bool available() {
 
 void* find_class(const char* name) {
     return g_host ? g_host->find_class(name) : nullptr;
+}
+
+void note_global(const char*, void*) {
+    // Реестр глобалей движка ведёт хост: он стоит на регистрации, плагин — нет.
+}
+
+void* find_global(const char* name) {
+    return (g_host && g_host->find_global) ? g_host->find_global(name) : nullptr;
 }
 
 void* root() {

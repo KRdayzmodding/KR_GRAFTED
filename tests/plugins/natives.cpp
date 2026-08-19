@@ -767,11 +767,33 @@ i32 SeraphGraftGuardedNoop(i32 token) {
     }
 }
 
-// Строка из скрипта в graft.log. Нужна ровно затем, что журнал сьюты эфемерный и
-// удаляется вместе с профилем, а graft.log живёт: замеры Perf_HotPathBudget иначе видно
-// только когда они УПАЛИ, а числа в README нужны и когда всё зелено.
+// Строка из скрипта в СИСТЕМНЫЙ журнал (graft_<метка>.log). Нужна ровно затем, что
+// журнал сьюты эфемерный и удаляется вместе с профилем, а журнал библиотеки живёт:
+// замеры Perf_HotPathBudget иначе видно только когда они УПАЛИ, а числа в README нужны
+// и когда всё зелено.
 void SeraphGraftNote(std::string_view line) {
     graft::log(std::string{line});
+}
+
+// Пользовательский канал: строка уходит в журналы САМОЙ ИГРЫ — Print в script-лог,
+// Error в crash-лог. Возвращают, дошло ли до движка: до первого тика корня ещё нет.
+bool SeraphGraftSay(std::string_view line) {
+    return graft::print(line);
+}
+
+bool SeraphGraftCry(std::string_view line) {
+    return graft::error(line);
+}
+
+// Проба: нашлась ли по имени глобаль движка и позвалась ли она вслепую. Ею видно, что
+// путь «имя с регистрации -> импл -> кадр по донорам» не отвалился после патча игры.
+i32 SeraphGraftSayVia(std::string_view fn, std::string_view line) {
+    void* impl = graft::script::find_global(std::string{fn}.c_str());
+    if (!impl) {
+        return -1;
+    }
+    const graft::value args[] = {graft::value{std::string{line}}};
+    return graft::call_proto(graft::as_global(impl), nullptr, args).has_value() ? 1 : 0;
 }
 
 // ── Защита самой библиотеки ─────────────────────────────────────────────────
@@ -876,7 +898,7 @@ f32 g_last_dt = 0;
 
 // Тик приходит из ДВИЖКОВОЙ точки входа кадра, то есть СНАРУЖИ скриптового вызова.
 // Законен ли отсюда вызов движкового `proto` — вопрос, ради которого всё затевалось.
-// Замер (кейс Tick_LoopProbe, числа уходят в graft.log строкой [tick]):
+// Замер (кейс Tick_LoopProbe, числа уходят в системный журнал строкой [tick]):
 //
 //   числовой результат (EnScript.GetClassVar)   — 8 из 8 кадров, ни одного промаха
 //   объектный результат (typename.Spawn)        — 8 из 8 кадров
@@ -1058,6 +1080,9 @@ GRAFT_BINDINGS("1_Core") {
         .global<&SeraphGraftNodeIdProxy>("SeraphGraftNodeIdProxy")
         .global<&SeraphGraftCallMissing>("SeraphGraftCallMissing")
         .global<&SeraphGraftNote>("SeraphGraftNote")
+        .global<&SeraphGraftSay>("SeraphGraftSay")
+        .global<&SeraphGraftCry>("SeraphGraftCry")
+        .global<&SeraphGraftSayVia>("SeraphGraftSayVia")
         .global<&SeraphGraftFaultsHere>("SeraphGraftFaultsHere")
         .global<&SeraphGraftThrowsHere>("SeraphGraftThrowsHere")
         .global<&SeraphGraftThrowsText>("SeraphGraftThrowsText")

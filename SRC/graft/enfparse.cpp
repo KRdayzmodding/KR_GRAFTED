@@ -1123,7 +1123,7 @@ std::string mirror(const unit& all, std::string_view module, std::string_view in
         "// наследования — объединением, а не выбором.\n"
         "//\n"
         "// Чего в этой сборке нет, то не найдётся в рантайме: вызов вернёт нулевое\n"
-        "// значение и строку в graft.log, try_call даст miss::not_found, у поля\n"
+        "// значение и строку в журнал, try_call даст miss::not_found, у поля\n"
         "// exists() будет false. Спросить заранее: obj.has<\"Метод\">().\n"
         "// Модуль: {}\n#pragma once\n#include \"graft/native.hpp\"\n",
         module.empty() ? std::string_view{"все"} : module);

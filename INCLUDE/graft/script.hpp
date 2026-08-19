@@ -176,6 +176,17 @@ void note_context(void* ctx);  // зовёт врезка на каждой ре
 method find_method(const char* class_name, const char* name);
 method find_method(void* class_desc, const char* name);
 
+// ── Глобальные функции движка ────────────────────────────────────────────────
+// У них нет класса, а значит и пути через FindFunctionIndex: искать их негде. Зато
+// движок сам проносит их мимо нас — врезка стоит ровно на регистрации, и вместе с
+// именем там лежит импл. Его и запоминаем: это тот же поиск ПО ИМЕНИ, что и весь
+// остальной graft, только даром.
+//
+// Дескриптор так не достаётся (он в таблице функций скриптового модуля), поэтому звать
+// такую функцию можно только вслепую — graft::as_global + call_proto.
+void note_global(const char* name, void* impl);
+void* find_global(const char* name);
+
 // Почему вызов не состоялся — пишется в журнал.
 void note_call_miss(const char* class_name, const char* name, void* self, const struct method& fn);
 

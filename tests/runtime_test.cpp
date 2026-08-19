@@ -7,6 +7,8 @@
 #include <gtest/gtest.h>
 
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -16,6 +18,106 @@
 #include "graft/native.hpp"
 
 namespace {
+
+// ── Журналы ─────────────────────────────────────────────────────────────────
+// Каналов два: системный — наш файл в профиле сервера, пользовательский — журналы самой
+// игры. Без игры проверяется первый целиком и ОТКАЗ второго: он обязан не терять строку.
+
+namespace {
+
+std::filesystem::path log_sandbox() {
+    return std::filesystem::temp_directory_path() / "graft_log_test";
+}
+
+// Единственный файл каталога, чьё имя начинается с mask. Пусто — такого нет.
+std::filesystem::path only_file_like(const std::filesystem::path& dir, std::string_view mask) {
+    for (const std::filesystem::directory_entry& e : std::filesystem::directory_iterator(dir)) {
+        if (e.path().filename().string().starts_with(mask)) {
+            return e.path();
+        }
+    }
+    return {};
+}
+
+std::string text_of(const std::filesystem::path& file) {
+    std::ifstream in(file);
+    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+// Журнал — состояние процесса: за собой убираем, иначе следующие кейсы пишут в темп.
+struct log_dir_guard {
+    explicit log_dir_guard(const std::filesystem::path& dir) {
+        std::filesystem::remove_all(dir);
+        graft::set_log_dir(dir.string());
+    }
+    ~log_dir_guard() {
+        graft::set_log_dir("");
+    }
+};
+
+}  // namespace
+
+TEST(Logs, SystemJournalIsOneFilePerLaunchInTheGivenDir) {
+    const std::filesystem::path dir = log_sandbox();
+    const log_dir_guard guard{dir};
+
+    graft::log("про библиотеку");
+    graft::log("и ещё раз");
+
+    const std::filesystem::path file = only_file_like(dir, "graft_");
+    ASSERT_FALSE(file.empty());
+    EXPECT_EQ(file.extension(), ".log");
+    // Имя в стиле script_/crash_ игры: graft_ГГГГ-ММ-ДД_ЧЧ-ММ-СС.log
+    EXPECT_EQ(file.filename().string().size(), std::strlen("graft_2026-08-19_21-03-55.log"));
+    EXPECT_NE(text_of(file).find("про библиотеку"), std::string::npos);
+    // Обе строки в ОДНОМ файле: он один на запуск, а не на запись.
+    EXPECT_NE(text_of(file).find("и ещё раз"), std::string::npos);
+    EXPECT_EQ(std::distance(std::filesystem::directory_iterator(dir),
+                            std::filesystem::directory_iterator{}),
+              1);
+}
+
+// Каталог профиля игра создаёт сама, но библиотека просыпается раньше неё.
+TEST(Logs, CreatesTheDirectoryItWasGiven) {
+    const std::filesystem::path dir = log_sandbox() / "profile" / "deeper";
+    std::filesystem::remove_all(log_sandbox());
+    const log_dir_guard guard{dir};
+
+    graft::log("строка до того, как игра создала профиль");
+    EXPECT_TRUE(std::filesystem::exists(dir));
+    EXPECT_FALSE(only_file_like(dir, "graft_").empty());
+}
+
+// Пользовательский канал без игры: Print и Error звать некому — строка обязана не
+// пропасть, а лечь в системный журнал с пометкой. Ровно это и происходит на живом
+// сервере до первого тика: корня объектного графа ещё нет.
+TEST(Logs, UserChannelFallsBackToTheSystemJournal) {
+    const std::filesystem::path dir = log_sandbox();
+    const log_dir_guard guard{dir};
+
+    EXPECT_FALSE(graft::print("мод сказал"));
+    EXPECT_FALSE(graft::error("мод пожаловался"));
+
+    const std::string text = text_of(only_file_like(dir, "graft_"));
+    EXPECT_NE(text.find("~ [graft] мод сказал"), std::string::npos);
+    EXPECT_NE(text.find("! [graft] мод пожаловался"), std::string::npos);
+}
+
+// Пока каталог не задан, журнал молчит — так живёт генератор объявлений, который
+// линкует тот же код, но писать ему некуда.
+TEST(Logs, SaysNothingUntilTheDirectoryIsKnown) {
+    const std::filesystem::path dir = log_sandbox();
+    const log_dir_guard guard{dir};
+    graft::log("первая");
+    const std::filesystem::path file = only_file_like(dir, "graft_");
+    ASSERT_FALSE(file.empty());
+    const std::string before = text_of(file);
+
+    graft::set_log_dir("");
+    graft::log("вторая");
+    graft::print("третья");
+    EXPECT_EQ(text_of(file), before);
+}
 
 // ── Арена строк ─────────────────────────────────────────────────────────────
 // Кольцо на поток: строки копятся внутри вызова и обрезаются на входе в следующий

@@ -24,6 +24,7 @@
 #include <string_view>
 #include <vector>
 
+#include "graft/engine.hpp"
 #include "graft/native.hpp"
 
 using namespace std;
@@ -86,6 +87,20 @@ array<float, 3> ExampleScale(array<float, 3> v, float k) {
     return {v[0] * k, v[1] * k, v[2] * k};
 }
 
+// ── Журналы игры из C++ ──────────────────────────────────────────────────────
+// Своего файла мод не заводит: строка уходит туда же, куда ушла бы из скрипта. print —
+// это Print игры, то есть script-лог; error — это её же Error, то есть crash-лог. Имя
+// плагина подставляется само, в журнале строка придёт как «[EXAMPLE_GRAFT] ...».
+//   proto native bool ExampleSay(string p0);
+bool ExampleSay(std::string_view text) {
+    return graft::print(text);
+}
+
+//   proto native bool ExampleComplain(string p0);
+bool ExampleComplain(std::string_view text) {
+    return graft::error(text);
+}
+
 // ── Что регистрировать и что объявлять ───────────────────────────────────────
 // Аргумент — скриптовый модуль, в который генератор напечатает объявления. Нативу с
 // игровым типом в сигнатуре (Object, EntityAI) нужен отдельный блок GRAFT_BINDINGS("3_Game"):
@@ -98,7 +113,9 @@ GRAFT_BINDINGS("1_Core") {
         .global<&ExampleSum>("ExampleSum")
         .global<&ExampleCountAbove>("ExampleCountAbove")
         .global<&ExampleFillSquares>("ExampleFillSquares")
-        .global<&ExampleScale>("ExampleScale");
+        .global<&ExampleScale>("ExampleScale")
+        .global<&ExampleSay>("ExampleSay")
+        .global<&ExampleComplain>("ExampleComplain");
 }
 
 }  // namespace

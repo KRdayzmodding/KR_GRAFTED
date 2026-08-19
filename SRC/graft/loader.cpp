@@ -55,6 +55,10 @@ void api_log(const char* line) {
     graft::log(line ? line : "");
 }
 
+void* api_find_global(const char* name) {
+    return script::find_global(name);
+}
+
 void* api_find_class(const char* name) {
     return script::find_class(name);
 }
@@ -124,7 +128,8 @@ const graft_host_api& host_api() {
                                     &api_add_tick,
                                     &api_script_root,
                                     &api_note_fault,
-                                    &api_watch_object};
+                                    &api_watch_object,
+                                    &api_find_global};
     return api;
 }
 

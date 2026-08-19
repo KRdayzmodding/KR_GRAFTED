@@ -18,6 +18,10 @@ namespace graft::plugins {
 // порядок загрузки плагинов и, значит, победителя при коллизии имён.
 std::vector<std::string> mod_dirs(std::string_view cmdline);
 
+// Каталог профиля сервера из `-profiles=` — тот, куда игра кладёт script- и crash-логи.
+// Пусто — ключа нет (тогда журналы ложатся рядом с exe). Хвостовой разделитель снят.
+std::string profile_dir(std::string_view cmdline);
+
 // Запись объединённого реестра: натив и плагин, который его принёс.
 struct entry {
     const graft_native_desc* desc = nullptr;

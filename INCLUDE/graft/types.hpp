@@ -217,7 +217,7 @@ script::method engine_method() {
 }
 
 // Промах в журнал — но не на каждый вызов. Причина та же: метода может не быть в этой
-// сборке игры, и цикл по нему залил бы graft.log целиком, да ещё и через std::format.
+// сборке игры, и цикл по нему залил бы системный журнал целиком, да ещё через std::format.
 template <name_t Klass, name_t Name>
 void report_miss(void* self, const script::method& fn) {
     static int said = 0;
@@ -346,7 +346,7 @@ struct ref {
     R call(const char* method, A... args) const {
         const script::method fn = lookup(method);
         // callable() отсекает скриптовые методы: у них в impl байткод, и вызов как
-        // C-функции роняет процесс. Промах — это ноль и запись в graft.log, не падение.
+        // C-функции роняет процесс. Промах — это ноль и запись в журнал, не падение.
         if (!ptr || !fn.callable()) {
             script::note_call_miss(N.value, method, ptr, fn);
             if constexpr (std::is_void_v<R>) {

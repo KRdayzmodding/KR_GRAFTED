@@ -7,6 +7,7 @@
 #include <cstring>
 #include <format>
 #include <string>
+#include <unordered_map>
 
 #include "graft/engine.hpp"
 #include "graft/loader.hpp"
@@ -168,10 +169,33 @@ method find_method(const char* class_name, const char* name) {
 }
 
 namespace {
+// Глобали движка: имя -> импл, как их пронесла мимо нас регистрация. Строку копируем —
+// движок волен держать своё имя где угодно, а таблица живёт до конца процесса.
+std::unordered_map<std::string, void*>& globals() {
+    static std::unordered_map<std::string, void*> all;
+    return all;
+}
+
 // Обычная строка вместо char[192]: обрезать диагностику по длине имени класса — ровно
 // то, чего от диагностики не ждёшь.
 std::string g_last_error;
 }  // namespace
+
+void note_global(const char* name, void* impl) {
+    if (name && impl) {
+        // Первый победил: движок регистрирует своё до нас, и подменять его чужим
+        // одноимённым нативом мы не станем.
+        globals().emplace(name, impl);
+    }
+}
+
+void* find_global(const char* name) {
+    if (!name) {
+        return nullptr;
+    }
+    const auto found = globals().find(name);
+    return found == globals().end() ? nullptr : found->second;
+}
 
 void note_call_miss(const char* class_name, const char* name, void* self, const method& fn) {
     const char* why = !self      ? "объект null"

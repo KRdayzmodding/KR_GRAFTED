@@ -125,6 +125,18 @@ inline void make_writable(script::var& v) {
 
 }  // namespace detail
 
+// Позвать ГЛОБАЛЬНЫЙ `proto` движка по одному только имплу. Дескриптора у такой функции
+// взять неоткуда (см. `blind` ниже), поэтому она приходит сюда голой: импл библиотека знает
+// с регистрации — движок сам пронёс его мимо нас вместе с именем.
+inline script::method as_global(void* impl) {
+    script::method fn;
+    fn.impl = impl;
+    fn.desc = nullptr;
+    fn.flags = layout::flag_static | layout::flag_marshalled;
+    fn.executable = impl != nullptr;
+    return fn;
+}
+
 // Позвать маршалируемый `proto` движка.
 //
 // self == nullptr — это НЕ ошибка, а вторая форма вызова. Их ровно две, и разбор
@@ -158,9 +170,15 @@ inline std::expected<proto_result, miss> call_proto(const script::method& fn, vo
     if (args.size() > script::max_proto_args) {
         return std::unexpected(miss::too_many_args);
     }
+    // ДЕСКРИПТОРА МОЖЕТ И НЕ БЫТЬ. У метода класса он есть всегда, а вот у ГЛОБАЛЬНОГО
+    // `proto` движка (Print, ErrorEx) он живёт в таблице функций скриптового модуля, до
+    // которой из C++ хода нет: наружу торчит только импл, и тот — с регистрации, по
+    // имени. Тогда арность знает вызывающая сторона, а шаблоны берутся у доноров, как
+    // они и так берутся для параметров, объявленных `void`.
+    const bool blind = fn.desc == nullptr;
     // Арность сверяем с дескриптором, а не с надеждой: неполный блок — это кадр, в
     // котором движок прочитает мусор, и разбираться потом придётся по минидампу.
-    if (args.size() != script::param_count(fn)) {
+    if (!blind && args.size() != script::param_count(fn)) {
         return std::unexpected(miss::wrong_arity);
     }
 
@@ -169,7 +187,8 @@ inline std::expected<proto_result, miss> call_proto(const script::method& fn, vo
     void* block[script::max_proto_args]{};
 
     for (std::size_t i = 0; i < args.size(); ++i) {
-        const void* tpl = script::param_template(fn, i);
+        const void* tpl = blind ? detail::donor_template(detail::tag_of(args[i]))
+                                : script::param_template(fn, i);
         if (!tpl) {
             return std::unexpected(miss::no_template);
         }
@@ -223,7 +242,7 @@ inline std::expected<proto_result, miss> call_proto(const script::method& fn, vo
     // типа, это лучший донор какой бывает — он от неё же и ходить никуда не надо.
     const std::uint32_t want_ret = ret_tag != 0 ? ret_tag : script::tag_int;
     const void* ret_tpl = nullptr;
-    for (std::size_t i = 0; i < script::param_count(fn) && !ret_tpl; ++i) {
+    for (std::size_t i = 0; !blind && i < script::param_count(fn) && !ret_tpl; ++i) {
         const void* tpl = script::param_template(fn, i);
         if (tpl && *reinterpret_cast<const std::uint32_t*>(static_cast<const char*>(tpl) +
                                                            layout::var_type) == want_ret) {

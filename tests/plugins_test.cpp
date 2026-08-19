@@ -65,6 +65,33 @@ TEST(ModDirs, RequiresSwitchToStartAtBoundary) {
     EXPECT_EQ(got, (std::vector<std::string>{"@YES"}));
 }
 
+// ── Каталог профиля ──────────────────────────────────────────────────────────
+// В него ложатся оба журнала — рядом со script- и crash-логами сервера.
+
+TEST(ProfileDir, TakesTheSwitchValue) {
+    EXPECT_EQ(graft::plugins::profile_dir("game.exe -profiles=DEBUG/profiles -port=1"),
+              "DEBUG/profiles");
+}
+
+TEST(ProfileDir, HandlesQuotedPathWithSpaces) {
+    EXPECT_EQ(graft::plugins::profile_dir(R"(game.exe -profiles="C:\My Server\prof" -mod=@A;)"),
+              R"(C:\My Server\prof)");
+}
+
+// Хвостовой разделитель снимаем: к пути дописывается имя файла.
+TEST(ProfileDir, DropsTrailingSeparator) {
+    EXPECT_EQ(graft::plugins::profile_dir(R"(game.exe -profiles=prof\)"), "prof");
+}
+
+TEST(ProfileDir, EmptyWhenNoSwitch) {
+    EXPECT_TRUE(graft::plugins::profile_dir("game.exe -server -mod=@A;").empty());
+}
+
+// Тот же разбор границы, что и у -mod=: ключ внутри чужого значения не ключ.
+TEST(ProfileDir, RequiresSwitchToStartAtBoundary) {
+    EXPECT_EQ(graft::plugins::profile_dir("game.exe -mod=@A-profiles=NOPE; -profiles=YES"), "YES");
+}
+
 // ── Сверка версий ────────────────────────────────────────────────────────────
 
 TEST(Check, AcceptsMatchingVersions) {

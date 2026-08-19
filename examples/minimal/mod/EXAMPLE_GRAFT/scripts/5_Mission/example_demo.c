@@ -58,5 +58,12 @@ modded class MissionBase
         // vector — это std::array<float,3> в C++.
         vector scaled = ExampleScale(Vector(1, 2, 3), 2.5);
         Print("[EXAMPLE_GRAFT] Scale(<1,2,3>, 2.5) = " + scaled.ToString());
+
+        // Журналы игры из C++. Ни одного Print в этих двух строках нет — их пишет сам
+        // плагин: первая ляжет в script-лог рядом с этими, вторая — в crash-лог.
+        // Обе возвращают, дошло ли до движка (до первого тика корня ещё нет).
+        bool said = ExampleSay("это строка в script-лог, её напечатал C++");
+        bool cried = ExampleComplain("а это строка в crash-лог, тоже из C++ (демонстрация, не сбой)");
+        Print("[EXAMPLE_GRAFT] Say -> " + said.ToString() + ", Complain -> " + cried.ToString());
     }
 }
