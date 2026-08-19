@@ -34,15 +34,5 @@ class SeraphBox<Class T>
     proto native int Tag();           // импл в C++, от T не зависит
     proto native int Bump(int by);    // C++ ведёт состояние на каждый объект
 
-    // Имя несёт метку плагина: у двух плагинов, держащих состояние на одном скриптовом
-    // классе, освобождение должно быть своё у каждого. Метку ставит сборка
-    // (GRAFT_PLUGIN_TAG), у сгенерированных объявлений она проставляется сама.
-    private proto native void NativeDispose_SIXW_GRAFT();
-
-    void ~SeraphBox()
-    {
-        NativeDispose_SIXW_GRAFT();   // состояние объекта на стороне C++
-    }
-
     void Put(T value) { }   // обычный скриптовый метод, чтобы T был задействован
 }

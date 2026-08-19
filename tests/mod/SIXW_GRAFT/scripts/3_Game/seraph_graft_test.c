@@ -103,7 +103,7 @@ class SERAPH_GRAFT_TEST : uTestSuite
     void Manager_HostVersionsMatchTheBuild(co_call ctx)
     {
         co_routine coro = co_new(ctx);
-        assert(GraftVersion() == 3, "3", GraftVersion().ToString(), "версия интерфейса хоста");
+        assert(GraftVersion() == 4, "4", GraftVersion().ToString(), "версия интерфейса хоста");
         assert(GraftLayoutVersion() == 2, "2", GraftLayoutVersion().ToString(),
             "версия раскладки движка");
     }
@@ -1278,7 +1278,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
 
     // ── Время жизни: когда C++ узнаёт о смерти скриптового объекта ────────────
     // Экземпляр класса C++ (с его полями) заводится при первом нативном вызове и живёт,
-    // пока скриптовый деструктор не позовёт NativeDispose. Проверяем оба пути.
+    // пока движок не разрушит объект. Скрипт про это ничего не знает: библиотека узнаёт о
+    // смерти от самого движка. Проверяем оба пути.
 
     // ── Скорость: ванильный map против SeraphHashMap ─────────────────────────────
     // Замер через LOG_DURATION из KR_CORE: EXCHANGE_TIME() отдаёт дельту с прошлой
@@ -1715,7 +1716,7 @@ class SERAPH_GRAFT_TEST : uTestSuite
         }
         assert(ok, (before + 1).ToString() + " / " + before.ToString(),
             alive.ToString() + " / " + after.ToString(),
-            "delete в скрипте доходит до C++ через ~SeraphBox -> NativeDispose");
+            "delete в скрипте доходит до C++ без единой строчки в скрипте");
     }
 
     [TEST_CASE("Lifetime_NoNativeCallNoInstance").IN(SERAPH_GRAFT_TEST)];

@@ -27,6 +27,13 @@ struct DemoClass : graft::script_object<"DemoClass"> {
     void Scale(graft::f32 k) const { (void)k; }
 };
 
+// Класс с ПОЛЕМ: экземпляр живёт вместе со скриптовым объектом. В объявлении от этого
+// не появляется ничего — о смерти объекта библиотека узнаёт от движка, а не от скрипта.
+struct DemoState : graft::script_object<"DemoState"> {
+    graft::i32 hits = 0;
+    void Bump() { ++hits; }
+};
+
 GRAFT_BINDINGS("1_Core") {
     bind.global<&DemoPing>("DemoPing")
         .global<&DemoAll>("DemoEverything")
@@ -34,6 +41,7 @@ GRAFT_BINDINGS("1_Core") {
     bind.class_<DemoClass>()
         .static_method<&DemoClass::Twice>("Twice")
         .method<&DemoClass::Scale>("Scale");
+    bind.class_<DemoState>().method<&DemoState::Bump>("Bump");
 }
 
 const graft::native& find(const char* name) {
@@ -76,6 +84,18 @@ TEST(Proto, FileGroupsMethodsIntoModdedClass) {
     EXPECT_LT(file.find("proto native int DemoPing"), cls);  // глобальные — до классов
     EXPECT_NE(file.find("    static proto native int Twice(int p0);"), std::string::npos);
     EXPECT_NE(file.find("    proto native void Scale(float p0);"), std::string::npos);
+}
+
+
+// У класса с состоянием в объявлении — только его методы: ни служебного натива, ни
+// деструктора. Освобождение живёт целиком на стороне C++.
+TEST(Proto, ClassWithStateDeclaresOnlyItsMethods) {
+    const std::string file = graft::proto_file();
+    const std::size_t cls = file.find("modded class DemoState\n{\n");
+    ASSERT_NE(cls, std::string::npos);
+    EXPECT_NE(file.find("    proto native void Bump();"), std::string::npos);
+    EXPECT_EQ(file.find("NativeDispose"), std::string::npos);
+    EXPECT_EQ(file.find("~DemoState"), std::string::npos);
 }
 
 }  // namespace

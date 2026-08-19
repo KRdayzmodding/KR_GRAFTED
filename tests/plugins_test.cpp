@@ -143,22 +143,6 @@ TEST(Merge, GlobalDoesNotCollideWithMethod) {
     EXPECT_TRUE(bad.empty());
 }
 
-// Два плагина, вешающие состояние на один скриптовый класс, оба хотят NativeDispose и
-// оба печатают деструктор — этого Enforce не примет. Ловим на слиянии.
-TEST(Merge, ReportsDisposeCollisionOnSharedClass) {
-    const auto a = make("Shared", "NativeDispose_one");
-    const auto b = make("Shared", "NativeDispose_two");
-    std::vector<collision> bad;
-    graft::plugins::merge({{&a, "one"}, {&b, "two"}}, bad);
-    EXPECT_TRUE(graft::plugins::disposes_clash({{&a, "one"}, {&b, "two"}}));
-}
-
-TEST(Merge, SingleDisposeOnAClassIsFine) {
-    const auto a = make("Shared", "NativeDispose_one");
-    const auto b = make("Shared", "Count");
-    EXPECT_FALSE(graft::plugins::disposes_clash({{&a, "one"}, {&b, "two"}}));
-}
-
 TEST(Describe, MentionsBothPluginsAndTheName) {
     const collision c{"Alpha", "Count", "one", "two"};
     const std::string text = graft::plugins::describe(c);

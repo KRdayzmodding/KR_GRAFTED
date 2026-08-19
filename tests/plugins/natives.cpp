@@ -123,7 +123,7 @@ i32 BoxTag(const Box& box) {
 }
 
 // Сколько SeraphBox сейчас держит C++. Показывает, дошла ли смерть скриптового объекта
-// до нашей стороны: деструктор ~SeraphBox зовёт NativeDispose, тот забывает экземпляр.
+// до нашей стороны: движок разрушил объект — библиотека забыла его экземпляр.
 i32 SeraphGraftLiveBoxes() {
     return static_cast<i32>(graft::live_instances<Box>());
 }
