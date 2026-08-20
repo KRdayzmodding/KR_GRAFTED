@@ -105,7 +105,7 @@ jobs:
       - uses: lukka/get-cmake@latest
 
       # gtest тянется FetchContent'ом по тегу — качать его каждый раз незачем.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: build/release/_deps
           key: deps-${{ runner.os }}-${{ hashFiles('tests/CMakeLists.txt') }}
