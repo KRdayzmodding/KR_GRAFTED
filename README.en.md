@@ -15,20 +15,65 @@ and you don't patch it by address: your code becomes part of it, and the engine 
 directly. The graft point is found at runtime by the *names* of vanilla natives — so a
 game patch moves addresses, it doesn't break the graft.
 
+## A whole mod
+
+A mod that keeps players with junk nicknames off the server. Enforce has no regular
+expressions at all; C++ has them in the standard library. Three files — and the build
+writes the middle one.
+
+**C++ — `src/plugin.cpp`, the entire plugin:**
+
 ```cpp
+#include <regex>
+#include <string_view>
+
 #include <graft/native.hpp>
 
-graft::i32 SeraphPing(graft::i32 token) { return token ^ 0x5E1AF; }
+GRAFT_PLUGIN("MYMOD", 1);                       // DLL passport: name and version
 
-GRAFT_BINDINGS("1_Core") { bind.global<&SeraphPing>("SeraphPing"); }
-GRAFT_ON_TICK(dt) { /* ... */ }
+// A plain C++ function with plain types: string_view arrives without a copy.
+bool IsValidNick(std::string_view nick) {
+    static const std::regex ok{R"(^[A-Za-z][A-Za-z0-9_]{2,15}$)"};
+    return std::regex_match(nick.begin(), nick.end(), ok);
+}
+
+GRAFT_BINDINGS("3_Game") {                      // registration: script name and module
+    bind.global<&IsValidNick>("IsValidNick");
+}
 ```
+
+**Declaration — `mod/MYMOD/scripts/3_Game/grafted_natives_MYMOD.c`, printed by the build:**
+
+```c
+proto native bool IsValidNick(string p0);
+```
+
+**Script — `mod/MYMOD/scripts/5_Mission/mymod.c`, an ordinary DayZ mod:**
+
+```c
+modded class MissionServer
+{
+    override void InvokeOnConnect(PlayerBase player, PlayerIdentity identity)
+    {
+        super.InvokeOnConnect(player, identity);
+
+        if (!IsValidNick(identity.GetPlainName()))
+            GetGame().DisconnectPlayer(identity);
+    }
+}
+```
+
+From the script side `IsValidNick` is indistinguishable from a vanilla native. From the
+C++ side it is an ordinary function the engine calls directly, by address. Need code on
+every frame too? That's `GRAFT_ON_TICK(dt) { ... }` — see [examples/players](examples/players/).
+
+That ships as:
 
 ```
 <game>/dwmapi.dll                                host, one per installation
 @MYMOD/addons/MYMOD.pbo                          your mod, as usual
 @MYMOD/grafted/MYMOD.grafted.dll                 plugin — next to addons/
-@MYMOD/scripts/1_Core/grafted_natives_MYMOD.c    declarations, printed by the build
+@MYMOD/scripts/3_Game/grafted_natives_MYMOD.c    declarations, printed by the build
 ```
 
 Script declarations are a build artifact, like protobuf's `.pb.cc`: nobody writes them by
@@ -53,12 +98,12 @@ The whole mod project is a single CMakeLists:
 file(DOWNLOAD https://raw.githubusercontent.com/KRdayzmodding/KR_GRAFTED/main/cmake/graft.boot.cmake
      "${CMAKE_BINARY_DIR}/graft.boot.cmake")
 include("${CMAKE_BINARY_DIR}/graft.boot.cmake")
-graft_import(graft https://github.com/KRdayzmodding/KR_GRAFTED TAG main)
+graft_import(graft https://github.com/KRdayzmodding/KR_GRAFTED TAG v0.1.0)
 
-graft_plugin(mymod NAME MYMOD VERSION 1 SOURCES src/natives.cpp MODULES 3_Game)
+graft_plugin(mymod NAME MYMOD VERSION 1 SOURCES src/plugin.cpp MODULES 3_Game)
 ```
 
-`main` moves — pin a tag once the first release is out. The host verifies
+Pin a tag, never `main` — that's where graft itself is developed. The host verifies
 `GRAFT_ABI_VERSION` and `GRAFT_LAYOUT_VERSION` at load time and rejects a plugin built
 against different ones, so ABI bumps are announced in [CHANGELOG.md](CHANGELOG.md).
 

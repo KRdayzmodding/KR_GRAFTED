@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.30)
-project(graft VERSION 0.0.1 LANGUAGES CXX C)
+project(graft VERSION 0.1.0 LANGUAGES CXX C)
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  graft — прививка C++ к движку Enfusion.

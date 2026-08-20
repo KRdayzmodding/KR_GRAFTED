@@ -1,4 +1,4 @@
-# KR_GRAFT
+# KR_GRAFTED
 
 [![CI](https://github.com/KRdayzmodding/KR_GRAFTED/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/KRdayzmodding/KR_GRAFTED/actions/workflows/ci.yml)
 [![Лицензия: GPL-3.0-or-later с исключением для плагинов](https://img.shields.io/badge/лицензия-GPL--3.0--or--later%20%2B%20plugin%20exception-blue)](#лицензия)
@@ -13,20 +13,65 @@
 напрямую, без посредника. Место сращения библиотека находит сама, по именам ванильных
 нативов, поэтому патч игры двигает адреса, а не ломает прививку.
 
+## Пример целиком
+
+Мод, который не пускает на сервер игроков с мусорным ником. Регулярных выражений в
+Enforce нет вообще — а в C++ они лежат в стандартной библиотеке. Весь мод — три файла,
+и средний из них пишет сборка.
+
+**C++ — `src/plugin.cpp`. Это весь плагин, целиком:**
+
 ```cpp
+#include <regex>
+#include <string_view>
+
 #include <graft/native.hpp>
 
-graft::i32 SeraphPing(graft::i32 token) { return token ^ 0x5E1AF; }
+GRAFT_PLUGIN("MYMOD", 1);                       // паспорт DLL: имя и версия
 
-GRAFT_BINDINGS("1_Core") { bind.global<&SeraphPing>("SeraphPing"); }
-GRAFT_ON_TICK(dt) { /* ... */ }
+// Обычная функция C++, обычные типы: string_view приезжает из скрипта без копии.
+bool IsValidNick(std::string_view nick) {
+    static const std::regex ok{R"(^[A-Za-z][A-Za-z0-9_]{2,15}$)"};
+    return std::regex_match(nick.begin(), nick.end(), ok);
+}
+
+GRAFT_BINDINGS("3_Game") {                      // регистрация: имя в скрипте и модуль
+    bind.global<&IsValidNick>("IsValidNick");
+}
 ```
+
+**Объявление — `mod/MYMOD/scripts/3_Game/grafted_natives_MYMOD.c`. Печатает сборка:**
+
+```c
+proto native bool IsValidNick(string p0);
+```
+
+**Скрипт — `mod/MYMOD/scripts/5_Mission/mymod.c`. Обычный мод, обычный вызов:**
+
+```cpp
+modded class MissionServer
+{
+    override void InvokeOnConnect(PlayerBase player, PlayerIdentity identity)
+    {
+        super.InvokeOnConnect(player, identity);
+
+        if (!IsValidNick(identity.GetPlainName())) { g_Game.DisconnectPlayer(identity); }
+    }
+}
+```
+
+Со стороны скрипта `IsValidNick` неотличим от ванильного натива: он объявлен в 3_Game,
+поэтому виден и в 4_World, и в 5_Mission. Со стороны C++ это обычная функция — движок
+зовёт её напрямую, по адресу, без прослойки. Нужен ещё и код на каждом кадре —
+`GRAFT_ON_TICK(dt) { ... }`, это [examples/players](examples/players/).
+
+Раскладывается всё это так:
 
 ```
 <игра>/dwmapi.dll                                хост, один на установку
 @MYMOD/addons/MYMOD.pbo                          мод как обычно
 @MYMOD/grafted/MYMOD.grafted.dll                 плагин — по соседству с addons
-@MYMOD/scripts/1_Core/grafted_natives_MYMOD.c    объявления, печатает сборка
+@MYMOD/scripts/3_Game/grafted_natives_MYMOD.c    объявления, печатает сборка
 ```
 
 `graft` — механизм (namespace, макросы, каталоги, `graft.exe`).
@@ -120,7 +165,17 @@ out/release/examples/hello/HELLO_GRAFT.scripts/3_Game/...
 
 ## Свой плагин
 
-Весь проект мода — один CMakeLists:
+Проект того самого мода из начала — четыре файла, из них твоих три:
+
+```
+mymod/
+  CMakeLists.txt                             graft_import + graft_plugin
+  src/plugin.cpp                             C++: функция и её регистрация
+  mod/MYMOD/config.cpp                       обычный конфиг мода DayZ
+  mod/MYMOD/scripts/5_Mission/mymod.c        вызов из скрипта
+```
+
+`CMakeLists.txt` — целиком:
 
 ```cmake
 file(DOWNLOAD https://raw.githubusercontent.com/KRdayzmodding/KR_GRAFTED/main/cmake/graft.boot.cmake
@@ -128,7 +183,7 @@ file(DOWNLOAD https://raw.githubusercontent.com/KRdayzmodding/KR_GRAFTED/main/cm
 include("${CMAKE_BINARY_DIR}/graft.boot.cmake")
 graft_import(graft https://github.com/KRdayzmodding/KR_GRAFTED TAG main)
 
-graft_plugin(mymod NAME MYMOD VERSION 1 SOURCES src/natives.cpp MODULES 3_Game)
+graft_plugin(mymod NAME MYMOD VERSION 1 SOURCES src/plugin.cpp MODULES 3_Game)
 ```
 
 ```bat
@@ -136,9 +191,10 @@ cmake --preset release
 cmake --build --preset release
 ```
 
-> **`TAG main` — только пока нет релиза.** `main` движется, и бамп `GRAFT_ABI_VERSION`
-> в нём отклонит уже собранные плагины: хост сверяет числа при загрузке. Как только
-> выйдет первый тег, ставь его — `TAG v0.1.0`, — и обновляй осознанно, читая CHANGELOG.
+> **Тег, а не `main`.** `main` — ветка разработки самого graft: она движется, и бамп
+> `GRAFT_ABI_VERSION` в ней отклонит уже собранные плагины — хост сверяет числа при
+> загрузке. Мод держи на теге и переезжай на следующий осознанно, прочитав
+> [CHANGELOG](CHANGELOG.md).
 
 `graft_import` качает graft (или берёт локальный исходник, если передать
 `-DGRAFT_SOURCE_DIR=C:/src/graft`) и кэширует его в `~/.graft` — второй мод той же
@@ -300,3 +356,29 @@ outbound) и разрешаешь правообладателю проекта 
 Правила общения — [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Уязвимости **не в трекер**, а
 приватно: [SECURITY.md](SECURITY.md). Вопросы «как этим пользоваться» —
 в [Discussions](https://github.com/KRdayzmodding/KR_GRAFTED/discussions).
+
+
+```js
+ㅤ                ▁▂▁
+ㅤ              □░▒▓▒░□     ▂▃▂
+ㅤ                """_ "__□░▒▓▒░□        v0x002,
+ㅤ           ▁▂▂▁  __." --" """       ╓─<grafted>>
+ㅤ         □░▒▓▓▒░□___ "_._  □░▒░□_.">╬═<"0x1"␀"
+ㅤ           """"     "" , \_.   "_. ."
+ㅤ                  ▁▂▁ _"__ \__./ ."
+ㅤ                □░▒▓▒░□"  "_    ./
+ㅤ                  '''       (    )
+ㅤ       ╭───────────────────╯░░░░░░╰──────────────╮
+ㅤ       ┝───github.com/KRdayzmodding/KR_GRAFTED───┥
+ㅤ       │   by [KR] 6wingSeraph  &  Maintainers   │
+ㅤ       ╰──┰───────────────────────────────────┰──╯
+ㅤ  ▄████  ██▀███   ▄▄▄        █████▒▄▄▄█████▓▓█████ ▓█████▄
+ㅤ ██▒ ▀█▒▓██ ▒ ██▒▒████▄    ▓██   ▒ ▓  ██▒ ▓▒▓█   ▀ ▒██▀ ██▌
+ㅤ▒██░▄▄▄░▓██ ░▄█ ▒▒██  ▀█▄  ▒████ ░ ▒ ▓██░ ▒░▒███   ░██   █▌
+ㅤ░▓█  ██▓▒██▀▀█▄  ░██▄▄▄▄██ ░▓█▒  ░ ░ ▓██▓ ░ ▒▓█  ▄ ░▓█▄   ▌
+ㅤ░▒▓███▀▒░██▓ ▒██▒ ▓█   ▓██▒░▒█░      ▒██▒ ░ ░▒████▒░▒████▓
+ㅤ ░▒   ▒ ░ ▒▓ ░▒▓░ ▒▒   ▓▒█░ ▒ ░      ▒ ░░   ░░ ▒░ ░ ▒▒▓  ▒
+ㅤ  ░   ░   ░▒ ░ ▒░  ▒   ▒▒ ░ ░          ░     ░ ░  ░ ░ ▒  ▒
+ㅤ░ ░   ░   ░░   ░   ░   ▒    ░ ░      ░         ░    ░ ░  ░
+ㅤ      ░    ░           ░  ░                    ░  ░   ░
+```
