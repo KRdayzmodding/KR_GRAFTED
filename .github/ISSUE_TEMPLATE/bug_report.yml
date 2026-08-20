@@ -1,0 +1,94 @@
+name: Баг
+description: Что-то работает не так, как написано в документации
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Плагин не грузится вовсе — там отдельный шаблон, он спрашивает другое.
+        Вопрос «как сделать X» — в [Discussions](https://github.com/KRdayzmodding/KR_GRAFTED/discussions).
+
+  - type: input
+    id: graft-version
+    attributes:
+      label: Версия GRAFT
+      description: Тег (`v0.1.0`) или хеш коммита. «Последняя с main» — не версия, посмотри `git rev-parse --short HEAD`.
+      placeholder: v0.1.0 / 671a9ec
+    validations:
+      required: true
+
+  - type: dropdown
+    id: side
+    attributes:
+      label: Где воспроизводится
+      options:
+        - Сервер (DayZServer_x64)
+        - Клиент (DayZ_x64)
+        - Diag (DayZDiag_x64)
+        - И там, и там
+    validations:
+      required: true
+
+  - type: input
+    id: dayz-build
+    attributes:
+      label: Сборка DayZ
+      description: Полный номер, как в лаунчере или в шапке script-лога.
+      placeholder: 1.29.0.163451
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Вывод `graft doctor <каталог игры>`
+      description: Целиком, как есть. Это первое, что я посмотрю.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: graft-log
+    attributes:
+      label: Системный журнал `graft_*.log`
+      description: Из каталога `-profiles=` (без ключа — рядом с exe), файл того запуска, где сломалось.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Шаги воспроизведения
+      description: По пунктам, от чистой установки. Если есть минимальный плагин или скрипт — приложи код.
+      placeholder: |
+        1. graft install C:\DayZServer
+        2. собрал плагин с нативом `int f(string)`
+        3. позвал из 3_Game: `f("привет")`
+        4. в script-логе пусто, натив не вызвался
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Ожидалось / получилось
+    validations:
+      required: true
+
+  - type: textarea
+    id: crash
+    attributes:
+      label: Падение
+      description: Если игра упала — `crash_*.log` и путь к минидампу рядом со script-логом. Если не падало — пропусти.
+      render: text
+
+  - type: checkboxes
+    id: rules
+    attributes:
+      label: Перед отправкой
+      options:
+        - label: Это не уязвимость (иначе — [SECURITY.md](https://github.com/KRdayzmodding/KR_GRAFTED/blob/main/SECURITY.md), Discord, не публичный issue)
+          required: true
+        - label: Я поискал среди открытых и закрытых issue
+          required: true

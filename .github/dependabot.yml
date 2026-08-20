@@ -1,0 +1,12 @@
+version: 2
+updates:
+  # Единственная экосистема, которую здесь есть смысл сторожить: экшены в CI.
+  # gtest прибит тегом в FetchContent (tests/CMakeLists.txt) — Dependabot его не видит,
+  # и это нормально: обновлять его вручную раз в полгода дешевле, чем городить обвязку.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "chore(ci)"
+    labels: ["ci"]

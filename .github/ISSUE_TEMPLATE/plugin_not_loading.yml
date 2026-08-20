@@ -1,0 +1,114 @@
+name: Плагин не грузится
+description: Хост стоит, а плагина не видно — или видно, но он отклонён
+labels: ["bug", "loading"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Половина таких случаев чинится выводом `graft doctor` и `graft list` — начни с них,
+        возможно, issue не понадобится.
+
+  - type: input
+    id: graft-version
+    attributes:
+      label: Версия GRAFT (хоста)
+      description: Тег или коммит, из которого собран `dwmapi.dll`.
+      placeholder: v0.1.0 / 671a9ec
+    validations:
+      required: true
+
+  - type: input
+    id: plugin-built-with
+    attributes:
+      label: Версия GRAFT, которой собран плагин
+      description: Если бралась через `graft_import(... TAG ...)` — какой TAG. Несовпадение с хостом — самая частая причина отказа.
+      placeholder: TAG v0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: dayz-build
+    attributes:
+      label: Сборка DayZ и что запущено
+      placeholder: 1.29.0.163451, DayZServer_x64
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Вывод `graft doctor <каталог игры>`
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: list
+    attributes:
+      label: Вывод `graft list <каталог игры>`
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: layout
+    attributes:
+      label: Раскладка мода на диске
+      description: |
+        Дерево от каталога игры до плагина. Плагин лежит в `@МОД/grafted/`, рядом с `addons/`, и называется `<ИМЯ>.grafted.dll`.
+      render: text
+      placeholder: |
+        C:\DayZServer\dwmapi.dll
+        C:\DayZServer\@MYMOD\addons\MYMOD.pbo
+        C:\DayZServer\@MYMOD\grafted\MYMOD.grafted.dll
+    validations:
+      required: true
+
+  - type: input
+    id: mod-line
+    attributes:
+      label: Строка запуска `-mod=`
+      description: Как есть, целиком.
+      placeholder: -mod=@CF;@MYMOD
+    validations:
+      required: true
+
+  - type: dropdown
+    id: foreign-dwmapi
+    attributes:
+      label: Была ли в каталоге игры чужая `dwmapi.dll`
+      description: GRAFT чужой прокси не трогает и отказывается ставиться поверх — это штатное поведение, а не баг.
+      options:
+        - Нет, каталог был чистый
+        - Да, лежала чужая (напишу ниже, чья)
+        - Не знаю
+    validations:
+      required: true
+
+  - type: input
+    id: clang
+    attributes:
+      label: Версия clang-cl, которой собран плагин
+      description: "`clang-cl --version`. Нужна редко, но при странностях с ABI решает."
+      placeholder: 19.1.5
+    validations:
+      required: true
+
+  - type: textarea
+    id: graft-log
+    attributes:
+      label: Системный журнал `graft_*.log`
+      description: Именно того запуска, где плагин не загрузился. Причина отказа пишется туда.
+      render: text
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: rules
+    attributes:
+      label: Перед отправкой
+      options:
+        - label: Плагин собран той же версией GRAFT, что и хост, либо я знаю, что версии разные
+          required: true
+        - label: Я поискал среди открытых и закрытых issue
+          required: true
