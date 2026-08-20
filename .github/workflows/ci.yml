@@ -85,7 +85,7 @@ jobs:
       - name: Примеры
         run: cmake --build --preset examples
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: graft-${{ github.sha }}
           path: out/release/graft/
