@@ -13,7 +13,7 @@ Commits, один PR — одна мысль. Всё остальное — по
 
 | Что | Версия | Откуда |
 |---|---|---|
-| Visual Studio 2022 | Build Tools достаточно | компонент **Desktop development with C++** — из него берутся Windows SDK и STL |
+| Visual Studio 2022 или новее | Build Tools достаточно | компонент **Desktop development with C++** — из него берутся Windows SDK и STL |
 | LLVM / clang-cl | **17+** (в проекте C++26 через `/clang:-std=c++2c`) | компонент VS **C++ Clang tools for Windows** или отдельный [LLVM](https://github.com/llvm/llvm-project/releases) |
 | CMake | **3.30+** | из VS или отдельно |
 | Ninja | любая | из VS или отдельно |
@@ -50,6 +50,12 @@ ctest --preset release
 
 Дальше вместо `--preset release` пишешь `--preset local`. PR, который приносит чужие пути в
 `CMakePresets.json`, не принимается.
+
+**VS Code:** в репозитории лежат готовые `.vscode/tasks.json` и `launch.json` — сборка,
+тесты, примеры и отладка `graft_tests.exe` и `graft.exe doctor`. Окружение VS они
+поднимают сами через `.vscode/dev-shell.cmd` (находит установку через `vswhere` и зовёт
+`vcvars64.bat`), поэтому запускать VS Code из Developer-консоли не нужно. Отладка
+требует расширения `ms-vscode.cpptools`.
 
 IDE: `compile_commands.json` печатается в каталог сборки, `.clangd` в корне на него уже
 настроен — VS Code, Neovim и CLion подхватывают без плясок.

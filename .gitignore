@@ -4,7 +4,12 @@ out/
 .vs
 RESEARCH/bin/
 RESEARCH/out/
-.vscode
+.vscode/*
+# ...кроме общих конфигураций: задачи сборки и запуск отладчика одинаковы у всех,
+# личного в них нет — каталог игры спрашивается при запуске.
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/dev-shell.cmd
 .claude
 examples/players/src/graft/
 CMakeUserPresets.json

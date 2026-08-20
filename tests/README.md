@@ -37,7 +37,7 @@
 ## Покрытие
 
 ```bat
-cmake --preset coverage
+cmake --preset debug -DGRAFT_COVERAGE=ON
 cmake --build --preset coverage    :: цифры + html в build/coverage/coverage/
 ```
 
@@ -114,14 +114,6 @@ xcopy /E /Y out\release\tests\graft.scripts        tests\mod\SIXW_GRAFT\scripts
 Объявления `grafted_natives_*.c` печатает сборка рядом с плагинами
 (`out/<конфиг>/tests/<ИМЯ>.scripts`) — в `mod/SIXW_GRAFT` их нет и в репозитории тоже.
 Забрать их в мод и упаковать PBO — обычный ручной шаг, как в любом моде (см. выше).
-
-Зеркало движкового API фикстуре нужно для целевого сценария («игроки и их steam id»).
-Готовится один раз и подключается путём — скрипты игры сборка не ищет:
-
-```bat
-graft apigen P:/scripts build/gen/graft/dayz
-cmake --preset release -DGRAFT_API_DIR=build/gen
-```
 
 Зеркало движкового API фикстуре нужно для целевого сценария («игроки и их steam id»).
 Готовится один раз и подключается путём — скрипты игры сборка не ищет:

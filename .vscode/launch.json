@@ -1,0 +1,53 @@
+{
+    // Отладчик — cppvsdbg из расширения ms-vscode.cpptools: сборка идёт clang-cl под
+    // MSVC-ABI, и родной отладчик понимает её PDB без переводчиков.
+    //
+    // Личных путей здесь нет и быть не должно: каталог игры спрашивается при запуске.
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Тесты: все",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/out/release/tests/graft_tests.exe",
+            "cwd": "${workspaceFolder}/out/release/tests",
+            "preLaunchTask": "graft: собрать тесты",
+            "console": "integratedTerminal"
+        },
+        {
+            // Отлаживать всю сьюту ради одного кейса незачем: фильтр gtest принимает
+            // маску, например `Scan.*` или `Callout.ValueTypeMethodTakesReceiverInBlock`.
+            "name": "Тесты: по фильтру",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/out/release/tests/graft_tests.exe",
+            "args": ["--gtest_filter=${input:testFilter}", "--gtest_break_on_failure"],
+            "cwd": "${workspaceFolder}/out/release/tests",
+            "preLaunchTask": "graft: собрать тесты",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "graft doctor",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/out/release/graft/graft.exe",
+            "args": ["doctor", "${input:gameDir}"],
+            "cwd": "${workspaceFolder}/out/release/graft",
+            "preLaunchTask": "graft: сборка",
+            "console": "integratedTerminal"
+        }
+    ],
+    "inputs": [
+        {
+            "id": "testFilter",
+            "type": "promptString",
+            "description": "маска gtest, например Scan.*",
+            "default": "*"
+        },
+        {
+            "id": "gameDir",
+            "type": "promptString",
+            "description": "каталог игры или сервера, например C:/DayZServer"
+        }
+    ]
+}
