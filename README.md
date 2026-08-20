@@ -6,6 +6,7 @@
 
 **Одна запись в C++ — и натив движку, и `proto native` скрипту. Ни одного зашитого адреса.**
 
+
 **[Как участвовать](CONTRIBUTING.md)** · **[Обсуждения](https://github.com/KRdayzmodding/KR_GRAFTED/discussions)** · **[Сборки](https://github.com/KRdayzmodding/KR_GRAFTED/releases)** · **[Изменения](CHANGELOG.md)** · **[In English](README.en.md)**
 
 Название — от прививки. Ты не вызываешь движок снаружи и не патчишь его по адресам:
@@ -29,7 +30,7 @@ Enforce нет вообще — а в C++ они лежат в стандарт�
 
 GRAFT_PLUGIN("MYMOD", 1);                       // паспорт DLL: имя и версия
 
-// Обычная функция C++, обычные типы: string_view приезжает из скрипта без копии.
+// C++ функция, которая проверяет ник игрока: от A до Z, от a до z, цифры и подчёркивание. За счет стандарта regex
 bool IsValidNick(std::string_view nick) {
     static const std::regex ok{R"(^[A-Za-z][A-Za-z0-9_]{2,15}$)"};
     return std::regex_match(nick.begin(), nick.end(), ok);
