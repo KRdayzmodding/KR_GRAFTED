@@ -1,6 +1,12 @@
 # KR_GRAFT
 
+[![CI](https://github.com/KRdayzmodding/KR_GRAFTED/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/KRdayzmodding/KR_GRAFTED/actions/workflows/ci.yml)
+[![Лицензия: GPL-3.0-or-later с исключением для плагинов](https://img.shields.io/badge/лицензия-GPL--3.0--or--later%20%2B%20plugin%20exception-blue)](#лицензия)
+[![C++26 · clang-cl · Windows](https://img.shields.io/badge/C%2B%2B26-clang--cl%20%C2%B7%20Windows-orange)](CONTRIBUTING.md#1-окружение)
+
 **Одна запись в C++ — и натив движку, и `proto native` скрипту. Ни одного зашитого адреса.**
+
+**[Как участвовать](CONTRIBUTING.md)** · **[Обсуждения](https://github.com/KRdayzmodding/KR_GRAFTED/discussions)** · **[Сборки](https://github.com/KRdayzmodding/KR_GRAFTED/releases)** · **[Изменения](CHANGELOG.md)** · **[In English](README.en.md)**
 
 Название — от прививки. Ты не вызываешь движок снаружи и не патчишь его по адресам:
 твой C++ прирастает к нему и дальше живёт как его часть — движок ходит в твой код

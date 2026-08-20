@@ -20,6 +20,11 @@ ABI: 5, LAYOUT: 2
   `CODE_OF_CONDUCT.md`, соглашение о вкладе (`docs/CLA.md`) с подписью ботом, шаблоны
   issue и PR, CI на GitHub Actions (формат, сборка, тесты, вентиль ABI), `CODEOWNERS`,
   `dependabot`.
+- Каждый пуш в `main` кладёт `dwmapi.dll` и `graft.exe` в черновик пред-релиза
+  `v<версия>-rc.N` — скачать сборку можно, не собирая ничего и не логинясь.
+- `.gitattributes`: в репозитории LF, у Windows-скриптов на диске CRLF.
+- В `CONTRIBUTING.md` — как править graft прямо из своего мода
+  (`-DGRAFT_SOURCE_DIR`) и что считается недопустимым следом AI-ассистента.
 
 ### Изменено
 

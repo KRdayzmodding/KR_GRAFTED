@@ -119,6 +119,62 @@ jobs:
       - name: ctest
         run: ctest --preset release
 
+  # ── Черновик релиза с бинарями ─────────────────────────────────────────────
+  # Аудитория graft — мододелы, которые C++ не собирают. Артефакт джобы `build`
+  # живёт 14 дней и виден только залогиненным, поэтому каждый пуш в main кладёт
+  # хост и инструмент в ЧЕРНОВИК пред-релиза: скачать может кто угодно, а решение
+  # «это релиз» остаётся ручным — черновик не публикуется сам и тега не создаёт.
+  release:
+    if: github.event_name == 'push'
+    needs: [build, tests]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: graft-${{ github.sha }}
+          path: pack
+
+      # Считаем ДО удаления черновиков: счётчик rc живёт в имени последнего из них.
+      - name: Следующий rc-тег
+        run: python3 .github/next-version.py "$(gh release list -L 1 --json name --jq '.[0].name // ""')"
+
+      - name: Снести прошлые черновики
+        run: gh release list --json name,isDraft --jq '.[] | select(.isDraft) | .name' | xargs -r -I {} gh release delete {} --yes
+
+      # THIRD_PARTY.md обязан ехать рядом с бинарником: в dwmapi.dll вкомпилированы
+      # MinHook и HDE под BSD-2, и это требование их лицензии, а не вежливость.
+      - name: Архив
+        run: |
+          cp THIRD_PARTY.md LICENSE LICENSE-EXCEPTION pack/
+          cd pack && zip -r "../graft-${TAG_NAME}-windows-x64.zip" . && cd ..
+          unzip -l "graft-${TAG_NAME}-windows-x64.zip"
+
+      # Заметки собираем сами: сверху — то, без чего релиз бесполезен (сборка игры и
+      # числа ABI), снизу — обычный автосписок PR от GitHub.
+      - name: Заметки
+        run: |
+          abi=$(grep -oE '#define GRAFT_ABI_VERSION[[:space:]]+[0-9]+' INCLUDE/graft/abi.h | grep -oE '[0-9]+$')
+          layout=$(grep -oE '#define GRAFT_LAYOUT_VERSION[[:space:]]+[0-9]+' INCLUDE/graft/abi.h | grep -oE '[0-9]+$')
+          {
+            echo "> Сборка с ветки \`main\`, не выпущенный релиз. Проверено на сборке DayZ: **впиши перед публикацией**."
+            echo
+            echo "**ABI: $abi, LAYOUT: $layout.** Плагин, собранный под другие числа, хост не загрузит."
+            echo
+            echo "В архиве: \`dwmapi.dll\` (хост), \`graft.exe\` (инструмент), лицензии и \`THIRD_PARTY.md\`."
+            echo
+          } > notes.md
+          gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" -f tag_name="$TAG_NAME" -f target_commitish="$GITHUB_SHA" --jq .body >> notes.md
+          cat notes.md
+
+      - name: Черновик
+        run: gh release create "$TAG_NAME" --draft --prerelease --title "$TAG_NAME" --notes-file notes.md --target "$GITHUB_SHA" "graft-${TAG_NAME}-windows-x64.zip"
+
   # ── Вентиль ABI ────────────────────────────────────────────────────────────
   # Бамп GRAFT_ABI_VERSION отклоняет ВСЕ ранее собранные чужие плагины. Такое не
   # проезжает молча: раз тронут abi.h — обязана быть строка в CHANGELOG.md.
