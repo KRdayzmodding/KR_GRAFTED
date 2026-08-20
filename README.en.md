@@ -1,6 +1,11 @@
 # KR_GRAFT
 
+[![CI](https://github.com/KRdayzmodding/KR_GRAFTED/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/KRdayzmodding/KR_GRAFTED/actions/workflows/ci.yml)
+[![License: GPL-3.0-or-later with plugin exception](https://img.shields.io/badge/license-GPL--3.0--or--later%20%2B%20plugin%20exception-blue)](#license)
+
 **One C++ entry — both an engine native and a `proto native` for script. No hardcoded addresses.**
+
+**[Contributing](CONTRIBUTING.md)** · **[Discussions](https://github.com/KRdayzmodding/KR_GRAFTED/discussions)** · **[Builds](https://github.com/KRdayzmodding/KR_GRAFTED/releases)** · **[Changelog](CHANGELOG.md)** · **[По-русски](README.md)**
 
 > The full documentation is in Russian: [README.md](README.md). This page is the short
 > version for people who just found the project.
