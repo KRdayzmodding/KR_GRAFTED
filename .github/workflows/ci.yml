@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, dev]
 
 permissions:
   contents: read
@@ -23,7 +23,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -56,7 +56,7 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # clang-cl берёт Windows SDK и STL из окружения VS — без этого шага конфигурация
       # падает на поиске windows.h.
@@ -85,7 +85,7 @@ jobs:
       - name: Примеры
         run: cmake --build --preset examples
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: graft-${{ github.sha }}
           path: out/release/graft/
@@ -96,7 +96,7 @@ jobs:
   tests:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: ilammy/msvc-dev-cmd@v1
         with:
@@ -105,7 +105,7 @@ jobs:
       - uses: lukka/get-cmake@latest
 
       # gtest тянется FetchContent'ом по тегу — качать его каждый раз незачем.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: build/release/_deps
           key: deps-${{ runner.os }}-${{ hashFiles('tests/CMakeLists.txt') }}
@@ -125,7 +125,9 @@ jobs:
   # хост и инструмент в ЧЕРНОВИК пред-релиза: скачать может кто угодно, а решение
   # «это релиз» остаётся ручным — черновик не публикуется сам и тега не создаёт.
   release:
-    if: github.event_name == 'push'
+    # Только main: с `dev` собирается всё то же самое, но черновик пред-релиза —
+    # это витрина «скачай последнюю сборку», и она обязана показывать стабильную ветку.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [build, tests]
     runs-on: ubuntu-latest
     permissions:
@@ -133,9 +135,9 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: graft-${{ github.sha }}
           path: pack
@@ -182,7 +184,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
