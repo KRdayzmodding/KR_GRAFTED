@@ -11,16 +11,25 @@
 
 ## 0. Состояние
 
-Файлы фазы P0 и CI фазы P1 — **написаны и лежат в дереве**. Осталось руками:
+Фазы P0 и P1 — **сделаны**. Файлы в дереве, настройки применены, CI прогнан.
 
-| Осталось | Где |
+| Сделано | Чем |
 |---|---|
-| Импортировать ruleset, мерж-кнопка, Discussions/Wiki/Projects, апрув форк-PR, base permissions организации | приложение А |
-| Создать ветку `cla-signatures` | А.6 |
-| Завести метки `loading`, `research`, `ci`, `abi-break` | иначе Issue Forms и Dependabot молча их не проставят |
-| Включить private vulnerability reporting | `Settings` → `Advanced Security` (иначе ссылка «Report a vulnerability» из SECURITY.md никуда не ведёт) |
-| Добавить в required checks `format`, `build`, `tests`, `abi`, `cla` | после первого прогона: раньше GitHub этих контекстов не знает |
-| Тег `v0.1.0` и релиз | §4.3, после того как всё вышеперечисленное вольётся |
+| Ruleset на `main` (id 21086856): active, PR обязателен, 0 approvals, dismiss stale, conversation resolution, только squash, linear history, block force push, restrict deletions, bypass пуст | импорт `.github/rulesets/main.json` |
+| Мерж: только squash, заголовок `PR_TITLE`, тело `PR_BODY`, автоудаление веток | API |
+| Discussions вкл, Wiki и Projects выкл | API |
+| Private vulnerability reporting включён | API |
+| Fork-PR: `all_external_contributors` вместо `first_time_contributors` | API |
+| Метки `loading`, `research`, `ci`, `abi-break` | API |
+| Ветка `cla-signatures` — сирота, ноль файлов и ноль истории | `git commit-tree` пустого дерева |
+| Первый прогон CI: `format` 13s, `abi` 6s, `tests` 1m48s (**164 теста, 100%**), `build` 2m55s (три примера + артефакт 660 KB) | PR #1 |
+
+| Осталось | Почему не сделано |
+|---|---|
+| `default_repository_permission` организации проверить и выставить `Read` | нужен scope `admin:org`, у токена его нет — только веб (А.4) |
+| Добавить `cla` в required checks | контекст появится после первого PR, открытого уже с `cla.yml` в `main` |
+| Тег `v0.1.0` и релиз | §4.3 — отдельное решение, когда захочешь зафиксировать состояние для пользователей |
+| Решить про approvals | в репозитории **три админа** (`warcat06`, `HiimOrange`, `6wingSerap`), а не один. `required_approving_review_count: 1` перестал быть самоблокировкой — см. §1 |
 
 ## 0.1 Что уже есть
 
@@ -44,7 +53,7 @@
 | CLA vs DCO | **CLA**, потому что README обещает право перелицензировать. DCO такого права не даёт | Без CLA обещание в README юридически пустое, а собрать подписи задним числом невозможно |
 | Чем подписывать CLA | `contributor-assistant/github-action` в самом репозитории, а не внешний `cla-assistant.io` | Не нужно ставить чужое OAuth-приложение с правами на репозиторий и зависеть от чужого хостинга; подписи лежат в ветке `cla-signatures` |
 | Модель доступа | Только форки + PR. Никому write | Один мейнтейнер, командам нечего давать |
-| Required approvals | **Ноль**, пока мейнтейнер один; PR обязателен, checks обязательны | Требование ревью заблокирует тебя самого |
+| Required approvals | **Ноль** на старте; PR обязателен, checks обязательны | Требование ревью заблокировало бы одиночку. **Но админов в репозитории трое** (`warcat06`, `HiimOrange`, `6wingSerap`) — значит ревьюеры есть, и `1` уже не самоблокировка. Решение открыто |
 | Merge | Только squash, заголовок PR = заголовок коммита | История линейная, changelog собирается из заголовков |
 
 ---
