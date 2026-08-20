@@ -1,0 +1,63 @@
+{
+    // Всё идёт через dev-shell.cmd: он поднимает окружение Visual Studio, без которого
+    // clang-cl не находит windows.h. Поэтому задачи работают из обычного VS Code, а не
+    // только из «x64 Native Tools Command Prompt».
+    "version": "2.0.0",
+    "options": {
+        "cwd": "${workspaceFolder}"
+    },
+    "presentation": {
+        "panel": "dedicated",
+        "clear": true
+    },
+    "problemMatcher": "$msCompile",
+    "tasks": [
+        {
+            "label": "graft: конфигурация",
+            "type": "process",
+            "command": "${workspaceFolder}\\.vscode\\dev-shell.cmd",
+            "args": ["cmake", "--preset", "release"],
+            "detail": "cmake --preset release"
+        },
+        {
+            "label": "graft: сборка",
+            "type": "process",
+            "command": "${workspaceFolder}\\.vscode\\dev-shell.cmd",
+            "args": ["cmake", "--build", "--preset", "release"],
+            "detail": "библиотека, graft.exe, dwmapi.dll",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "graft: собрать тесты",
+            "type": "process",
+            "command": "${workspaceFolder}\\.vscode\\dev-shell.cmd",
+            "args": ["cmake", "--build", "--preset", "tests"],
+            "detail": "фикстуры-плагины и graft_tests.exe"
+        },
+        {
+            "label": "graft: тесты",
+            "type": "process",
+            "command": "${workspaceFolder}\\.vscode\\dev-shell.cmd",
+            "args": ["ctest", "--preset", "release"],
+            "detail": "ctest --preset release",
+            "dependsOn": "graft: собрать тесты",
+            "dependsOrder": "sequence",
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            }
+        },
+        {
+            // Примеры собираются своими проектами — ровно тем путём, которым их собирает
+            // мододел. Ломается публичный API — краснеет здесь, а не у пользователя.
+            "label": "graft: примеры",
+            "type": "process",
+            "command": "${workspaceFolder}\\.vscode\\dev-shell.cmd",
+            "args": ["cmake", "--build", "--preset", "examples"],
+            "detail": "каждый пример — отдельным проектом"
+        }
+    ]
+}
