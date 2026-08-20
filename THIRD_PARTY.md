@@ -8,6 +8,7 @@ GRAFT под GPL-3.0-or-later (см. [LICENSE](LICENSE), [LICENSE-EXCEPTION](LIC
 | [MinHook](https://github.com/TsudaKageyu/minhook) | v1.3.3 | BSD-2-Clause | **да**, статически в хост |
 | Hacker Disassembler Engine 32/64 (внутри MinHook) | — | BSD-2-Clause | **да**, статически в хост |
 | [GoogleTest](https://github.com/google/googletest) | v1.15.2 | BSD-3-Clause | нет, только тесты |
+| [KR_UTEST](https://github.com/KRdayzmodding) (`tests/mod/SIXW_GRAFT/scripts/3_Game/uTest.c`) | вендорная копия | MIT | нет, только PBO тестового мода |
 
 BSD-2 требует воспроизвести уведомление в документации при поставке **бинарников**.
 Поэтому этот файл обязан ехать вместе с `dwmapi.dll` — не только лежать в репозитории.
@@ -89,3 +90,34 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 Copyright 2008, Google Inc. All rights reserved. BSD-3-Clause — полный текст
 в `build/*/\_deps/googletest-src/LICENSE`. Собирается только целями тестов
 (`ctest`), в `dwmapi.dll` и плагины не попадает.
+
+---
+
+## KR_UTEST
+
+Фреймворк скриптовых тестов, одним файлом. Лежит копией в
+`tests/mod/SIXW_GRAFT/scripts/3_Game/uTest.c`, чтобы тестовый мод не зависел от чужих
+модов; чинить его надо в его репозитории, иначе следующая копия затрёт заплатку.
+В `dwmapi.dll`, плагины и в поставку библиотеки не попадает — только в PBO тестового мода.
+
+MIT License
+
+Copyright (c) 2026 KRdayzmodding
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

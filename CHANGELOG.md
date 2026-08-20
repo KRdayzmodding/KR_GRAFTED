@@ -28,6 +28,12 @@ ABI: 5, LAYOUT: 2
 
 ### Изменено
 
+- Скриптовая сьюта переехала с uTest из `KR_CORE` на **KR_UTEST** — фреймворк лежит
+  копией в `tests/mod/SIXW_GRAFT/scripts/3_Game/uTest.c` (MIT, один файл). Тестовый мод
+  больше не зависит ни от `KR_CORE`, ни от Community Framework: собрать и прогнать его
+  может любой, у кого есть игра. Кейсы стали обычными `void Имя()` вместо корутин,
+  запуск — `-scrDef=UTESTS_RUN -utest=seraph::graft`.
+
 ### Исправлено
 
 ---

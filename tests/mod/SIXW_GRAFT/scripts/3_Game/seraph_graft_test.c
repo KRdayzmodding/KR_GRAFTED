@@ -1,11 +1,39 @@
-#ifndef UTESTS
-// uTest-сьюта (фреймворк из KR_CORE). Матрица ABI graft-модуля: по кейсу на каждый
-// тип, который умеет `proto native`. Импл — C++ в proxy-DLL (SRC/seraph/natives.cpp),
-// объявления сгенерены graft_protogen. После патча игры именно эта сьюта скажет,
-// не поехала ли привязка.
+// uTest-сьюта на KR_UTEST — фреймворк лежит рядом файлом uTest.c (MIT), внешних
+// зависимостей у мода нет. Матрица ABI graft-модуля: по кейсу на каждый тип, который
+// умеет `proto native`. Импл — C++ в proxy-DLL (SRC/seraph/natives.cpp), объявления
+// сгенерены graft_protogen. После патча игры именно эта сьюта скажет, не поехала ли
+// привязка.
 //
-// ВНИМАНИЕ: в теле co_routine нельзя писать '&&' — компилятор Enforce на нём падает
-// (проверено на 1.29 и на чисто ванильном коде). Условия собираем вложенными if.
+// Кейс — обычный `void Имя()`: раннер зовёт его по имени через GameScript.CallFunction.
+// Запрет на '&&' был свойством тела корутины (компилятор Enforce на нём падал) —
+// здесь корутин нет, и запрет снят, но уже написанные вложенные if не трогаем.
+
+// Секундомер замеров. Раньше брался LOG_DURATION из KR_CORE; теперь мод не зависит ни
+// от чего, а мера та же: TickCount(0) отдаёт абсолютную отметку в сотнях наносекунд,
+// поэтому дельта делится на 10000 и получаются миллисекунды.
+class SeraphClock : Managed
+{
+    private int m_mark;
+
+    void SeraphClock() { m_mark = TickCount(0); }
+
+    //! Миллисекунды с прошлой отметки; отметка сдвигается на сейчас.
+    float Exchange()
+    {
+        int now = TickCount(0);
+        int delta = now - m_mark;
+        m_mark = now;
+        return delta / 10000.0;
+    }
+
+    static string Format(float ms)
+    {
+        if (ms >= 1000) return (ms / 1000).ToString() + " s";
+        if (ms >= 1) return ms.ToString() + " ms";
+        return (ms * 1000).ToString() + " us";
+    }
+}
+
 [TEST_SUITE("seraph::graft", SERAPH_GRAFT_TEST)];
 class SERAPH_GRAFT_TEST : uTestSuite
 {
@@ -100,9 +128,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     // запустить: сломается сосуществование — покраснеет половина кейсов.
 
     [TEST_CASE("Manager_HostVersionsMatchTheBuild").IN(SERAPH_GRAFT_TEST)];
-    void Manager_HostVersionsMatchTheBuild(co_call ctx)
+    void Manager_HostVersionsMatchTheBuild()
     {
-        co_routine coro = co_new(ctx);
         assert(GraftVersion() == 5, "5", GraftVersion().ToString(), "версия интерфейса хоста");
         assert(GraftLayoutVersion() == 2, "2", GraftLayoutVersion().ToString(),
             "версия раскладки движка");
@@ -124,9 +151,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Log_EngineGlobalsAreFoundByName").IN(SERAPH_GRAFT_TEST)];
-    void Log_EngineGlobalsAreFoundByName(co_call ctx)
+    void Log_EngineGlobalsAreFoundByName()
     {
-        co_routine coro = co_new(ctx);
         int found = SeraphGraftSayVia("Print", "[сьюта] глобаль движка позвана вслепую");
         assert(found == 1, "1", found.ToString(), "Print нашёлся по имени и позвался");
         int missing = SeraphGraftSayVia("НетТакойГлобали", "неважно");
@@ -134,9 +160,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Log_UserChannelGoesToTheGameLogs").IN(SERAPH_GRAFT_TEST)];
-    void Log_UserChannelGoesToTheGameLogs(co_call ctx)
+    void Log_UserChannelGoesToTheGameLogs()
     {
-        co_routine coro = co_new(ctx);
         bool said = SeraphGraftSay("строка из C++ в script-лог");
         assert(said, "true", said.ToString(), "Print игры дотянулся из C++");
         bool cried = SeraphGraftCry("строка из C++ в crash-лог");
@@ -149,9 +174,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Manager_BothPluginsLoaded").IN(SERAPH_GRAFT_TEST)];
-    void Manager_BothPluginsLoaded(co_call ctx)
+    void Manager_BothPluginsLoaded()
     {
-        co_routine coro = co_new(ctx);
         assert(IsGrafted("SIXW_GRAFT"), "true", IsGrafted("SIXW_GRAFT").ToString(),
             "плагин с основными нативами загружен");
         assert(IsGrafted("SIXW_HASHMAP"), "true",
@@ -160,9 +184,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
 
     // Хост считает себя модулем номер ноль: его нативы идут через то же слияние.
     [TEST_CASE("Manager_HostCountsItself").IN(SERAPH_GRAFT_TEST)];
-    void Manager_HostCountsItself(co_call ctx)
+    void Manager_HostCountsItself()
     {
-        co_routine coro = co_new(ctx);
         assert(IsGrafted("graft"), "true", IsGrafted("graft").ToString(),
             "сам хост в списке модулей");
         assert(GraftPluginCount() >= 3, ">= 3", GraftPluginCount().ToString(),
@@ -170,9 +193,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Manager_UnknownPluginReportsMinusOne").IN(SERAPH_GRAFT_TEST)];
-    void Manager_UnknownPluginReportsMinusOne(co_call ctx)
+    void Manager_UnknownPluginReportsMinusOne()
     {
-        co_routine coro = co_new(ctx);
         assert(IsGrafted("NOPE") == false, "false", IsGrafted("NOPE").ToString(),
             "чего нет — того нет");
         // Ноль — законная версия, поэтому «нет такого» отвечается минус единицей.
@@ -185,9 +207,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     // Коллизия имён — не абстракция: два плагина в одной установке легко занимают одно
     // имя. Здоровая установка обязана иметь ноль.
     [TEST_CASE("Manager_NoNameCollisions").IN(SERAPH_GRAFT_TEST)];
-    void Manager_NoNameCollisions(co_call ctx)
+    void Manager_NoNameCollisions()
     {
-        co_routine coro = co_new(ctx);
         string first = "";
         if (GraftCollisionCount() > 0)
             first = GraftCollisionAt(0);
@@ -198,9 +219,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     // Оба плагина работают ОДНОВРЕМЕННО и в одном выражении: слева натив одного,
     // справа — другого.
     [TEST_CASE("Manager_TwoPluginsInOneExpression").IN(SERAPH_GRAFT_TEST)];
-    void Manager_TwoPluginsInOneExpression(co_call ctx)
+    void Manager_TwoPluginsInOneExpression()
     {
-        co_routine coro = co_new(ctx);
         SeraphHashMap<string, int> table = new SeraphHashMap<string, int>;   // SIXW_HASHMAP
         table.Set("abc", SeraphGraftStrLen("abcde"));                  // SIXW_GRAFT
         int got = table.Get("abc") + SeraphGraftPing(0);
@@ -223,9 +243,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
 
     // Присваивание уже случилось — с этого момента строка принадлежит движку.
     [TEST_CASE("Arena_LifetimeAfterAssignment").IN(SERAPH_GRAFT_TEST)];
-    void Arena_LifetimeAfterAssignment(co_call ctx)
+    void Arena_LifetimeAfterAssignment()
     {
-        co_routine coro = co_new(ctx);
         string got = SeraphGraftEcho("one");
         int wiped = SeraphGraftPoisonArena();
         assert(got == "echo:one", "echo:one", got + " (затёрто " + wiped.ToString() + " байт)",
@@ -237,9 +256,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     //   * своё кольцо  — строка гибнет: движок держал наш указатель, мы его затёрли;
     //   * движковый блок — строке ничего не делается, затирать нечего, память не наша.
     [TEST_CASE("Arena_PoisonMattersOnlyForOurOwnMemory").IN(SERAPH_GRAFT_TEST)];
-    void Arena_PoisonMattersOnlyForOurOwnMemory(co_call ctx)
+    void Arena_PoisonMattersOnlyForOurOwnMemory()
     {
-        co_routine coro = co_new(ctx);
         map<string, int> m = new map<string, int>;
         m.Insert(SeraphGraftEcho("key"), SeraphGraftPoisonAndPass(7));
         string key = "";
@@ -266,9 +284,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     // Кольцо прокручено между возвратом строки и её потреблением: текст обязан
     // испортиться, но процесс — выжить, а строка — остаться конечной.
     [TEST_CASE("Arena_OverrunGivesWrongText").IN(SERAPH_GRAFT_TEST)];
-    void Arena_OverrunGivesWrongText(co_call ctx)
+    void Arena_OverrunGivesWrongText()
     {
-        co_routine coro = co_new(ctx);
         // Кольца может не быть вовсе: строки выдаёт движок и переполнять нечего.
         if (SeraphGraftEngineStrings())
         {
@@ -287,9 +304,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
 
     // А до потребления прокрутка безвредна: движок уже скопировал строку себе.
     [TEST_CASE("Arena_ChurnAfterAssignmentIsHarmless").IN(SERAPH_GRAFT_TEST)];
-    void Arena_ChurnAfterAssignmentIsHarmless(co_call ctx)
+    void Arena_ChurnAfterAssignmentIsHarmless()
     {
-        co_routine coro = co_new(ctx);
         string got = SeraphGraftEcho("survivor");
         SeraphGraftChurnAndPass(40000, 1);
         assert(got == "echo:survivor", "echo:survivor", got,
@@ -300,9 +316,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     // память была наша, вопрос не стоял: кольцо переиспользовалось само. Теперь блок
     // движковый, и если движок его не снимает — это утечка, видимая по памяти процесса.
     [TEST_CASE("Arena_DiscardedStringsDoNotLeak").IN(SERAPH_GRAFT_TEST)];
-    void Arena_DiscardedStringsDoNotLeak(co_call ctx)
+    void Arena_DiscardedStringsDoNotLeak()
     {
-        co_routine coro = co_new(ctx);
         int i;
         string longArg = "0123456789012345678901234567890123456789012345678901234567890123";
         // Прогрев: первые блоки движок ещё выделяет у системы, дальше идёт его фрилист.
@@ -323,9 +338,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     // кольце 16384, то есть запас в 184 раза. Если однажды сблизятся, счётчик скажет
     // об этом раньше, чем строку успеет затереть.
     [TEST_CASE("Arena_RingHasRoomToSpare").IN(SERAPH_GRAFT_TEST)];
-    void Arena_RingHasRoomToSpare(co_call ctx)
+    void Arena_RingHasRoomToSpare()
     {
-        co_routine coro = co_new(ctx);
         if (SeraphGraftEngineStrings())
         {
             assert(true, "-", "-", "строки выдаёт движок — своего окна нет");
@@ -347,9 +361,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Int_PingMatchesXorFormula").IN(SERAPH_GRAFT_TEST)];
-    void Int_PingMatchesXorFormula(co_call ctx)
+    void Int_PingMatchesXorFormula()
     {
-        co_routine coro = co_new(ctx);
         int token = 1234;
         int reply = SeraphGraftPing(token);
         int expected = token ^ 0x0005E1AF;
@@ -358,26 +371,23 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Int_PingZero").IN(SERAPH_GRAFT_TEST)];
-    void Int_PingZero(co_call ctx)
+    void Int_PingZero()
     {
-        co_routine coro = co_new(ctx);
         int reply = SeraphGraftPing(0);
         assert(reply == 0x0005E1AF, "385455", reply.ToString(), "ping(0) == magic");
     }
 
     [TEST_CASE("Float_MixedWithInt").IN(SERAPH_GRAFT_TEST)];
-    void Float_MixedWithInt(co_call ctx)
+    void Float_MixedWithInt()
     {
-        co_routine coro = co_new(ctx);
         float got = SeraphGraftMix(2.5, 4.0, 3);   // 2.5*4 + 3
         assert(Math.AbsFloat(got - 13.0) < 0.001, "13", got.ToString(),
             "float в xmm, int в целочисленном регистре — вперемешку");
     }
 
     [TEST_CASE("String_LengthArrivesInCpp").IN(SERAPH_GRAFT_TEST)];
-    void String_LengthArrivesInCpp(co_call ctx)
+    void String_LengthArrivesInCpp()
     {
-        co_routine coro = co_new(ctx);
         int got = SeraphGraftStrLen("hello");
         int empty = SeraphGraftStrLen("");
         bool ok = false;
@@ -391,9 +401,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Bool_TwoStringArgs").IN(SERAPH_GRAFT_TEST)];
-    void Bool_TwoStringArgs(co_call ctx)
+    void Bool_TwoStringArgs()
     {
-        co_routine coro = co_new(ctx);
         bool yes = SeraphGraftHasPrefix("hello world", "hello");
         bool no = SeraphGraftHasPrefix("hello world", "bye");
         bool ok = false;
@@ -407,9 +416,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Vector_InAndOut").IN(SERAPH_GRAFT_TEST)];
-    void Vector_InAndOut(co_call ctx)
+    void Vector_InAndOut()
     {
-        co_routine coro = co_new(ctx);
         vector got = SeraphGraftVecScale(Vector(1, 2, 3), 2.0);
         bool ok = false;
         if (Math.AbsFloat(got[0] - 2.0) < 0.001)
@@ -424,26 +432,23 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("String_OwnedReturn").IN(SERAPH_GRAFT_TEST)];
-    void String_OwnedReturn(co_call ctx)
+    void String_OwnedReturn()
     {
-        co_routine coro = co_new(ctx);
         string got = SeraphGraftEcho("abc");
         assert(got == "echo:abc", "echo:abc", got, "owned string — возврат строки из C++");
     }
 
     [TEST_CASE("Method_StaticOnScriptClass").IN(SERAPH_GRAFT_TEST)];
-    void Method_StaticOnScriptClass(co_call ctx)
+    void Method_StaticOnScriptClass()
     {
-        co_routine coro = co_new(ctx);
         int got = SeraphGraft.Magic();
         assert(got == 0x0005E1AF, "385455", got.ToString(),
             "натив, привязанный методом класса (RegisterMethod)");
     }
 
     [TEST_CASE("Entity_MethodsFromCpp").IN(SERAPH_GRAFT_TEST)];
-    void Entity_MethodsFromCpp(co_call ctx)
+    void Entity_MethodsFromCpp()
     {
-        co_routine coro = co_new(ctx);
         Object obj = GetGame().CreateObjectEx("Apple", "1000 5 1000", ECE_NONE);
         bool ok = false;
         string info = "obj=null";
@@ -474,9 +479,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Entity_MovedFromCpp").IN(SERAPH_GRAFT_TEST)];
-    void Entity_MovedFromCpp(co_call ctx)
+    void Entity_MovedFromCpp()
     {
-        co_routine coro = co_new(ctx);
         Object obj = GetGame().CreateObjectEx("Apple", "1000 5 1000", ECE_NONE);
         bool ok = false;
         if (obj)
@@ -496,9 +500,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Modern_RangesOverScriptArray").IN(SERAPH_GRAFT_TEST)];
-    void Modern_RangesOverScriptArray(co_call ctx)
+    void Modern_RangesOverScriptArray()
     {
-        co_routine coro = co_new(ctx);
         array<int> values = new array<int>;
         values.Insert(4);
         values.Insert(8);
@@ -517,9 +520,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Modern_TryCallReportsMiss").IN(SERAPH_GRAFT_TEST)];
-    void Modern_TryCallReportsMiss(co_call ctx)
+    void Modern_TryCallReportsMiss()
     {
-        co_routine coro = co_new(ctx);
         Object obj = GetGame().CreateObjectEx("Apple", "1000 5 1000", ECE_NONE);
         string missing = SeraphGraftProbeCall(obj, "NoSuchMethodZZZ");
         string scripted = SeraphGraftProbeCall(obj, "GetType");   // скриптовый метод, не натив
@@ -541,9 +543,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Modern_TryFieldReportsMiss").IN(SERAPH_GRAFT_TEST)];
-    void Modern_TryFieldReportsMiss(co_call ctx)
+    void Modern_TryFieldReportsMiss()
     {
-        co_routine coro = co_new(ctx);
         SeraphNode node = new SeraphNode(77, 0, "n");
         string found = node.TryField("m_id");
         string missing = node.TryField("m_nope");
@@ -558,9 +559,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Modern_TextFormatting").IN(SERAPH_GRAFT_TEST)];
-    void Modern_TextFormatting(co_call ctx)
+    void Modern_TextFormatting()
     {
-        co_routine coro = co_new(ctx);
         // возврат строки собран через std::format, без статических буферов
         string first = SeraphGraftEcho("abc");
         string second = SeraphGraftEcho("xyz");
@@ -575,9 +575,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Diag_MethodFlags").IN(SERAPH_GRAFT_TEST)];
-    void Diag_MethodFlags(co_call ctx)
+    void Diag_MethodFlags()
     {
-        co_routine coro = co_new(ctx);
         // ванильные: член класса, статический, метод шаблонного класса
         SeraphGraftMethodFlags("string", "Length");
         SeraphGraftMethodFlags("string", "Format");
@@ -596,9 +595,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("HashMap_StringToInt").IN(SERAPH_GRAFT_TEST)];
-    void HashMap_StringToInt(co_call ctx)
+    void HashMap_StringToInt()
     {
-        co_routine coro = co_new(ctx);
         // шаблон скрипта, хранилище — std::unordered_map в C++
         SeraphHashMap<string, int> m = new SeraphHashMap<string, int>;
         m.Set("alpha", 1);
@@ -620,9 +618,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("HashMap_RemoveAndClear").IN(SERAPH_GRAFT_TEST)];
-    void HashMap_RemoveAndClear(co_call ctx)
+    void HashMap_RemoveAndClear()
     {
-        co_routine coro = co_new(ctx);
         SeraphHashMap<string, int> m = new SeraphHashMap<string, int>;
         m.Set("a", 1);
         m.Set("b", 2);
@@ -645,9 +642,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("HashMap_KeysAndIsolation").IN(SERAPH_GRAFT_TEST)];
-    void HashMap_KeysAndIsolation(co_call ctx)
+    void HashMap_KeysAndIsolation()
     {
-        co_routine coro = co_new(ctx);
         SeraphHashMap<string, int> first = new SeraphHashMap<string, int>;
         SeraphHashMap<string, int> second = new SeraphHashMap<string, int>;
         first.Set("one", 10);
@@ -680,9 +676,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("HashMap_OtherInstantiations").IN(SERAPH_GRAFT_TEST)];
-    void HashMap_OtherInstantiations(co_call ctx)
+    void HashMap_OtherInstantiations()
     {
-        co_routine coro = co_new(ctx);
         // те же нативы обслуживают любую инстанциацию шаблона
         SeraphHashMap<int, string> byId = new SeraphHashMap<int, string>;
         byId.Set(7, "seven");
@@ -701,9 +696,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Primitive_OwnEnumType").IN(SERAPH_GRAFT_TEST)];
-    void Primitive_OwnEnumType(co_call ctx)
+    void Primitive_OwnEnumType()
     {
-        co_routine coro = co_new(ctx);
         // свой примитив C++ (enum Team) скрипт видит как обычный int
         int opposite = SeraphGraftOpposite(1);   // red -> blue
         array<int> teams = new array<int>;
@@ -722,9 +716,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Fields_ScalarsAndString").IN(SERAPH_GRAFT_TEST)];
-    void Fields_ScalarsAndString(co_call ctx)
+    void Fields_ScalarsAndString()
     {
-        co_routine coro = co_new(ctx);
         SeraphNode node = new SeraphNode(42, 2.5, "root");
         int id = node.Id();
         float w = node.Weight();
@@ -743,9 +736,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Fields_WriteBack").IN(SERAPH_GRAFT_TEST)];
-    void Fields_WriteBack(co_call ctx)
+    void Fields_WriteBack()
     {
-        co_routine coro = co_new(ctx);
         SeraphNode node = new SeraphNode(1, 0, "x");
         int got = node.SetId(777);
         bool ok = false;
@@ -759,9 +751,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Fields_NestedChain").IN(SERAPH_GRAFT_TEST)];
-    void Fields_NestedChain(co_call ctx)
+    void Fields_NestedChain()
     {
-        co_routine coro = co_new(ctx);
         SeraphNode a = new SeraphNode(1, 0, "a");
         SeraphNode b = new SeraphNode(20, 0, "b");
         SeraphNode c = new SeraphNode(300, 0, "c");
@@ -773,9 +764,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Fields_NestedContainer").IN(SERAPH_GRAFT_TEST)];
-    void Fields_NestedContainer(co_call ctx)
+    void Fields_NestedContainer()
     {
-        co_routine coro = co_new(ctx);
         SeraphNode node = new SeraphNode(1, 0, "n");
         node.m_values.Insert(5);
         node.m_values.Insert(50);
@@ -786,9 +776,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Fields_Reflection").IN(SERAPH_GRAFT_TEST)];
-    void Fields_Reflection(co_call ctx)
+    void Fields_Reflection()
     {
-        co_routine coro = co_new(ctx);
         SeraphNode node = new SeraphNode(1, 0, "n");
         int count = node.FieldCount();
         string first = node.FieldName(0);
@@ -803,9 +792,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Method_MemberLikeVanilla").IN(SERAPH_GRAFT_TEST)];
-    void Method_MemberLikeVanilla(co_call ctx)
+    void Method_MemberLikeVanilla()
     {
-        co_routine coro = co_new(ctx);
         // обычный member-метод: вызывается через объект, без явного self
         SeraphGraft inst = new SeraphGraft;
         int got = inst.SelfTag();
@@ -814,9 +802,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Template_OwnProtoClass").IN(SERAPH_GRAFT_TEST)];
-    void Template_OwnProtoClass(co_call ctx)
+    void Template_OwnProtoClass()
     {
-        co_routine coro = co_new(ctx);
         // свой шаблонный тип: импл его proto-методов лежит в C++
         SeraphBox<int> a = new SeraphBox<int>;
         SeraphBox<string> b = new SeraphBox<string>;
@@ -831,9 +818,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Template_PerInstanceState").IN(SERAPH_GRAFT_TEST)];
-    void Template_PerInstanceState(co_call ctx)
+    void Template_PerInstanceState()
     {
-        co_routine coro = co_new(ctx);
         SeraphBox<int> a = new SeraphBox<int>;
         SeraphBox<int> b = new SeraphBox<int>;
         a.Bump(5);
@@ -850,9 +836,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Nested_ArrayOfGameObjects").IN(SERAPH_GRAFT_TEST)];
-    void Nested_ArrayOfGameObjects(co_call ctx)
+    void Nested_ArrayOfGameObjects()
     {
-        co_routine coro = co_new(ctx);
         array<Object> objects = new array<Object>;
         objects.Insert(GetGame().CreateObjectEx("Apple", "1000 10 1000", ECE_NONE));
         objects.Insert(GetGame().CreateObjectEx("Apple", "1010 20 1000", ECE_NONE));
@@ -884,9 +869,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Array_IntsRead").IN(SERAPH_GRAFT_TEST)];
-    void Array_IntsRead(co_call ctx)
+    void Array_IntsRead()
     {
-        co_routine coro = co_new(ctx);
         array<int> a = new array<int>;
         a.Insert(1);
         a.Insert(2);
@@ -896,9 +880,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Array_StringsRead").IN(SERAPH_GRAFT_TEST)];
-    void Array_StringsRead(co_call ctx)
+    void Array_StringsRead()
     {
-        co_routine coro = co_new(ctx);
         array<string> a = new array<string>;
         a.Insert("ab");
         a.Insert("cde");
@@ -907,9 +890,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Array_WriteBack").IN(SERAPH_GRAFT_TEST)];
-    void Array_WriteBack(co_call ctx)
+    void Array_WriteBack()
     {
-        co_routine coro = co_new(ctx);
         array<int> a = new array<int>;
         a.Insert(1);
         a.Insert(2);
@@ -929,9 +911,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Array_SortAndRemove").IN(SERAPH_GRAFT_TEST)];
-    void Array_SortAndRemove(co_call ctx)
+    void Array_SortAndRemove()
     {
-        co_routine coro = co_new(ctx);
         array<int> a = new array<int>;
         a.Insert(30);
         a.Insert(10);
@@ -949,9 +930,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Set_Read").IN(SERAPH_GRAFT_TEST)];
-    void Set_Read(co_call ctx)
+    void Set_Read()
     {
-        co_routine coro = co_new(ctx);
         set<int> s = new set<int>;
         s.Insert(10);
         s.Insert(20);
@@ -960,26 +940,23 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Typename_Name").IN(SERAPH_GRAFT_TEST)];
-    void Typename_Name(co_call ctx)
+    void Typename_Name()
     {
-        co_routine coro = co_new(ctx);
         string got = SeraphGraftTypeName(SeraphGraft);
         assert(got == "SeraphGraft", "SeraphGraft", got, "typename несёт имя класса");
     }
 
     [TEST_CASE("Ref_ArbitraryClass").IN(SERAPH_GRAFT_TEST)];
-    void Ref_ArbitraryClass(co_call ctx)
+    void Ref_ArbitraryClass()
     {
-        co_routine coro = co_new(ctx);
         SeraphGraft inst = new SeraphGraft;
         bool got = SeraphGraftRefAlive(inst);
         assert(got, "true", got.ToString(), "ссылка на произвольный скриптовый класс");
     }
 
     [TEST_CASE("Array_GrownFromCpp").IN(SERAPH_GRAFT_TEST)];
-    void Array_GrownFromCpp(co_call ctx)
+    void Array_GrownFromCpp()
     {
-        co_routine coro = co_new(ctx);
         array<int> a = new array<int>;         // пустой: память выделит C++ движковым Resize
         int n = SeraphGraftFillSquares(a, 4);
         bool ok = false;
@@ -996,9 +973,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Array_GrowsBeyondCapacity").IN(SERAPH_GRAFT_TEST)];
-    void Array_GrowsBeyondCapacity(co_call ctx)
+    void Array_GrowsBeyondCapacity()
     {
-        co_routine coro = co_new(ctx);
         array<int> a = new array<int>;
         a.Insert(1);                            // ёмкость маленькая
         int n = SeraphGraftFillSquares(a, 100); // просим сильно больше — движок выделит
@@ -1013,9 +989,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Array_ClearStrings").IN(SERAPH_GRAFT_TEST)];
-    void Array_ClearStrings(co_call ctx)
+    void Array_ClearStrings()
     {
-        co_routine coro = co_new(ctx);
         array<string> a = new array<string>;
         a.Insert("alpha");
         a.Insert("beta");
@@ -1031,9 +1006,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Map_Size").IN(SERAPH_GRAFT_TEST)];
-    void Map_Size(co_call ctx)
+    void Map_Size()
     {
-        co_routine coro = co_new(ctx);
         map<string, int> m = new map<string, int>;
         m.Insert("a", 1);
         m.Insert("b", 2);
@@ -1043,9 +1017,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Table_ExportFromCpp").IN(SERAPH_GRAFT_TEST)];
-    void Table_ExportFromCpp(co_call ctx)
+    void Table_ExportFromCpp()
     {
-        co_routine coro = co_new(ctx);
         // Хеш-мапа C++ перекладывается в map скрипта: строки приходят возвратом
         // (owned string — движок копирует), числа можно и массивом.
         map<string, int> restored = new map<string, int>;
@@ -1068,9 +1041,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Table_ExportValuesIntoOutArray").IN(SERAPH_GRAFT_TEST)];
-    void Table_ExportValuesIntoOutArray(co_call ctx)
+    void Table_ExportValuesIntoOutArray()
     {
-        co_routine coro = co_new(ctx);
         array<int> values = new array<int>;   // пустой: размер поставит C++
         int n = SeraphGraftExportValues(values);
         int sum = 0;
@@ -1087,9 +1059,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Table_ImportToCpp").IN(SERAPH_GRAFT_TEST)];
-    void Table_ImportToCpp(co_call ctx)
+    void Table_ImportToCpp()
     {
-        co_routine coro = co_new(ctx);
         map<string, int> m = new map<string, int>;
         m.Insert("ab", 10);      // 10*2
         m.Insert("xyz", 100);    // 100*3
@@ -1106,9 +1077,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Map_ClearFromCpp").IN(SERAPH_GRAFT_TEST)];
-    void Map_ClearFromCpp(co_call ctx)
+    void Map_ClearFromCpp()
     {
-        co_routine coro = co_new(ctx);
         map<string, int> m = new map<string, int>;
         m.Insert("a", 1);
         m.Insert("b", 2);
@@ -1124,9 +1094,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Map_IterateIntKeys").IN(SERAPH_GRAFT_TEST)];
-    void Map_IterateIntKeys(co_call ctx)
+    void Map_IterateIntKeys()
     {
-        co_routine coro = co_new(ctx);
         map<int, int> m = new map<int, int>;
         m.Insert(2, 3);          // 6
         m.Insert(9, 10);         // 90 — коллизия слота с 1 при ёмкости 8
@@ -1136,9 +1105,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Map_IterateStringKeys").IN(SERAPH_GRAFT_TEST)];
-    void Map_IterateStringKeys(co_call ctx)
+    void Map_IterateStringKeys()
     {
-        co_routine coro = co_new(ctx);
         map<string, int> m = new map<string, int>;
         m.Insert("ab", 10);      // 10*2
         m.Insert("xyz", 100);    // 100*3
@@ -1149,9 +1117,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Map_CopiedIntoSeraphHashMap").IN(SERAPH_GRAFT_TEST)];
-    void Map_CopiedIntoSeraphHashMap(co_call ctx)
+    void Map_CopiedIntoSeraphHashMap()
     {
-        co_routine coro = co_new(ctx);
         map<string, int> m = new map<string, int>;
         m.Insert("ab", 10);
         m.Insert("xyz", 100);
@@ -1161,9 +1128,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Map_IterateIntPairs").IN(SERAPH_GRAFT_TEST)];
-    void Map_IterateIntPairs(co_call ctx)
+    void Map_IterateIntPairs()
     {
-        co_routine coro = co_new(ctx);
         map<int, float> m = new map<int, float>;
         m.Insert(2, 1.5);        // 3.0
         m.Insert(9, 2.0);        // 18.0
@@ -1173,9 +1139,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Map_ContentsViaBridge").IN(SERAPH_GRAFT_TEST)];
-    void Map_ContentsViaBridge(co_call ctx)
+    void Map_ContentsViaBridge()
     {
-        co_routine coro = co_new(ctx);
         map<string, int> m = new map<string, int>;
         m.Insert("ab", 10);     // 10*2
         m.Insert("xyz", 100);   // 100*3
@@ -1193,9 +1158,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("HashMap_UnknownInstantiation").IN(SERAPH_GRAFT_TEST)];
-    void HashMap_UnknownInstantiation(co_call ctx)
+    void HashMap_UnknownInstantiation()
     {
-        co_routine coro = co_new(ctx);
         // Ни одной из этих инстанциаций в C++ не перечислено: привязка одна, на общем
         // классе, а типы приезжают тегами в рантайме.
         SeraphHashMap<int, int> ii = new SeraphHashMap<int, int>;
@@ -1221,9 +1185,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
 
     // ── Полный спектр типов через маршалируемый путь ──────────────────────────
     [TEST_CASE("Any_EveryPrimitive").IN(SERAPH_GRAFT_TEST)];
-    void Any_EveryPrimitive(co_call ctx)
+    void Any_EveryPrimitive()
     {
-        co_routine coro = co_new(ctx);
         SeraphGraft a = new SeraphGraft;
         vector v = "1 2 3";
         string got = a.Describe(7);
@@ -1236,9 +1199,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Any_ObjectsAndTypename").IN(SERAPH_GRAFT_TEST)];
-    void Any_ObjectsAndTypename(co_call ctx)
+    void Any_ObjectsAndTypename()
     {
-        co_routine coro = co_new(ctx);
         SeraphGraft a = new SeraphGraft;
         SeraphNode node = new SeraphNode(1, 0, "n");
         array<int> arr = new array<int>;
@@ -1251,9 +1213,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Any_OutArguments").IN(SERAPH_GRAFT_TEST)];
-    void Any_OutArguments(co_call ctx)
+    void Any_OutArguments()
     {
-        co_routine coro = co_new(ctx);
         SeraphGraft a = new SeraphGraft;
         int bytes;
         int words;
@@ -1274,9 +1235,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Any_NestedObjects").IN(SERAPH_GRAFT_TEST)];
-    void Any_NestedObjects(co_call ctx)
+    void Any_NestedObjects()
     {
-        co_routine coro = co_new(ctx);
         SeraphGraft a = new SeraphGraft;
         SeraphNode x = new SeraphNode(1, 0, "a");
         SeraphNode y = new SeraphNode(20, 0, "b");
@@ -1289,9 +1249,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Any_VectorRoundTrip").IN(SERAPH_GRAFT_TEST)];
-    void Any_VectorRoundTrip(co_call ctx)
+    void Any_VectorRoundTrip()
     {
-        co_routine coro = co_new(ctx);
         SeraphGraft a = new SeraphGraft;
         vector src = "1 2 3";
         vector v = a.Scale(src, 2.0);
@@ -1299,9 +1258,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Text_ManyReturnsInOneCall").IN(SERAPH_GRAFT_TEST)];
-    void Text_ManyReturnsInOneCall(co_call ctx)
+    void Text_ManyReturnsInOneCall()
     {
-        co_routine coro = co_new(ctx);
         // Прежнее кольцо было на 32 строки: сотня возвратов затирала ранние.
         SeraphHashMap<int, string> m = new SeraphHashMap<int, string>;
         for (int i = 0; i < 200; i++)
@@ -1322,15 +1280,13 @@ class SERAPH_GRAFT_TEST : uTestSuite
     // смерти от самого движка. Проверяем оба пути.
 
     // ── Скорость: ванильный map против SeraphHashMap ─────────────────────────────
-    // Замер через LOG_DURATION из KR_CORE: EXCHANGE_TIME() отдаёт дельту с прошлой
-    // отметки, поэтому все фазы меряются одним объектом.
+    // Замер секундомером SeraphClock: Exchange() отдаёт дельту с прошлой отметки,
+    // поэтому все фазы меряются одним объектом.
     // ponytail: один прогон без прогрева — порядок величины виден, точных чисел
-    // тут никто не обещает; для стабильных — гонять кейс несколько раз и смотреть
-    // GetAverageTime у менеджера.
+    // тут никто не обещает; для стабильных — гонять кейс несколько раз и усреднять.
     [TEST_CASE("Bench_MapVsSeraphHashMap").IN(SERAPH_GRAFT_TEST)];
-    void Bench_MapVsSeraphHashMap(co_call ctx)
+    void Bench_MapVsSeraphHashMap()
     {
-        co_routine coro = co_new(ctx);
         int n = 10000;
         int i;
 
@@ -1342,69 +1298,68 @@ class SERAPH_GRAFT_TEST : uTestSuite
         map<string, int> vanilla = new map<string, int>;
         SeraphHashMap<string, int> cpp = new SeraphHashMap<string, int>;
 
-        LOG_DURATION d = new LOG_DURATION("bench");
-        d.SetOnDeletionPrint(false);
-        d.EXCHANGE_TIME();                  // отметка на старте
+        SeraphClock d = new SeraphClock();
+        d.Exchange();                  // отметка на старте
 
         for (i = 0; i < n; i++)
             vanilla.Insert(keys.Get(i), i);
-        float insertMap = d.EXCHANGE_TIME();
+        float insertMap = d.Exchange();
 
         for (i = 0; i < n; i++)
             cpp.Set(keys.Get(i), i);
-        float insertCpp = d.EXCHANGE_TIME();
+        float insertCpp = d.Exchange();
 
         int sumMap = 0;
         for (i = 0; i < n; i++)
             sumMap += vanilla.Get(keys.Get(i));
-        float getMap = d.EXCHANGE_TIME();
+        float getMap = d.Exchange();
 
         int sumCpp = 0;
         for (i = 0; i < n; i++)
             sumCpp += cpp.Get(keys.Get(i));
-        float getCpp = d.EXCHANGE_TIME();
+        float getCpp = d.Exchange();
 
         // Count без аргументов и с int-возвратом — это ЦЕНА САМОГО ВЫЗОВА: разница между
         // строчками показывает, сколько стоит наш мост поверх ванильного натива.
         int c = 0;
         for (i = 0; i < n; i++)
             c += vanilla.Count();
-        float countMap = d.EXCHANGE_TIME();
+        float countMap = d.Exchange();
         for (i = 0; i < n; i++)
             c += cpp.Count();
-        float countCpp = d.EXCHANGE_TIME();
+        float countCpp = d.Exchange();
 
         // Чтение поля по имени: Id() возвращает field<int>("m_id"), то есть перебор
         // таблицы переменных класса плюс вычисление адреса слота. Вычесть отсюда
         // countCpp — и останется цена самого поиска поля.
         SeraphNode node = new SeraphNode(7, 0, "n");
-        d.EXCHANGE_TIME();                  // создание объекта в замер не берём
+        d.Exchange();                  // создание объекта в замер не берём
         int f = 0;
         for (i = 0; i < n; i++)
             f += node.Id();
-        float fieldRead = d.EXCHANGE_TIME();
+        float fieldRead = d.Exchange();
 
         // Объектный аргумент: тут работает deref_object, а в нём — VirtualQuery.
         SeraphGraft inst = new SeraphGraft();
-        d.EXCHANGE_TIME();
+        d.Exchange();
         int alive = 0;
         for (i = 0; i < n; i++)
             if (SeraphGraftRefAlive(inst)) alive++;
-        float objArg = d.EXCHANGE_TIME();
+        float objArg = d.Exchange();
 
         // Возврат owned string: аренa строк плюс копия на стороне движка.
         string echoed;
         for (i = 0; i < n; i++)
             echoed = SeraphGraftEcho("abc");
-        float strRet = d.EXCHANGE_TIME();
+        float strRet = d.Exchange();
 
         string head = "[BENCH] n=" + n.ToString() + "  ";
-        Print(head + "insert: map " + LOG_DURATION_MANAGER.FormatTime(insertMap) + " | SeraphHashMap " + LOG_DURATION_MANAGER.FormatTime(insertCpp));
-        Print(head + "get:    map " + LOG_DURATION_MANAGER.FormatTime(getMap) + " | SeraphHashMap " + LOG_DURATION_MANAGER.FormatTime(getCpp));
-        Print(head + "count:  map " + LOG_DURATION_MANAGER.FormatTime(countMap) + " | SeraphHashMap " + LOG_DURATION_MANAGER.FormatTime(countCpp));
-        Print(head + "field:  Id() " + LOG_DURATION_MANAGER.FormatTime(fieldRead));
-        Print(head + "obj:    RefAlive " + LOG_DURATION_MANAGER.FormatTime(objArg));
-        Print(head + "text:   Echo " + LOG_DURATION_MANAGER.FormatTime(strRet));
+        Print(head + "insert: map " + SeraphClock.Format(insertMap) + " | SeraphHashMap " + SeraphClock.Format(insertCpp));
+        Print(head + "get:    map " + SeraphClock.Format(getMap) + " | SeraphHashMap " + SeraphClock.Format(getCpp));
+        Print(head + "count:  map " + SeraphClock.Format(countMap) + " | SeraphHashMap " + SeraphClock.Format(countCpp));
+        Print(head + "field:  Id() " + SeraphClock.Format(fieldRead));
+        Print(head + "obj:    RefAlive " + SeraphClock.Format(objArg));
+        Print(head + "text:   Echo " + SeraphClock.Format(strRet));
 
         // Замер осмыслен только если обе таблицы отдали одно и то же.
         assert(sumMap == sumCpp, sumMap.ToString(), sumCpp.ToString(),
@@ -1434,47 +1389,46 @@ class SERAPH_GRAFT_TEST : uTestSuite
         SeraphNode node = new SeraphNode(7, 0, "n");
         SeraphGraft inst = new SeraphGraft();
 
-        LOG_DURATION d = new LOG_DURATION("budget");
-        d.SetOnDeletionPrint(false);
-        d.EXCHANGE_TIME();
+        SeraphClock d = new SeraphClock();
+        d.Exchange();
 
         // Единица измерения снимается ЗДЕСЬ ЖЕ, а не отдельной функцией: отношение
         // гасит дрейф машины только если обе величины сняты подряд.
         int c = 0;
         for (i = 0; i < n; i++)
             c += unitMap.Count();
-        r[0] = d.EXCHANGE_TIME();
+        r[0] = d.Exchange();
 
         for (i = 0; i < n; i++)
             c += cpp.Count();
-        r[1] = d.EXCHANGE_TIME();
+        r[1] = d.Exchange();
 
         for (i = 0; i < n; i++)
             c += node.Id();
-        r[2] = d.EXCHANGE_TIME();
+        r[2] = d.Exchange();
 
         for (i = 0; i < n; i++)
             if (SeraphGraftRefAlive(inst)) c++;
-        r[3] = d.EXCHANGE_TIME();
+        r[3] = d.Exchange();
 
         string s;
         for (i = 0; i < n; i++)
             s = SeraphGraftEcho("abc");
-        r[4] = d.EXCHANGE_TIME();
+        r[4] = d.Exchange();
 
         int v = 0;
         for (i = 0; i < n; i++)
             v += cpp.Get("k");
-        r[5] = d.EXCHANGE_TIME();
+        r[5] = d.Exchange();
 
         // Поиск движкового метода: имя в рантайме против имени на компиляции. Оба
         // натива зовут один и тот же метод одного и того же класса.
         for (i = 0; i < n; i++)
             c += SeraphGraftCallByRuntimeName(inst);
-        r[6] = d.EXCHANGE_TIME();
+        r[6] = d.Exchange();
         for (i = 0; i < n; i++)
             c += SeraphGraftCallByCompileName(inst);
-        r[7] = d.EXCHANGE_TIME();
+        r[7] = d.Exchange();
 
         // Длинная строка: короткая живёт в SSO-буфере std::string и аллокации не
         // требует вовсе, поэтому на ней экономия арены не видна. Здесь результат в
@@ -1482,54 +1436,53 @@ class SERAPH_GRAFT_TEST : uTestSuite
         string longArg = "0123456789012345678901234567890123456789012345678901234567890123";
         for (i = 0; i < n; i++)
             s = SeraphGraftEcho(longArg);
-        r[8] = d.EXCHANGE_TIME();
+        r[8] = d.Exchange();
 
         // Тот же результат, но натив вернул graft::text: форматирование пошло прямо в
         // арену, временной std::string не было. Разница с r[8] — цена одной аллокации.
         for (i = 0; i < n; i++)
             s = SeraphGraftEchoArena(longArg);
-        r[9] = d.EXCHANGE_TIME();
+        r[9] = d.Exchange();
 
         // Массив-аргумент: копия в std::vector против вьюхи std::span на ту же память.
         array<int> nums = new array<int>;
         for (i = 0; i < 16; i++)
             nums.Insert(i);
-        d.EXCHANGE_TIME();
+        d.Exchange();
         for (i = 0; i < n; i++)
             c += SeraphGraftSumArray(nums);
-        r[10] = d.EXCHANGE_TIME();
+        r[10] = d.Exchange();
         for (i = 0; i < n; i++)
             c += SeraphGraftSumSpan(nums);
-        r[11] = d.EXCHANGE_TIME();
+        r[11] = d.Exchange();
 
         // Сахар sol2 против явной формы: то же поле, тот же кэш слота.
         for (i = 0; i < n; i++)
             c += SeraphGraftNodeIdProxy(node);
-        r[12] = d.EXCHANGE_TIME();
+        r[12] = d.Exchange();
 
         // Вызов В ДРУГУЮ СТОРОНУ: маршалируемый движковый proto с out-аргументом.
         for (i = 0; i < n; i++)
             c += SeraphGraftClassVarInt(node, "m_id");
-        r[13] = d.EXCHANGE_TIME();
+        r[13] = d.Exchange();
 
         // Вызов объявления, которого в этой сборке игры нет: зеркало печатает объединение
         // всех веток препроцессора, поэтому такое законно и обязано стоить копейки.
         for (i = 0; i < n; i++)
             c += SeraphGraftCallMissing(inst);
-        r[14] = d.EXCHANGE_TIME();
+        r[14] = d.Exchange();
 
         // Цена защиты от падения, когда ничего не падает. На x64 SEH табличный, поэтому
         // ожидание — ноль; метрика это проверяет, а не предполагает.
         for (i = 0; i < n; i++)
             c += SeraphGraftGuardedNoop(i);
-        r[15] = d.EXCHANGE_TIME();
+        r[15] = d.Exchange();
     }
 
     // ── Прокси поля: синтаксис sol2 на живом объекте ────────────────────────
     [TEST_CASE("Field_ProxyAgreesWithExplicitForm").IN(SERAPH_GRAFT_TEST)];
-    void Field_ProxyAgreesWithExplicitForm(co_call ctx)
+    void Field_ProxyAgreesWithExplicitForm()
     {
-        co_routine coro = co_new(ctx);
         SeraphNode node = new SeraphNode(1234, 2.5, "узел");
         int viaProxy = SeraphGraftNodeIdProxy(node);
         int viaExplicit = node.Id();
@@ -1551,9 +1504,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     // Кейс намеренно роняет обращение по нулю ВНУТРИ натива. Если запись была верна —
     // сервер умрёт прямо здесь, и это будет видно. Если верен разбор — вернётся метка.
     [TEST_CASE("Crash_OurFaultIsOurs").IN(SERAPH_GRAFT_TEST)];
-    void Crash_OurFaultIsOurs(co_call ctx)
+    void Crash_OurFaultIsOurs()
     {
-        co_routine coro = co_new(ctx);
         int here = SeraphGraftThreadHere();
         int atLoad = SeraphGraftThreadAtLoad();
         int caught = SeraphGraftGuardedFault();
@@ -1569,9 +1521,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     // Ловить обязан трамплин, и это единственное, что отделяет кривой плагин от
     // мёртвого сервера.
     [TEST_CASE("Crash_LibraryCatchesUnguardedNative").IN(SERAPH_GRAFT_TEST)];
-    void Crash_LibraryCatchesUnguardedNative(co_call ctx)
+    void Crash_LibraryCatchesUnguardedNative()
     {
-        co_routine coro = co_new(ctx);
         int before = GraftFaultCount();
         int got = SeraphGraftFaultsHere();
         assert(got == 0, "0", got.ToString(), "упавший натив отдаёт нулевое значение");
@@ -1586,9 +1537,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     // Исключение C++ — второй слой защиты. Отдельный, потому что `try` и `__try` в одной
     // функции стоять не могут, и значит это два разных пути, а не один.
     [TEST_CASE("Crash_LibraryCatchesCppException").IN(SERAPH_GRAFT_TEST)];
-    void Crash_LibraryCatchesCppException(co_call ctx)
+    void Crash_LibraryCatchesCppException()
     {
-        co_routine coro = co_new(ctx);
         int before = GraftFaultCount();
         int got = SeraphGraftThrowsHere();
         assert(got == 0, "0", got.ToString(), "бросивший натив отдаёт нулевое значение");
@@ -1602,9 +1552,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     // Возврат строки после отказа. Движок копирует её сам и nullptr не проверяет:
     // если защита отдаст ноль, упадёт уже ДВИЖОК, и виноватых не найти.
     [TEST_CASE("Crash_FailedTextNativeGivesEmptyString").IN(SERAPH_GRAFT_TEST)];
-    void Crash_FailedTextNativeGivesEmptyString(co_call ctx)
+    void Crash_FailedTextNativeGivesEmptyString()
     {
-        co_routine coro = co_new(ctx);
         string got = SeraphGraftThrowsText();
         assert(got == "", "пустая строка", "'" + got + "'",
             "упавший строковый натив не роняет движок на копировании");
@@ -1613,9 +1562,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     // Сервер после трёх падений подряд обязан остаться рабочим — не «не упал», а именно
     // рабочим: вызовы идут, строки возвращаются, арена не уехала.
     [TEST_CASE("Crash_ServerKeepsWorkingAfterwards").IN(SERAPH_GRAFT_TEST)];
-    void Crash_ServerKeepsWorkingAfterwards(co_call ctx)
+    void Crash_ServerKeepsWorkingAfterwards()
     {
-        co_routine coro = co_new(ctx);
         int i;
         for (i = 0; i < 3; i++)
         {
@@ -1628,9 +1576,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Perf_HotPathBudget").IN(SERAPH_GRAFT_TEST)];
-    void Perf_HotPathBudget(co_call ctx)
+    void Perf_HotPathBudget()
     {
-        co_routine coro = co_new(ctx);
         int n = 10000;
         int i;
         int k;
@@ -1728,9 +1675,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Lifetime_ScopeExit").IN(SERAPH_GRAFT_TEST)];
-    void Lifetime_ScopeExit(co_call ctx)
+    void Lifetime_ScopeExit()
     {
-        co_routine coro = co_new(ctx);
         int before = SeraphGraftLiveBoxes();
         MakeBoxInScope();
         int after = SeraphGraftLiveBoxes();
@@ -1739,9 +1685,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Lifetime_ExplicitDelete").IN(SERAPH_GRAFT_TEST)];
-    void Lifetime_ExplicitDelete(co_call ctx)
+    void Lifetime_ExplicitDelete()
     {
-        co_routine coro = co_new(ctx);
         int before = SeraphGraftLiveBoxes();
         SeraphBox<int> box = new SeraphBox<int>;
         box.Bump(7);
@@ -1760,9 +1705,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Lifetime_NoNativeCallNoInstance").IN(SERAPH_GRAFT_TEST)];
-    void Lifetime_NoNativeCallNoInstance(co_call ctx)
+    void Lifetime_NoNativeCallNoInstance()
     {
-        co_routine coro = co_new(ctx);
         int before = SeraphGraftLiveBoxes();
         SeraphBox<int> untouched = new SeraphBox<int>;   // ни одного натива не звали
         int after = SeraphGraftLiveBoxes();
@@ -1779,9 +1723,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     // Шаг 1. Дескриптор функции знает, сколько у неё параметров (+88). Не сойдётся —
     // блок аргументов собирать не по чему.
     [TEST_CASE("Out_DescriptorCarriesParamCount").IN(SERAPH_GRAFT_TEST)];
-    void Out_DescriptorCarriesParamCount(co_call ctx)
+    void Out_DescriptorCarriesParamCount()
     {
-        co_routine coro = co_new(ctx);
         // EnScript.GetClassVar(Class inst, string varname, int index, out void result)
         int n = SeraphGraftProtoArity("EnScript", "GetClassVar");
         assert(n == 4, "4", n.ToString(), "число параметров читается из дескриптора");
@@ -1790,9 +1733,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     // Шаг 2. У параметра есть готовый шаблон переменной, и тег в нём настоящий. Это и
     // есть находка, на которой держится всё остальное: шаблон не сочиняем, а копируем.
     [TEST_CASE("Out_ParamTemplateHasRealTypeTag").IN(SERAPH_GRAFT_TEST)];
-    void Out_ParamTemplateHasRealTypeTag(co_call ctx)
+    void Out_ParamTemplateHasRealTypeTag()
     {
-        co_routine coro = co_new(ctx);
         int tag = SeraphGraftProtoParamTag("EnScript", "GetClassVar", 0);
         int family = (tag >> 28) & 0xF;   // первый параметр — Class, семейство 6
         assert(family == 6, "6", family.ToString(), "шаблон переменной несёт сама функция");
@@ -1805,18 +1747,16 @@ class SERAPH_GRAFT_TEST : uTestSuite
     // Шаг 3. Настоящий маршалируемый вызов наружу с проверяемым ответом:
     // typename.GetModule() зовётся на дескрипторе класса и говорит, где класс объявлен.
     [TEST_CASE("Out_MarshalledCallReturnsValue").IN(SERAPH_GRAFT_TEST)];
-    void Out_MarshalledCallReturnsValue(co_call ctx)
+    void Out_MarshalledCallReturnsValue()
     {
-        co_routine coro = co_new(ctx);
         string module = SeraphGraftTypeModule("Man");
         assert(module == "Game", "Game", module, "маршалируемый `proto` движка зовётся из C++");
     }
 
     // Шаг 4. Создание скриптового объекта из C++ — тот же `new`, что в скрипте.
     [TEST_CASE("Out_SpawnCreatesScriptObject").IN(SERAPH_GRAFT_TEST)];
-    void Out_SpawnCreatesScriptObject(co_call ctx)
+    void Out_SpawnCreatesScriptObject()
     {
-        co_routine coro = co_new(ctx);
         string made = SeraphGraftSpawnClass("array<int>");
         assert(made == "array<int>", "array<int>", made, "typename.Spawn создаёт объект из C++");
     }
@@ -1828,9 +1768,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     // Заодно закреплены две особенности GetClassVar, найденные разведкой: код возврата
     // врёт (0 и на успехе), а глобальные переменные она не отдаёт — из скрипта тоже.
     [TEST_CASE("Out_ClassVarThroughEngine").IN(SERAPH_GRAFT_TEST)];
-    void Out_ClassVarThroughEngine(co_call ctx)
+    void Out_ClassVarThroughEngine()
     {
-        co_routine coro = co_new(ctx);
         SeraphNode node = new SeraphNode(4242, 1.5, "узел");
         int viaEngine = SeraphGraftClassVarInt(node, "m_id");
         assert(viaEngine == 4242, "4242", viaEngine.ToString(),
@@ -1838,9 +1777,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Out_GlobalVariableIsNotServedByEngine").IN(SERAPH_GRAFT_TEST)];
-    void Out_GlobalVariableIsNotServedByEngine(co_call ctx)
+    void Out_GlobalVariableIsNotServedByEngine()
     {
-        co_routine coro = co_new(ctx);
         DayZGame fromScript;
         EnScript.GetClassVar(null, "g_Game", 0, fromScript);
         // Не наша беда: из самого скрипта тот же вызов даёт тот же null. Кейс закрепляет
@@ -1852,9 +1790,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     // Шаг 5б. Корень игры приходит вместе с тиком: мод и так зовёт GraftTick одной
     // строкой, поэтому GetGame() приезжает бесплатно и без единой лишней строки.
     [TEST_CASE("Out_RootArrivesWithTick").IN(SERAPH_GRAFT_TEST)];
-    void Out_RootArrivesWithTick(co_call ctx)
+    void Out_RootArrivesWithTick()
     {
-        co_routine coro = co_new(ctx);
         GraftTick(0.0, GetGame());
         string want = GetGame().ClassName();
         string got = SeraphGraftGameClass();
@@ -1867,9 +1804,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     // никогда. Здесь она работает на пустом сервере: ScriptModule.CallFunction зовёт
     // скриптовую функцию GetGame(), и ответ сверяется с корнем от тика.
     [TEST_CASE("Out_ObjectReceiverMarshalledCall").IN(SERAPH_GRAFT_TEST)];
-    void Out_ObjectReceiverMarshalledCall(co_call ctx)
+    void Out_ObjectReceiverMarshalledCall()
     {
-        co_routine coro = co_new(ctx);
         GraftTick(0.0, GetGame());
         string want = GetGame().ClassName();
         string got = SeraphGraftCallScriptFunction();
@@ -1880,9 +1816,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     // Шаг 6. Целевой сценарий целиком: корень -> буфер -> движковый GetPlayers -> обход.
     // На пустом сервере ответ "0:" — и он уже доказывает всю цепочку.
     [TEST_CASE("Out_PlayersFromCppMatchScript").IN(SERAPH_GRAFT_TEST)];
-    void Out_PlayersFromCppMatchScript(co_call ctx)
+    void Out_PlayersFromCppMatchScript()
     {
-        co_routine coro = co_new(ctx);
         GraftTick(0.0, GetGame());
         array<Man> mine = new array<Man>;
         GetGame().GetPlayers(mine);
@@ -1900,18 +1835,16 @@ class SERAPH_GRAFT_TEST : uTestSuite
     // указателем, пришедшим из скрипта. Стоило steam id: GetIdentity отдавал мусор,
     // GetPlainId у него — пустую строку.
     [TEST_CASE("Out_ObjectReturnIsTheSameObjectAsInScript").IN(SERAPH_GRAFT_TEST)];
-    void Out_ObjectReturnIsTheSameObjectAsInScript(co_call ctx)
+    void Out_ObjectReturnIsTheSameObjectAsInScript()
     {
-        co_routine coro = co_new(ctx);
         GraftTick(0.0, GetGame());
         bool same = SeraphGraftObjectReturnMatches(GetGame().GetMission());
         assert(same, "true", same.ToString(), "натив вернул тот же объект, что видит скрипт");
     }
 
     [TEST_CASE("Out_SteamIdsFromCppMatchScript").IN(SERAPH_GRAFT_TEST)];
-    void Out_SteamIdsFromCppMatchScript(co_call ctx)
+    void Out_SteamIdsFromCppMatchScript()
     {
-        co_routine coro = co_new(ctx);
         GraftTick(0.0, GetGame());
         array<Man> mine = new array<Man>;
         GetGame().GetPlayers(mine);
@@ -1937,18 +1870,16 @@ class SERAPH_GRAFT_TEST : uTestSuite
     // место, где C++ просыпается, и мод зовёт его из своего OnUpdate.
 
     [TEST_CASE("Tick_PluginIsSubscribed").IN(SERAPH_GRAFT_TEST)];
-    void Tick_PluginIsSubscribed(co_call ctx)
+    void Tick_PluginIsSubscribed()
     {
-        co_routine coro = co_new(ctx);
         int subscribed = GraftTickCount();
         assert(subscribed > 0, "> 0", subscribed.ToString(),
             "подписка плагина дошла до хоста");
     }
 
     [TEST_CASE("Tick_ReachesPlugin").IN(SERAPH_GRAFT_TEST)];
-    void Tick_ReachesPlugin(co_call ctx)
+    void Tick_ReachesPlugin()
     {
-        co_routine coro = co_new(ctx);
         int before = SeraphGraftTicks();
         GraftTick(0.25, GetGame());
         int after = SeraphGraftTicks();
@@ -1963,9 +1894,8 @@ class SERAPH_GRAFT_TEST : uTestSuite
     // нативы. Не совпал — кандидат бесполезен, звать движок оттуда нельзя.
     // Числа уезжают в graft.log: журнал сьюты эфемерный, а решение принимается по ним.
     [TEST_CASE("Tick_LoopProbe").IN(SERAPH_GRAFT_TEST)];
-    void Tick_LoopProbe(co_call ctx)
+    void Tick_LoopProbe()
     {
-        co_routine coro = co_new(ctx);
         // Тик без единой строки в скрипте: обработчик плагина обязан быть вызван столько
         // же раз, сколько кадров насчитал движок, — а GraftTick из мода никто не звал.
         assert(GraftFrames() > 0, "> 0", GraftFrames().ToString(),
@@ -2011,12 +1941,10 @@ class SERAPH_GRAFT_TEST : uTestSuite
     }
 
     [TEST_CASE("Tick_DeltaArrivesIntact").IN(SERAPH_GRAFT_TEST)];
-    void Tick_DeltaArrivesIntact(co_call ctx)
+    void Tick_DeltaArrivesIntact()
     {
-        co_routine coro = co_new(ctx);
         GraftTick(0.25, GetGame());
         float dt = SeraphGraftLastDt();
         assert(dt == 0.25, "0.25", dt.ToString(), "dt доезжает без искажений");
     }
 }
-#endif
