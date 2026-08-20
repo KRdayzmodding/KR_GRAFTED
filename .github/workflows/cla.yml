@@ -1,0 +1,42 @@
+name: CLA
+
+# Подпись соглашения о вкладе. Хранилище подписей — ветка `cla-signatures`
+# этого же репозитория (в `main` писать нельзя: там ruleset запрещает push мимо PR).
+#
+# pull_request_target здесь обязателен: боту нужны права на запись в репозиторий,
+# а обычный pull_request с форка их не даёт. Код PR при этом НЕ выкачивается и не
+# исполняется — работает только сам экшен, поэтому дыры это не открывает.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  cla:
+    if: github.event.repository.fork == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: CLA check
+        if: (github.event.comment.body == 'Я прочитал(а) CLA и согласен(на) с его условиями') || github.event_name == 'pull_request_target'
+        uses: contributor-assistant/github-action@v2.6.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          path-to-signatures: signatures/version1/cla.json
+          path-to-document: https://github.com/KRdayzmodding/KR_GRAFTED/blob/main/docs/CLA.md
+          branch: cla-signatures
+          allowlist: 6wingSerap,dependabot[bot],*[bot]
+          custom-notsigned-prcomment: |
+            Спасибо за pull request. Прежде чем его можно будет влить, нужно один раз
+            подписать [соглашение о вкладе (CLA)](https://github.com/KRdayzmodding/KR_GRAFTED/blob/main/docs/CLA.md).
+            Прочитай его и оставь в этом PR комментарий ровно с такой строкой:
+          custom-pr-sign-comment: Я прочитал(а) CLA и согласен(на) с его условиями
+          custom-allsigned-prcomment: Соглашение подписано — спасибо. Повторно подписывать не потребуется.

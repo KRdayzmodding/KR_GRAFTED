@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Вопрос «как этим пользоваться»
+    url: https://github.com/KRdayzmodding/KR_GRAFTED/discussions
+    about: Не заводи issue на вопрос. Discussions — правильное место, там же ищутся ответы на такие же вопросы.
+  - name: Уязвимость
+    url: https://github.com/KRdayzmodding/KR_GRAFTED/blob/main/SECURITY.md
+    about: Хост живёт в процессе игры и сервера. Уязвимость — приватно, в Discord 6wingseraph. НЕ сюда.
+  - name: Как собрать и как прислать патч
+    url: https://github.com/KRdayzmodding/KR_GRAFTED/blob/main/CONTRIBUTING.md
+    about: Окружение, сборка, тесты вперёд кода, правила PR.

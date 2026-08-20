@@ -1,0 +1,66 @@
+name: Находка по движку
+description: Что-то выяснено про Enfusion и должно попасть в RESEARCH/
+labels: ["research"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Находка без способа перепроверки — это слух.** Игру патчат, адреса едут, и
+        через месяц отличить проверенное от додуманного будет нечем. Поэтому нужен
+        скрипт, которым любой повторит вывод у себя.
+
+        Границу «факт можно, копия нельзя» см. в
+        [CONTRIBUTING §6](https://github.com/KRdayzmodding/KR_GRAFTED/blob/main/CONTRIBUTING.md).
+
+  - type: input
+    id: build
+    attributes:
+      label: На какой сборке добыто
+      description: Полный номер и какой именно бинарь разбирался.
+      placeholder: 1.29.0.163451, DayZServer_x64.exe
+    validations:
+      required: true
+
+  - type: textarea
+    id: finding
+    attributes:
+      label: Что выяснено
+      description: Своими словами. Адреса, смещения, биты флагов, форма вызова — с привязкой к сборке выше.
+    validations:
+      required: true
+
+  - type: textarea
+    id: script
+    attributes:
+      label: Чем добыто и чем перепроверяется
+      description: |
+        Скрипт из `RESEARCH/scripts/` (какой и с какими переменными окружения) или новый —
+        приложи текстом. Динамика (x64dbg, `cdb -z <dump>`) — команды целиком.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Вывод
+      description: Что напечатал скрипт. Короткие фрагменты дизассемблера и псевдокода — можно; дампы файлов из `RESEARCH/out/` — нет.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Что это меняет в GRAFT
+      description: Какое место библиотеки это чинит, ускоряет или опровергает. Если ничего — тоже ответ, знание всё равно ценно.
+
+  - type: checkboxes
+    id: rules
+    attributes:
+      label: Перед отправкой
+      options:
+        - label: Я не прикладываю бинарь игры, распакованные игровые файлы, базы IDA и дампы вывода декомпилятора
+          required: true
+        - label: Вывод перепроверяется скриптом, который я привёл
+          required: true

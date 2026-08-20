@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Новый пуш в ту же ветку отменяет предыдущий прогон: очередь на windows-раннерах дороже,
+# чем результат по устаревшему коммиту.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Формат: только ИЗМЕНЁННЫЕ строки ────────────────────────────────────────
+  # Не весь файл и не всё дерево: код писался до появления этой проверки, и массовое
+  # переформатирование сожгло бы историю и развалило вручную выровненные комментарии.
+  # git-clang-format смотрит ровно тот диапазон строк, который тронул PR.
+  format:
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: clang-format на PATH
+        shell: pwsh
+        run: |
+          $llvm = "C:\Program Files\LLVM\bin"
+          if (-not (Test-Path "$llvm\git-clang-format")) { throw "git-clang-format не найден в $llvm" }
+          Add-Content $env:GITHUB_PATH $llvm
+          & "$llvm\clang-format.exe" --version
+
+      - name: Изменённые строки по .clang-format
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          # mod/ исключён намеренно: там .c — это Enforce Script, а config.cpp — конфиг
+          # аддона. Ни то, ни другое не C++, clang-format их только испортит.
+          $diff = (git clang-format --diff ${{ github.event.pull_request.base.sha }} `
+                     --extensions c,cpp,h,hpp `
+                     -- SRC INCLUDE tests examples ':(exclude)*/mod/*' 2>&1) | Out-String
+          if ($diff -match 'did not modify any files' -or $diff -match 'no modified files' -or -not $diff.Trim()) {
+            Write-Host "формат в порядке"
+            exit 0
+          }
+          Write-Host $diff
+          Write-Host "::error::Изменённые строки не по .clang-format. Локально почини так: git clang-format origin/main"
+          exit 1
+
+  # ── Сборка библиотеки, инструмента, хоста и примеров ────────────────────────
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # clang-cl берёт Windows SDK и STL из окружения VS — без этого шага конфигурация
+      # падает на поиске windows.h.
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # CMake 3.30+ и Ninja одним действием: полагаться на то, что есть в образе, дороже.
+      - uses: lukka/get-cmake@latest
+
+      - name: Версии
+        shell: pwsh
+        run: |
+          clang-cl --version
+          cmake --version
+          ninja --version
+
+      - name: Конфигурация
+        run: cmake --preset release
+
+      - name: graft (библиотека, graft.exe, dwmapi.dll)
+        run: cmake --build --preset release
+
+      # Примеры собираются отдельными проектами (ExternalProject), ровно тем путём,
+      # которым их собирает мододел. Правка публичного API, ломающая пример, красит CI.
+      - name: Примеры
+        run: cmake --build --preset examples
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: graft-${{ github.sha }}
+          path: out/release/graft/
+          if-no-files-found: error
+          retention-days: 14
+
+  # ── Юнит-тесты ─────────────────────────────────────────────────────────────
+  tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - uses: lukka/get-cmake@latest
+
+      # gtest тянется FetchContent'ом по тегу — качать его каждый раз незачем.
+      - uses: actions/cache@v4
+        with:
+          path: build/release/_deps
+          key: deps-${{ runner.os }}-${{ hashFiles('tests/CMakeLists.txt') }}
+
+      - name: Конфигурация
+        run: cmake --preset release
+
+      - name: Фикстуры и тесты
+        run: cmake --build --preset tests
+
+      - name: ctest
+        run: ctest --preset release
+
+  # ── Вентиль ABI ────────────────────────────────────────────────────────────
+  # Бамп GRAFT_ABI_VERSION отклоняет ВСЕ ранее собранные чужие плагины. Такое не
+  # проезжает молча: раз тронут abi.h — обязана быть строка в CHANGELOG.md.
+  abi:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: abi.h ↔ CHANGELOG.md
+        run: |
+          changed=$(git diff --name-only ${{ github.event.pull_request.base.sha }}...HEAD)
+          echo "$changed"
+          if echo "$changed" | grep -qx 'INCLUDE/graft/abi.h' && ! echo "$changed" | grep -qx 'CHANGELOG.md'; then
+            echo "::error file=INCLUDE/graft/abi.h::Тронут контракт хост↔плагин, а CHANGELOG.md не тронут. См. CONTRIBUTING §5."
+            exit 1
+          fi

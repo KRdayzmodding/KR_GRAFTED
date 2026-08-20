@@ -1,0 +1,55 @@
+name: Предложение
+description: Чего не хватает, чтобы решить твою задачу
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Опиши **задачу**, а не готовое решение. Половина хороших предложений после
+        разбора задачи выглядит иначе, чем в первом сообщении, — и это нормально.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую задачу решаешь
+      description: Что ты делаешь в моде и во что упёрся. Конкретно, с примером кода, если он есть.
+      placeholder: |
+        Нужно раздавать груз игрокам по steam id из C++. Список игроков получаю, а вот
+        отдать предмет в инвентарь не могу: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: now
+    attributes:
+      label: Что мешает сделать это сейчас
+      description: Чего именно не хватает в GRAFT. «Неудобно» — тоже ответ, но напиши, в чём.
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Чем обходишься
+      description: Обходной путь, даже некрасивый. Это лучший источник понимания задачи.
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: Как это могло бы выглядеть
+      description: Необязательно. Если есть форма API — набросай кодом.
+      render: cpp
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Это про саму библиотеку?
+      description: |
+        Многое делается в собственном плагине и в GRAFT не нужно: он даёт границу C++↔скрипт,
+        а не готовую игровую логику.
+      options:
+        - Да, это про границу C++↔скрипт или про сборку
+        - Не уверен, поэтому и спрашиваю
+        - Это про игровую логику, но в своём плагине не получается
+    validations:
+      required: true
