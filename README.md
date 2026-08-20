@@ -1,5 +1,6 @@
 # KR_GRAFTED
 
+[![Релиз](https://img.shields.io/github/v/release/KRdayzmodding/KR_GRAFTED?label=релиз&color=success)](https://github.com/KRdayzmodding/KR_GRAFTED/releases/latest)
 [![CI](https://github.com/KRdayzmodding/KR_GRAFTED/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/KRdayzmodding/KR_GRAFTED/actions/workflows/ci.yml)
 [![Лицензия: GPL-3.0-or-later с исключением для плагинов](https://img.shields.io/badge/лицензия-GPL--3.0--or--later%20%2B%20plugin%20exception-blue)](#лицензия)
 [![C++26 · clang-cl · Windows](https://img.shields.io/badge/C%2B%2B26-clang--cl%20%C2%B7%20Windows-orange)](CONTRIBUTING.md#1-окружение)
@@ -187,7 +188,7 @@ mymod/
 file(DOWNLOAD https://raw.githubusercontent.com/KRdayzmodding/KR_GRAFTED/main/cmake/graft.boot.cmake
      "${CMAKE_BINARY_DIR}/graft.boot.cmake")
 include("${CMAKE_BINARY_DIR}/graft.boot.cmake")
-graft_import(graft https://github.com/KRdayzmodding/KR_GRAFTED TAG main)
+graft_import(graft https://github.com/KRdayzmodding/KR_GRAFTED TAG v0.1.0)
 
 graft_plugin(mymod NAME MYMOD VERSION 1 SOURCES src/plugin.cpp MODULES 3_Game)
 ```

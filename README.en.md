@@ -1,5 +1,6 @@
 # KR_GRAFT
 
+[![Release](https://img.shields.io/github/v/release/KRdayzmodding/KR_GRAFTED?label=release&color=success)](https://github.com/KRdayzmodding/KR_GRAFTED/releases/latest)
 [![CI](https://github.com/KRdayzmodding/KR_GRAFTED/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/KRdayzmodding/KR_GRAFTED/actions/workflows/ci.yml)
 [![License: GPL-3.0-or-later with plugin exception](https://img.shields.io/badge/license-GPL--3.0--or--later%20%2B%20plugin%20exception-blue)](#license)
 
