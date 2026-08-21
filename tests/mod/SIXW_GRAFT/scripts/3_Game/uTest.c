@@ -7,12 +7,17 @@
  * of one script module into a single translation unit, so only the first copy
  * gets compiled and the rest are skipped.
  *
+ * Every public name carries the KRU_ prefix (KRU_Suite, KRU_TEST_CASE, KRU_Status, ...)
+ * so the framework can sit next to another test framework in the same script module:
+ * DayZ gives a module one global namespace, and two classes of the same name do not
+ * compile.
+ *
  * Quick start:
  *
- *   [TEST_SUITE("math::basic", MATH_TEST)];
- *   class MATH_TEST : uTestSuite
+ *   [KRU_TEST_SUITE("math::basic", MATH_TEST)];
+ *   class MATH_TEST : KRU_Suite
  *   {
- *       [TEST_CASE("Add_Simple").IN(MATH_TEST)];
+ *       [KRU_TEST_CASE("Add_Simple").IN(MATH_TEST)];
  *       void Add_Simple()
  *       {
  *           int a = 2 + 2;
@@ -33,7 +38,7 @@
 #ifndef KRUTEST
 #define KRUTEST
 
-enum uTestStatus { PASSED, FAILED, SKIPPED }
+enum KRU_Status { KRU_PASSED, KRU_FAILED, KRU_SKIPPED }
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Stack trace - used only to stamp file:line onto a failure.
@@ -47,13 +52,13 @@ enum uTestStatus { PASSED, FAILED, SKIPPED }
  *
  * A leading '#' marks a call made from an attribute; it is stripped.
  */
-class uTestFrame : Managed
+class KRU_Frame : Managed
 {
     string function;
     string file;
     int    line;
 
-    void uTestFrame(string _function, string _file, int _line)
+    void KRU_Frame(string _function, string _file, int _line)
     {
         function = _function;
         file     = _file;
@@ -61,25 +66,25 @@ class uTestFrame : Managed
     }
 }
 
-class uTestStack : Managed
+class KRU_Stack : Managed
 {
-    ref array<ref uTestFrame> frames = new array<ref uTestFrame>();
+    ref array<ref KRU_Frame> frames = new array<ref KRU_Frame>();
 
     //! Captures the current stack without the Capture() frame itself,
     //! so frame 0 is always the caller of Capture().
-    static uTestStack Capture()
+    static KRU_Stack Capture()
     {
         string raw;
         DumpStackString(raw);
 
-        uTestStack stack = new uTestStack();
+        KRU_Stack stack = new KRU_Stack();
 
         array<string> lines = new array<string>();
         raw.Split("\n", lines);
 
         foreach (string entry : lines)
         {
-            uTestFrame frame = ParseFrame(entry.Trim());
+            KRU_Frame frame = ParseFrame(entry.Trim());
             if (frame) { stack.frames.Insert(frame); }
         }
 
@@ -90,14 +95,14 @@ class uTestStack : Managed
 
     int Count() { return frames.Count(); }
 
-    uTestFrame Get(int index)
+    KRU_Frame Get(int index)
     {
         if (index < 0 || index >= frames.Count()) { return null; }
         return frames[index];
     }
 
     //! First frame belonging to the given function, or null.
-    uTestFrame Find(string function)
+    KRU_Frame Find(string function)
     {
         for (int i = 0; i < frames.Count(); i++)
         {
@@ -118,7 +123,7 @@ class uTestStack : Managed
     }
 
     // Format: [#]FuncName() path/to/file.c : 123
-    protected static uTestFrame ParseFrame(string entry)
+    protected static KRU_Frame ParseFrame(string entry)
     {
         if (entry.Length() == 0) { return null; }
 
@@ -144,7 +149,7 @@ class uTestStack : Managed
             line = line_str.Trim().ToInt();
         }
 
-        return new uTestFrame(function, file, line);
+        return new KRU_Frame(function, file, line);
     }
 }
 
@@ -152,13 +157,13 @@ class uTestStack : Managed
 //  Test case
 // ─────────────────────────────────────────────────────────────────────────────
 
-class uTestCaseInfo : Managed
+class KRU_CaseInfo : Managed
 {
     string name;
     string file;
     string line;
 
-    void uTestCaseInfo(string _name, string _file = "", string _line = "")
+    void KRU_CaseInfo(string _name, string _file = "", string _line = "")
     {
         name = _name;
         file = _file;
@@ -166,29 +171,29 @@ class uTestCaseInfo : Managed
     }
 }
 
-class uTestCase : Managed
+class KRU_Case : Managed
 {
     protected string      test_func;
-    protected uTestStatus status = uTestStatus.PASSED;
+    protected KRU_Status status = KRU_Status.KRU_PASSED;
     protected string      expected;
     protected string      actual;
     protected string      message;
     protected string      __file__;
     protected string      __line__;
 
-    void uTestCase(string funcName) { test_func = funcName; }
+    void KRU_Case(string funcName) { test_func = funcName; }
 
     string      getFunc() { return     test_func; }
-    uTestStatus getStatus() { return   status; }
+    KRU_Status getStatus() { return   status; }
     string      getExpected() { return expected; }
     string      getActual() { return   actual; }
     string      getMessage() { return  message; }
     string      getFile() { return     __file__; }
     string      getLine() { return     __line__; }
 
-    void setPassed() { status  = uTestStatus.PASSED; }
-    void setFailed() { status  = uTestStatus.FAILED; }
-    void setSkipped() { status = uTestStatus.SKIPPED; }
+    void setPassed() { status  = KRU_Status.KRU_PASSED; }
+    void setFailed() { status  = KRU_Status.KRU_FAILED; }
+    void setSkipped() { status = KRU_Status.KRU_SKIPPED; }
 
     void setFile(string     file) { __file__ = file; }
     void setLine(string     line) { __line__ = line; }
@@ -201,9 +206,9 @@ class uTestCase : Managed
 //  Suite
 // ─────────────────────────────────────────────────────────────────────────────
 
-class uTestSuite : Managed
+class KRU_Suite : Managed
 {
-    ref map<string, ref uTestCase> tests = new map<string, ref uTestCase>();
+    ref map<string, ref KRU_Case> tests = new map<string, ref KRU_Case>();
     string                         suiteName;
     int                            passed;
     int                            failed;
@@ -213,7 +218,7 @@ class uTestSuite : Managed
     // Cases run one after another, so the framework always knows which case is
     // live. assert()/failed()/SKIP() therefore work from helper methods too -
     // the stack is only read to stamp the location of an actual failure.
-    protected uTestCase current_case;
+    protected KRU_Case current_case;
 
     void BeforeAll() {}
     void AfterAll() {}
@@ -228,7 +233,7 @@ class uTestSuite : Managed
 
         BeforeAll();
 
-        foreach (string name, ref uTestCase test : tests)
+        foreach (string name, ref KRU_Case test : tests)
         {
             current_case = test;
 
@@ -238,22 +243,22 @@ class uTestSuite : Managed
                 call_ok = GetGame().GameScript.CallFunction(this, test.getFunc(), NULL, 0);
             }
 
-            if (!call_ok && test.getStatus() == uTestStatus.PASSED)
+            if (!call_ok && test.getStatus() == KRU_Status.KRU_PASSED)
             {
                 MarkFailed(test, "callable void " + test.getFunc() + "()", "call failed",
-                           "[uTest] case method not found or has a non-empty signature");
+                           "[KRU] case method not found or has a non-empty signature");
             }
         }
 
         current_case = null;
 
-        foreach (string _name, ref uTestCase _test : tests)
+        foreach (string _name, ref KRU_Case _test : tests)
         {
             switch (_test.getStatus())
             {
-            case uTestStatus.PASSED:  passed++;  break;
-            case uTestStatus.FAILED:  failed++;  break;
-            case uTestStatus.SKIPPED: skipped++; break;
+            case KRU_Status.KRU_PASSED:  passed++;  break;
+            case KRU_Status.KRU_FAILED:  failed++;  break;
+            case KRU_Status.KRU_SKIPPED: skipped++; break;
             }
         }
 
@@ -262,7 +267,7 @@ class uTestSuite : Managed
         duration = (TickCount(0) - start_ticks) / 10000.0;
     }
 
-    protected void MarkFailed(uTestCase test, string expected, string actual, string message)
+    protected void MarkFailed(KRU_Case test, string expected, string actual, string message)
     {
         test.setFailed();
         test.setExpected(expected);
@@ -273,11 +278,11 @@ class uTestSuite : Managed
     // Frame 0 is StampLocation, frame 1 is assert/failed, frame 2 is whoever
     // called them. Prefer the frame of the case itself (assert may sit inside a
     // helper), fall back to the direct caller.
-    protected void StampLocation(uTestCase test)
+    protected void StampLocation(KRU_Case test)
     {
-        uTestStack stack = uTestStack.Capture();
+        KRU_Stack stack = KRU_Stack.Capture();
 
-        uTestFrame frame = stack.Find(test.getFunc());
+        KRU_Frame frame = stack.Find(test.getFunc());
         if (!frame) { frame = stack.Get(2); }
         if (!frame) { return; }
 
@@ -289,8 +294,8 @@ class uTestSuite : Managed
     {
         if (current_case) { return false; }
 
-        uTestStack stack = uTestStack.Capture();
-        Error("[uTest] " + who + " called outside a running test case:\n" + stack.Format());
+        KRU_Stack stack = KRU_Stack.Capture();
+        Error("[KRU] " + who + " called outside a running test case:\n" + stack.Format());
         return true;
     }
 
@@ -333,35 +338,35 @@ class uTestSuite : Managed
 //  Registry + runner
 // ─────────────────────────────────────────────────────────────────────────────
 
-class uTest : Managed
+class KRU : Managed
 {
     static ref map<string, typename>                       suites = new map<string, typename>();
-    static ref map<typename, ref array<ref uTestCaseInfo>> cases  = new map<typename, ref array<ref uTestCaseInfo>>();
+    static ref map<typename, ref array<ref KRU_CaseInfo>> cases  = new map<typename, ref array<ref KRU_CaseInfo>>();
 
     static void RegisterSuite(string name, typename suiteType)
     {
         suites[name] = suiteType;
-        if (!cases.Contains(suiteType)) { cases[suiteType] = new array<ref uTestCaseInfo>(); }
+        if (!cases.Contains(suiteType)) { cases[suiteType] = new array<ref KRU_CaseInfo>(); }
     }
 
     static void RegisterTestCase(typename suiteType, string funcName, string file, string line)
     {
-        if (!cases.Contains(suiteType)) { cases[suiteType] = new array<ref uTestCaseInfo>(); }
-        cases[suiteType].Insert(new uTestCaseInfo(funcName, file, line));
+        if (!cases.Contains(suiteType)) { cases[suiteType] = new array<ref KRU_CaseInfo>(); }
+        cases[suiteType].Insert(new KRU_CaseInfo(funcName, file, line));
     }
 
     //! Runs the named suites (all of them, alphabetically, when names is empty)
     //! and prints the report.
     static void RUN(array<string> names = null, array<string> caseFilter = null)
     {
-        ref array<ref uTestSuite> results = new array<ref uTestSuite>();
-        uTestSuite suite;
+        ref array<ref KRU_Suite> results = new array<ref KRU_Suite>();
+        KRU_Suite suite;
 
         if (names && names.Count() > 0)
         {
             foreach (string n : names)
             {
-                if (!suites.Contains(n)) { Print("[uTest] Suite not found: " + n); continue; }
+                if (!suites.Contains(n)) { Print("[KRU] Suite not found: " + n); continue; }
                 suite = RunSuite(n, suites[n], caseFilter);
                 if (suite) results.Insert(suite);
             }
@@ -411,21 +416,21 @@ class uTest : Managed
         Print("\n─────────────────────────────────────────────────────────────────────────────────────────\n\n");
     }
 
-    protected static uTestSuite RunSuite(string name, typename type, array<string> caseFilter = null)
+    protected static KRU_Suite RunSuite(string name, typename type, array<string> caseFilter = null)
     {
-        uTestSuite suite = uTestSuite.Cast(type.Spawn());
-        if (!suite) { Print("[uTest] Failed to spawn: " + type.ToString()); return null; }
+        KRU_Suite suite = KRU_Suite.Cast(type.Spawn());
+        if (!suite) { Print("[KRU] Failed to spawn: " + type.ToString()); return null; }
 
         suite.suiteName = name;
 
         if (cases.Contains(type))
         {
-            foreach (uTestCaseInfo info : cases[type])
+            foreach (KRU_CaseInfo info : cases[type])
             {
                 if (caseFilter && caseFilter.Count() > 0 && caseFilter.Find(info.name) == -1)
                     continue;
 
-                uTestCase tc = new uTestCase(info.name);
+                KRU_Case tc = new KRU_Case(info.name);
                 tc.setFile(info.file);
                 tc.setLine(info.line);
                 suite.tests[info.name] = tc;
@@ -463,16 +468,16 @@ class uTest : Managed
         return result + int_part.ToString() + "." + frac;
     }
 
-    protected static void ReportResults(array<ref uTestSuite> results)
+    protected static void ReportResults(array<ref KRU_Suite> results)
     {
         int totalPassed, totalFailed, totalSkipped;
-        uTestSuite suite;
-        uTestCase tc;
+        KRU_Suite suite;
+        KRU_Case tc;
         string row, loc;
         float sum_duration = 0;
 
         int maxNameLen = 0;
-        foreach (uTestSuite s : results)
+        foreach (KRU_Suite s : results)
         {
             if (s.suiteName.Length() > maxNameLen)
                 maxNameLen = s.suiteName.Length();
@@ -484,14 +489,14 @@ class uTest : Managed
             row = " " + Pad(suite.suiteName, maxNameLen + 4);
             sum_duration += suite.duration;
 
-            foreach (string case_name, ref uTestCase test : suite.tests)
+            foreach (string case_name, ref KRU_Case test : suite.tests)
             {
                 tc = test;
                 switch (tc.getStatus())
                 {
-                case uTestStatus.PASSED:  row += "·"; break;
-                case uTestStatus.FAILED:  row += "╳"; break;
-                case uTestStatus.SKIPPED: row += "○"; break;
+                case KRU_Status.KRU_PASSED:  row += "·"; break;
+                case KRU_Status.KRU_FAILED:  row += "╳"; break;
+                case KRU_Status.KRU_SKIPPED: row += "○"; break;
                 }
             }
             Print(""+row);
@@ -516,10 +521,10 @@ class uTest : Managed
             for (int fi = 0; fi < results.Count(); fi++)
             {
                 suite = results[fi];
-                foreach (string failed_name, ref uTestCase failed_test : suite.tests)
+                foreach (string failed_name, ref KRU_Case failed_test : suite.tests)
                 {
                     tc = failed_test;
-                    if (tc.getStatus() != uTestStatus.FAILED) { continue; }
+                    if (tc.getStatus() != KRU_Status.KRU_FAILED) { continue; }
 
                     loc = "";
                     if (tc.getFile() != "") { loc = "    " + tc.getFile() + ":" + tc.getLine(); }
@@ -542,53 +547,53 @@ class uTest : Managed
 //  Registration attributes
 // ─────────────────────────────────────────────────────────────────────────────
 
-class TEST_CASE_ATTRIBUTE : Managed
+class KRU_TEST_CASE_ATTRIBUTE : Managed
 {
     protected string   name;
     protected typename suite;
     protected string   file;
     protected string   line;
 
-    void TEST_CASE_ATTRIBUTE(string testName) { name = testName; }
+    void KRU_TEST_CASE_ATTRIBUTE(string testName) { name = testName; }
 
-    TEST_CASE_ATTRIBUTE IN(typename suiteType)
+    KRU_TEST_CASE_ATTRIBUTE IN(typename suiteType)
     {
         suite = suiteType;
-        uTest.RegisterTestCase(suite, name, file, line);
+        KRU.RegisterTestCase(suite, name, file, line);
         return this;
     }
 }
 
-TEST_CASE_ATTRIBUTE TEST_CASE(string name) { return new TEST_CASE_ATTRIBUTE(name); }
+KRU_TEST_CASE_ATTRIBUTE KRU_TEST_CASE(string name) { return new KRU_TEST_CASE_ATTRIBUTE(name); }
 
-class TEST_SUITE : Managed
+class KRU_TEST_SUITE : Managed
 {
-    void TEST_SUITE(string category, typename suiteType) { uTest.RegisterSuite(category, suiteType); }
+    void KRU_TEST_SUITE(string category, typename suiteType) { KRU.RegisterSuite(category, suiteType); }
 }
 
-class uTestRunner : Managed
+class KRU_Runner : Managed
 {
     ref array<string> caseFilter;
     ref array<string> suiteFilters;
 
-    void uTestRunner(array<string> suiteNames = null, array<string> _caseFilter = null)
+    void KRU_Runner(array<string> suiteNames = null, array<string> _caseFilter = null)
     {
         suiteFilters = suiteNames;
         caseFilter   = _caseFilter;
     }
 
-    void Run() { uTest.RUN(suiteFilters, caseFilter); }
+    void Run() { KRU.RUN(suiteFilters, caseFilter); }
 
     //! Reads "-<CLIParam>=suite,suite" and "-<CLIFilter>=case,case" and runs.
     //! Returns null (and runs nothing) when the suites parameter is absent.
-    static uTestRunner RunFromCLI(string CLIParam, string CLIFilter)
+    static KRU_Runner RunFromCLI(string CLIParam, string CLIFilter)
     {
         string CLIParamReaden;
         string CLIParamFilterReaden;
 
         if (!GetCLIParam(CLIParam, CLIParamReaden))
         {
-            Print("[uTest] CLI parameter not set, nothing to run: -" + CLIParam);
+            Print("[KRU] CLI parameter not set, nothing to run: -" + CLIParam);
             return null;
         }
 
@@ -610,7 +615,7 @@ class uTestRunner : Managed
             }
         }
 
-        uTestRunner runner = new uTestRunner(suiteNames, cases);
+        KRU_Runner runner = new KRU_Runner(suiteNames, cases);
         runner.Run();
         return runner;
     }
@@ -624,7 +629,7 @@ class uTestRunner : Managed
 modded class DayZGame
 {
     protected bool            utest_started;
-    protected ref uTestRunner utest_runner;
+    protected ref KRU_Runner utest_runner;
 
     // Not the constructor: g_Game is assigned only after DayZGame is built, so
     // GameScript (needed to dispatch cases by name) is not reachable there yet.
@@ -638,7 +643,7 @@ modded class DayZGame
         if (!GetGame().GetMission()) { return; }
 
         utest_started = true;
-        utest_runner  = uTestRunner.RunFromCLI("utest", "utest_filter");
+        utest_runner  = KRU_Runner.RunFromCLI("utest", "utest_filter");
     }
 }
 #endif
