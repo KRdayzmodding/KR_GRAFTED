@@ -96,7 +96,7 @@ xcopy /E /Y out\release\tests\graft.scripts        tests\mod\SIXW_GRAFT\scripts
 
 ### Фреймворк лежит в репозитории
 
-Зависимостей у мода нет: uTest приехал файлом
+Зависимостей у мода нет: KR_UTEST приехал файлом
 [mod/SIXW_GRAFT/scripts/3_Game/uTest.c](mod/SIXW_GRAFT/scripts/3_Game/uTest.c) —
 это [KR_UTEST](https://github.com/KRdayzmodding) под MIT, один файл без внешних связей.
 Раньше фреймворк брался из `KR_CORE`, и проверить библиотеку мог только тот, у кого этот
@@ -121,10 +121,9 @@ DayZDiag_x64.exe -server ... -scrDef=UTESTS_RUN -utest=seraph::graft
 следующая копия затрёт заплатку. Обёртка `#ifndef KRUTEST` позволяет нескольким модам
 везти свою копию одновременно.
 
-**Если рядом загружен `KR_CORE`** — там своя копия uTest, и два определения одних и тех
-же классов не скомпилируются. Лечится одним из двух: убрать `KR_CORE` из прогона (нашей
-сьюте он больше не нужен) или добавить второй флаг — `-scrDef=UTESTS_RUN -scrDef=UTESTS`,
-от которого копия KR_CORE отходит в сторону (она под `#ifndef UTESTS`).
+**Рядом с `KR_CORE` живёт мирно.** Все имена фреймворка несут префикс `KRU_`
+(`KRU_Suite`, `KRU_TEST_SUITE`, `KRU_TEST_CASE`, `KRU_Status`), а у копии в `KR_CORE` они
+без префикса — пересечения нет, флаги не нужны, оба мода грузятся вместе.
 
 Внутри 96 кейсов:
 
@@ -164,7 +163,7 @@ cmake --preset release -DGRAFT_API_DIR=build/gen
   "scrDef": "UTESTS_RUN",
   "suitesArg": "-utest",
   "casesArg": "-utest_filter",
-  "suiteNotFoundPattern": "[uTest] Suite not found:"
+  "suiteNotFoundPattern": "[KRU] Suite not found:"
 }
 ```
 
