@@ -5,7 +5,7 @@
 #   file(DOWNLOAD https://raw.githubusercontent.com/KRdayzmodding/KR_GRAFTED/main/cmake/graft.boot.cmake
 #        "${CMAKE_BINARY_DIR}/graft.boot.cmake")
 #   include("${CMAKE_BINARY_DIR}/graft.boot.cmake")
-#   graft_import(graft https://github.com/KRdayzmodding/KR_GRAFTED TAG v0.1.0)
+#   graft_import(graft https://github.com/KRdayzmodding/KR_GRAFTED TAG v0.1.1)
 #
 # После этого доступны graft::client, graft::tool и graft_plugin().
 #
