@@ -77,7 +77,7 @@ jobs:
       - name: Конфигурация
         run: cmake --preset release
 
-      - name: graft (библиотека, graft.exe, dwmapi.dll)
+      - name: graft (библиотека, graft.exe, hid.dll)
         run: cmake --build --preset release
 
       # Примеры собираются отдельными проектами (ExternalProject), ровно тем путём,
@@ -150,7 +150,7 @@ jobs:
       - name: Снести прошлые черновики
         run: gh release list --json name,isDraft --jq '.[] | select(.isDraft) | .name' | xargs -r -I {} gh release delete {} --yes
 
-      # THIRD_PARTY.md обязан ехать рядом с бинарником: в dwmapi.dll вкомпилированы
+      # THIRD_PARTY.md обязан ехать рядом с бинарником: в hid.dll вкомпилированы
       # MinHook и HDE под BSD-2, и это требование их лицензии, а не вежливость.
       - name: Архив
         run: |
@@ -169,7 +169,7 @@ jobs:
             echo
             echo "**ABI: $abi, LAYOUT: $layout.** Плагин, собранный под другие числа, хост не загрузит."
             echo
-            echo "В архиве: \`dwmapi.dll\` (хост), \`graft.exe\` (инструмент), лицензии и \`THIRD_PARTY.md\`."
+            echo "В архиве: \`hid.dll\` (хост), \`graft.exe\` (инструмент), лицензии и \`THIRD_PARTY.md\`."
             echo
           } > notes.md
           gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" -f tag_name="$TAG_NAME" -f target_commitish="$GITHUB_SHA" --jq .body >> notes.md

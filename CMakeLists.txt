@@ -9,7 +9,7 @@ project(graft VERSION 0.1.1 LANGUAGES CXX C)
 #
 #  Три части, и каждая собирается отдельно:
 #
-#    cmake --build build                     graft: библиотека, graft.exe, dwmapi.dll
+#    cmake --build build                     graft: библиотека, graft.exe, hid.dll
 #    cmake --build build --target tests      + фикстуры и юнит-тесты
 #    cmake --build build --target examples   + примеры, каждый своим проектом
 #
@@ -21,7 +21,7 @@ project(graft VERSION 0.1.1 LANGUAGES CXX C)
 #  мододел своим обычным инструментом.
 #
 #  Таргеты библиотеки: graft::client (линкуется в плагин), graft::host, graft::gen,
-#  graft::tool (graft.exe), graft::proxy (dwmapi.dll).
+#  graft::tool (graft.exe), graft::proxy (hid.dll).
 # ══════════════════════════════════════════════════════════════════════════════
 
 set(CMAKE_CXX_STANDARD 23)
@@ -33,7 +33,7 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 # Артефакты и промежуточное разведены: в build/ — кэш, объектники и .lib, в out/ —
 # только то, что забирают руками, разложенное по частям проекта:
 #
-#   out/<конфиг>/graft/              dwmapi.dll и graft.exe
+#   out/<конфиг>/graft/              hid.dll и graft.exe
 #   out/<конфиг>/tests/              фикстуры, их объявления, graft_tests.exe
 #   out/<конфиг>/examples/<пример>/  плагин примера и его объявления
 #
@@ -107,7 +107,7 @@ if(GRAFT_BUILD_EXAMPLES)
 endif()
 
 # ── Хост в игре ──────────────────────────────────────────────────────────────
-# Единственное, что graft ставит и снимает, — это себя: dwmapi.dll рядом с exe. Моды
+# Единственное, что graft ставит и снимает, — это себя: hid.dll рядом с exe. Моды
 # (PBO, папки @МОД) он не собирает и не трогает — это дело мододела.
 add_custom_target(mount
     COMMAND "$<TARGET_FILE:graft_tool>" install "${GRAFT_GAME_DIR}"

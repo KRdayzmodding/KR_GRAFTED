@@ -75,7 +75,7 @@ modded class MissionServer
 Раскладывается всё это так:
 
 ```
-<игра>/dwmapi.dll                                хост, один на установку
+<игра>/hid.dll                                   хост, один на установку
 @MYMOD/addons/MYMOD.pbo                          мод как обычно
 @MYMOD/grafted/MYMOD.grafted.dll                 плагин — по соседству с addons
 @MYMOD/scripts/3_Game/grafted_natives_MYMOD.c    объявления, печатает сборка
@@ -90,7 +90,7 @@ modded class MissionServer
 
 | Где | Что |
 |---|---|
-| [INCLUDE/graft/](INCLUDE/graft/), [SRC/](SRC/) | сам graft: библиотека, `graft.exe`, хост `dwmapi.dll` |
+| [INCLUDE/graft/](INCLUDE/graft/), [SRC/](SRC/) | сам graft: библиотека, `graft.exe`, хост `hid.dll` |
 | [cmake/](cmake/) | `graft.boot.cmake` (`graft_import`), `graft_plugin()`, покрытие |
 | [tests/](tests/) | тестовое окружение: gtest, два плагина-фикстуры и мод со скриптовой сьютой |
 | [examples/](examples/) | самостоятельные проекты-примеры, начиная с [hello](examples/hello/) |
@@ -110,24 +110,24 @@ cmake --preset release
 cmake --build --preset release
 ```
 
-Это **только graft**: библиотека, `graft.exe` и хост `dwmapi.dll`. Тесты и примеры в
+Это **только graft**: библиотека, `graft.exe` и хост `hid.dll`. Тесты и примеры в
 `ALL` не входят и на обычной сборке не трогаются — у каждой части свой таргет:
 
 | Команда | Что собирает | Куда кладёт |
 |---|---|---|
-| `cmake --build --preset release` | библиотека, `graft.exe`, `dwmapi.dll` | `out/release/graft/` |
+| `cmake --build --preset release` | библиотека, `graft.exe`, `hid.dll` | `out/release/graft/` |
 | `cmake --build --preset tests` | фикстуры-плагины и юнит-тесты | `out/release/tests/` |
 | `ctest --preset release` | прогон юнит-тестов | — |
 | `cmake --build --preset examples` | четыре примера, каждый своим проектом | `out/release/examples/<имя>/` |
 | `cmake --build --preset coverage` | покрытие (нужен `-DGRAFT_COVERAGE=ON`) | консоль + `build/debug/coverage/` |
-| `cmake --build --preset mount` | поставить хост в `GRAFT_GAME_DIR` | `<игра>/dwmapi.dll` |
+| `cmake --build --preset mount` | поставить хост в `GRAFT_GAME_DIR` | `<игра>/hid.dll` |
 | `cmake --build --preset unmount` | снять хост оттуда же | — |
 
 Артефакты и промежуточное разведены: в `build/<конфиг>/` — кэш, объектники и `.lib`,
 в `out/<конфиг>/` — только то, что забирают руками:
 
 ```
-out/release/graft/dwmapi.dll                          хост, чистой DLL
+out/release/graft/hid.dll                             хост, чистой DLL
 out/release/graft/graft.exe                           инструмент
 out/release/tests/SIXW_GRAFT.grafted.dll              фикстуры
 out/release/tests/SIXW_GRAFT.scripts/1_Core/...       их объявления
@@ -287,7 +287,7 @@ graft apigen P:/scripts include/graft/dayz
 
 ## Монтирование и демонтирование
 
-Монтируется ровно одна вещь — сам graft: `dwmapi.dll` рядом с exe игры. Моды кладёт и
+Монтируется ровно одна вещь — сам graft: `hid.dll` рядом с exe игры. Моды кладёт и
 убирает мододел, graft о них не знает.
 
 ```bat
@@ -297,7 +297,7 @@ graft list      "C:\DayZServer"    :: что установлено
 graft doctor    "C:\DayZServer"    :: почему не работает
 ```
 
-- **Чужую `dwmapi.dll` не трогаем.** `install` на неё ругается и останавливается,
+- **Чужую `hid.dll` не трогаем.** `install` на неё ругается и останавливается,
   `uninstall` её не удаляет: мирить два прокси мы не умеем и делать вид не будем.
 - **Чужие моды не удаляем.** `uninstall` снимает хост и пустую `<игра>/grafted/`, а
   плагины, лежащие в модах, только перечисляет — без хоста они просто мертвы.
@@ -339,7 +339,7 @@ OpenJDK и Runtime Library Exception в GCC. Помечены
   серверах, никому не раздаёшь — распространения нет, обязательств нет. Это свойство
   всего копилефта, кроме AGPL; AGPL здесь была бы лекарством хуже болезни.
 - **Сторонний код** — [THIRD_PARTY.md](THIRD_PARTY.md). MinHook и HDE (оба BSD-2) едут
-  внутри `dwmapi.dll`, поэтому этот файл обязан лежать рядом с бинарником в поставке.
+  внутри `hid.dll`, поэтому этот файл обязан лежать рядом с бинарником в поставке.
 
 ### Вклад
 

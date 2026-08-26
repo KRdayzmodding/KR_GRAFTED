@@ -183,7 +183,7 @@ Discussions — добавить). Обязательные поля, специ
 | Шаблон | Обязательные поля |
 |---|---|
 | `bug_report` | версия/тег graft, версия и сборка DayZ (клиент/сервер), вывод `graft doctor <каталог>`, `graft_*.log` из профиля, шаги |
-| `plugin_not_loading` | то же + `graft list`, раскладка `@МОД/grafted/`, есть ли чужая `dwmapi.dll`, версия clang-cl |
+| `plugin_not_loading` | то же + `graft list`, раскладка `@МОД/grafted/`, есть ли чужая `hid.dll`, версия clang-cl |
 | `feature_request` | задача, а не решение; что сейчас не даёт сделать |
 | `research_finding` | сборка игры, скрипт из `RESEARCH/scripts/`, вывод, как перепроверить |
 
@@ -278,7 +278,7 @@ release.
 **Пункты 3 и 4 больше не ручные — их делает джоба `release`** (по образцу
 [aui-framework/aui](https://github.com/aui-framework/aui), см. §7). Каждый пуш в `main`:
 сносит прошлые черновики, считает следующий `v<версия из CMakeLists>-rc.N`
-([.github/next-version.py](../.github/next-version.py)), кладёт `dwmapi.dll`, `graft.exe`,
+([.github/next-version.py](../.github/next-version.py)), кладёт `hid.dll`, `graft.exe`,
 обе лицензии и `THIRD_PARTY.md` (обязан ехать рядом с бинарником — BSD-2 MinHook/HDE)
 в один zip и создаёт **черновик** пред-релиза. Заметки собираются из строки про сборку
 DayZ, чисел `ABI`/`LAYOUT`, вытащенных прямо из `abi.h`, и автосписка PR.

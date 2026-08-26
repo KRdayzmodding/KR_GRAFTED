@@ -11,7 +11,7 @@ GRAFT под GPL-3.0-or-later (см. [LICENSE](LICENSE), [LICENSE-EXCEPTION](LIC
 | [KR_UTEST](https://github.com/KRdayzmodding) (`tests/mod/SIXW_GRAFT/scripts/3_Game/uTest.c`) | вендорная копия | MIT | нет, только PBO тестового мода |
 
 BSD-2 требует воспроизвести уведомление в документации при поставке **бинарников**.
-Поэтому этот файл обязан ехать вместе с `dwmapi.dll` — не только лежать в репозитории.
+Поэтому этот файл обязан ехать вместе с `hid.dll` — не только лежать в репозитории.
 GoogleTest не распространяется и в поставке не нуждается, но указан для полноты.
 
 ---
@@ -89,7 +89,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 Copyright 2008, Google Inc. All rights reserved. BSD-3-Clause — полный текст
 в `build/*/\_deps/googletest-src/LICENSE`. Собирается только целями тестов
-(`ctest`), в `dwmapi.dll` и плагины не попадает.
+(`ctest`), в `hid.dll` и плагины не попадает.
 
 ---
 
@@ -98,7 +98,7 @@ Copyright 2008, Google Inc. All rights reserved. BSD-3-Clause — полный �
 Фреймворк скриптовых тестов, одним файлом. Лежит копией в
 `tests/mod/SIXW_GRAFT/scripts/3_Game/uTest.c`, чтобы тестовый мод не зависел от чужих
 модов; чинить его надо в его репозитории, иначе следующая копия затрёт заплатку.
-В `dwmapi.dll`, плагины и в поставку библиотеки не попадает — только в PBO тестового мода.
+В `hid.dll`, плагины и в поставку библиотеки не попадает — только в PBO тестового мода.
 
 MIT License
 

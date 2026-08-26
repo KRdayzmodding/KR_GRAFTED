@@ -24,7 +24,7 @@
             "type": "process",
             "command": "${workspaceFolder}\\.vscode\\dev-shell.cmd",
             "args": ["cmake", "--build", "--preset", "release"],
-            "detail": "библиотека, graft.exe, dwmapi.dll",
+            "detail": "библиотека, graft.exe, hid.dll",
             "group": {
                 "kind": "build",
                 "isDefault": true

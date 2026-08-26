@@ -1,6 +1,6 @@
 # ── graft: библиотека, инструмент, хост ──────────────────────────────────────
 #
-#  Хост (dwmapi.dll) — один на игру: скан движка, хуки, script-контексты, загрузчик.
+#  Хост (hid.dll) — один на игру: скан движка, хуки, script-контексты, загрузчик.
 #  Клиент — то, что компилируется в КАЖДЫЙ плагин: трамплины, разбор аргументов,
 #  арена строк и переходники к сервисам хоста.
 #
@@ -49,7 +49,7 @@ add_library(graft_gen STATIC
 target_link_libraries(graft_gen PUBLIC graft_common)
 
 # Реестр самого хоста (нативы Graft*) слинкован в инструмент: так `protogen --host`
-# обходится без загрузки dwmapi.dll.
+# обходится без загрузки hid.dll.
 add_executable(graft_tool graft/tool_main.cpp graft/host_natives.cpp)
 target_link_libraries(graft_tool PRIVATE graft_gen graft_host)
 set_target_properties(graft_tool PROPERTIES OUTPUT_NAME "graft")
@@ -71,7 +71,7 @@ add_executable(graft::tool ALIAS graft_tool)
 set_target_properties(graft_common graft_host graft_client graft_gen graft_tool
                       PROPERTIES FOLDER graft)
 
-# ── Хост: dwmapi.dll ─────────────────────────────────────────────────────────
+# ── Хост: hid.dll ────────────────────────────────────────────────────────────
 # Собирается только когда graft собирают сам по себе: чужому проекту нужен клиент и
 # инструмент, а хост он ставит один раз готовым.
 if(NOT GRAFT_BUILD_HOST)
@@ -100,8 +100,8 @@ add_library(graft_proxy SHARED
 )
 target_link_libraries(graft_proxy PRIVATE graft_host)
 target_include_directories(graft_proxy PRIVATE "${minhook_SOURCE_DIR}/include")
-# Игра ищет dwmapi.dll рядом с exe -> так и называем, без префикса lib.
+# Игра ищет hid.dll рядом с exe -> так и называем, без префикса lib.
 set_target_properties(graft_proxy PROPERTIES
-    OUTPUT_NAME "dwmapi" PREFIX "" FOLDER graft
+    OUTPUT_NAME "hid" PREFIX "" FOLDER graft
     RUNTIME_OUTPUT_DIRECTORY "${graft_bin}")
 add_library(graft::proxy ALIAS graft_proxy)

@@ -118,7 +118,7 @@ int generate(const std::string& plugin, const std::vector<const graft_native_des
 }
 
 // Реестр самого хоста слинкован в этот exe (host_natives.cpp) — отдельная загрузка
-// dwmapi.dll ради него не нужна.
+// hid.dll ради него не нужна.
 std::vector<graft_native_desc> host_descs() {
     std::vector<const graft::native*> ordered;
     for (const graft::native* n = graft::natives(); n; n = n->next) {
@@ -223,13 +223,18 @@ int cmd_apigen(int argc, char** argv) {
 
 // ── Установка ────────────────────────────────────────────────────────────────
 
+// Имя хоста. Менялось один раз — с dwmapi.dll на hid.dll: dwmapi нет в таблице импорта
+// ни боевого сервера, ни розничного клиента, см. SRC/dll/proxy.cpp.
+constexpr const char* kHost    = "hid.dll";
+constexpr const char* kOldHost = "dwmapi.dll";
+
 bool is_our_host(const fs::path& dll) {
     HMODULE m = LoadLibraryExW(dll.wstring().c_str(), nullptr, LOAD_LIBRARY_AS_DATAFILE);
     if (!m) {
         return false;
     }
     // Как файл данных экспорты не разрешаются, поэтому ищем имя в самом образе: этого
-    // достаточно, чтобы отличить свою dwmapi от чужого прокси.
+    // достаточно, чтобы отличить свой хост от чужого прокси.
     FreeLibrary(m);
     std::ifstream in(dll, std::ios::binary);
     const std::string bytes{std::istreambuf_iterator<char>(in),
@@ -237,9 +242,19 @@ bool is_our_host(const fs::path& dll) {
     return bytes.find("graft_host_version") != std::string::npos;
 }
 
+// Хост прошлого имени. Оставить его нельзя: в diag импортируются ОБА имени, и две наши
+// копии в одном процессе поставили бы хуки дважды. Чужую dwmapi не трогаем — не наша.
+void drop_legacy_host(const fs::path& game) {
+    const fs::path  old = game / kOldHost;
+    std::error_code ec;
+    if (fs::exists(old, ec) && is_our_host(old) && fs::remove(old, ec)) {
+        std::println("graft: убран хост прошлого имени -> {}", old.string());
+    }
+}
+
 int cmd_install(int argc, char** argv) {
     if (argc < 3) {
-        return fail("install <каталог игры> [dwmapi.dll]");
+        return fail("install <каталог игры> [hid.dll]");
     }
     const fs::path game = argv[2];
     if (!fs::is_directory(game)) {
@@ -250,18 +265,18 @@ int cmd_install(int argc, char** argv) {
     if (argc <= 3) {
         wchar_t self[MAX_PATH];
         GetModuleFileNameW(nullptr, self, MAX_PATH);
-        source = fs::path{self}.parent_path() / "dwmapi.dll";
+        source = fs::path{self}.parent_path() / kHost;
     }
     if (!fs::exists(source)) {
         return fail("не найден " + source.string());
     }
 
-    const fs::path target = game / "dwmapi.dll";
+    const fs::path target = game / kHost;
     if (fs::exists(target)) {
         if (!is_our_host(target)) {
             // Мирить два прокси мы не умеем и делать вид не будем.
             return fail("в " + game.string() +
-                        " уже лежит ЧУЖАЯ dwmapi.dll. Переименуй её или разберись, чья "
+                        " уже лежит ЧУЖАЯ hid.dll. Переименуй её или разберись, чья "
                         "она — перезаписывать не буду");
         }
         std::error_code ec;
@@ -277,6 +292,7 @@ int cmd_install(int argc, char** argv) {
         return fail("не скопировать: " + ec.message() + " (игра запущена?)");
     }
     std::println("graft: хост установлен -> {}", target.string());
+    drop_legacy_host(game);
     // Два места, и оба настоящие: общая папка удобна на разработке, папка мода едет
     // вместе с модом. Печатаем оба, чтобы выбор был осознанным, а не единственным.
     std::println("graft: плагины клади в {} или в @МОД\\grafted рядом с игрой",
@@ -331,17 +347,18 @@ int cmd_uninstall(int argc, char** argv) {
     if (!fs::is_directory(game)) {
         return fail("нет каталога " + game.string());
     }
-    const fs::path host = game / "dwmapi.dll";
+    const fs::path  host = game / kHost;
     std::error_code ec;
     if (!fs::exists(host)) {
         std::println("graft: хоста нет — снимать нечего");
     } else if (!is_our_host(host)) {
-        return fail("в " + game.string() + " лежит ЧУЖАЯ dwmapi.dll — не трогаю");
+        return fail("в " + game.string() + " лежит ЧУЖАЯ hid.dll — не трогаю");
     } else if (!fs::remove(host, ec)) {
         return fail("не снять хост: " + ec.message() + " (игра запущена?)");
     } else {
         std::println("graft: хост снят -> {}", host.string());
     }
+    drop_legacy_host(game);
     // remove() удаляет каталог, только если он пуст: чужие плагины в общей папке
     // переживут снятие хоста, и это правильно — их туда клали не мы.
     if (fs::remove(game / "grafted", ec)) {
@@ -363,10 +380,9 @@ int cmd_list(int argc, char** argv) {
         return fail("list <каталог игры>");
     }
     const fs::path game = argv[2];
-    const fs::path host = game / "dwmapi.dll";
-    std::println("хост:   {}", !fs::exists(host)  ? "НЕ УСТАНОВЛЕН"
-                               : is_our_host(host) ? "установлен"
-                                                   : "ЧУЖАЯ dwmapi.dll");
+    const fs::path host = game / kHost;
+    std::println("хост:   {}", !fs::exists(host) ? "НЕ УСТАНОВЛЕН" : is_our_host(host) ? "установлен"
+                                                                                       : "ЧУЖАЯ hid.dll");
     const auto files = plugin_files(game);
     if (files.empty()) {
         std::println("плагинов не найдено");
@@ -393,12 +409,19 @@ int cmd_doctor(int argc, char** argv) {
     const fs::path game = argv[2];
     int problems = 0;
 
-    const fs::path host = game / "dwmapi.dll";
+    const fs::path host = game / kHost;
     if (!fs::exists(host)) {
         std::println("[!] хост не установлен: graft install {}", game.string());
         ++problems;
     } else if (!is_our_host(host)) {
-        std::println("[!] dwmapi.dll в каталоге игры — не наша");
+        std::println("[!] hid.dll в каталоге игры — не наша");
+        ++problems;
+    }
+    const fs::path legacy = game / kOldHost;
+    if (fs::exists(legacy) && is_our_host(legacy)) {
+        std::println("[!] рядом лежит наш хост прошлого имени {} — уберёт graft install {}",
+                     kOldHost,
+                     game.string());
         ++problems;
     }
 
@@ -536,7 +559,7 @@ int cmd_new(int argc, char** argv) {
 int usage() {
     std::print(
         "graft — обслуживание graft-установки\n\n"
-        "  graft install  <каталог игры> [dwmapi.dll]   поставить хост\n"
+        "  graft install  <каталог игры> [hid.dll]      поставить хост\n"
         "  graft uninstall <каталог игры>               снять хост\n"
         "  graft list     <каталог игры>                что установлено\n"
         "  graft doctor   <каталог игры>                почему не работает\n"

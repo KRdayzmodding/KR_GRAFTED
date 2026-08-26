@@ -68,7 +68,7 @@ constexpr std::size_t kMaxLinesPerNative = 3;
 
 // Кто упал — ищем по адресу трамплина в реестре: там и имя плагина, и имя натива в
 // скрипте. Ничего другого у нас на руках нет, а этого достаточно, чтобы в журнале была
-// не «где-то в dwmapi», а «плагин SIXW_GRAFT, натив SeraphNode.Id».
+// не «где-то в hid», а «плагин SIXW_GRAFT, натив SeraphNode.Id».
 void note_fault(void* impl, std::uint32_t code, const void* at, const char* what) {
     ++g_faults;
     const char* owner = "?";

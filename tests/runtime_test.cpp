@@ -557,7 +557,7 @@ TEST(Guard, VoidNativeSurvivesToo) {
 
 TEST(Guard, ReportNamesThePluginAndTheNative) {
     // Кто упал, известно только по адресу трамплина: хост ищет его в реестре. Без этого
-    // в журнале осталось бы «где-то в dwmapi», а нужно «плагин такой-то, натив такой-то».
+    // в журнале осталось бы «где-то в hid», а нужно «плагин такой-то, натив такой-то».
     static int trampoline = 0;
     static const graft_native_desc desc{
         .class_name = "SeraphNode", .name = "Id", .impl = &trampoline};
