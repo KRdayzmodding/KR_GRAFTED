@@ -45,7 +45,7 @@ C++ покажет обычный `git diff`.
 
 ```
 DayZ.exe
- └─ dwmapi.dll                    ХОСТ, один на игру: graft install <каталог игры>
+ └─ hid.dll                       ХОСТ, один на игру: graft install <каталог игры>
       ├─ @EXAMPLE_GRAFT/grafted/EXAMPLE_GRAFT.grafted.dll      ПЛАГИН, едет со своим модом
       ├─ @EXAMPLE_HASHMAP/grafted/EXAMPLE_HASHMAP.grafted.dll
       ├─ @EXAMPLE_PLAYERS/grafted/EXAMPLE_PLAYERS.grafted.dll

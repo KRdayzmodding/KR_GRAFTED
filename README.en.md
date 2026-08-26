@@ -71,7 +71,7 @@ every frame too? That's `GRAFT_ON_TICK(dt) { ... }` — see [examples/players](e
 That ships as:
 
 ```
-<game>/dwmapi.dll                                host, one per installation
+<game>/hid.dll                                   host, one per installation
 @MYMOD/addons/MYMOD.pbo                          your mod, as usual
 @MYMOD/grafted/MYMOD.grafted.dll                 plugin — next to addons/
 @MYMOD/scripts/3_Game/grafted_natives_MYMOD.c    declarations, printed by the build
@@ -131,7 +131,7 @@ itself is not. Note that the name is not licensed (GPLv3 §7e), and Bohemia's ow
 DayZ mod monetization apply on top of all this — GRAFT's license neither grants nor
 overrides them.
 
-Third-party code (MinHook and HDE, both BSD-2, linked into `dwmapi.dll`):
+Third-party code (MinHook and HDE, both BSD-2, linked into `hid.dll`):
 [THIRD_PARTY.md](THIRD_PARTY.md).
 
 ## Contributing

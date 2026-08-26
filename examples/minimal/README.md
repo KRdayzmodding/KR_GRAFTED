@@ -62,7 +62,7 @@ modded class ExampleGraft
 
 ## Хост и плагины
 
-Рядом с exe живёт **один** `dwmapi.dll` — это хост: он находит точки движка, ставит
+Рядом с exe живёт **один** `hid.dll` — это хост: он находит точки движка, ставит
 хуки и грузит плагины. Пересобирать его не нужно никому и никогда.
 
 Твой мод собирается в **плагин** — `<ИМЯ>.grafted.dll`. Он едет вместе со своим модом:
@@ -71,7 +71,7 @@ modded class ExampleGraft
 
 ```
 DayZ.exe
- └─ dwmapi.dll                      хост, один на игру: graft install <каталог игры>
+ └─ hid.dll                         хост, один на игру: graft install <каталог игры>
       ├─ @MYMOD/addons/MYMOD.pbo               мод как обычно
       ├─ @MYMOD/grafted/MYMOD.grafted.dll      плагин — по соседству с addons
       ├─ @OTHER/grafted/OTHER.grafted.dll

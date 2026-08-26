@@ -20,7 +20,7 @@ bool readable(const void* p, std::size_t n) {
     }
     // Пробовать чтение под SEH нельзя: движок ставит свой фильтр исключений и рапортует
     // о падении раньше, чем сработал бы наш __except (проверено — вылет 0xC0000005 с
-    // адресом внутри dwmapi.dll). Поэтому спрашиваем у системы, а не у процессора.
+    // адресом внутри hid.dll). Поэтому спрашиваем у системы, а не у процессора.
     MEMORY_BASIC_INFORMATION mbi{};
     if (VirtualQuery(p, &mbi, sizeof mbi) == 0 || mbi.State != MEM_COMMIT) {
         return false;

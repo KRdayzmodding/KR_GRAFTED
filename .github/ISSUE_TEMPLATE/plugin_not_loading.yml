@@ -12,7 +12,7 @@ body:
     id: graft-version
     attributes:
       label: Версия GRAFT (хоста)
-      description: Тег или коммит, из которого собран `dwmapi.dll`.
+      description: Тег или коммит, из которого собран `hid.dll`.
       placeholder: v0.1.0 / 671a9ec
     validations:
       required: true
@@ -58,7 +58,7 @@ body:
         Дерево от каталога игры до плагина. Плагин лежит в `@МОД/grafted/`, рядом с `addons/`, и называется `<ИМЯ>.grafted.dll`.
       render: text
       placeholder: |
-        C:\DayZServer\dwmapi.dll
+        C:\DayZServer\hid.dll
         C:\DayZServer\@MYMOD\addons\MYMOD.pbo
         C:\DayZServer\@MYMOD\grafted\MYMOD.grafted.dll
     validations:
@@ -74,9 +74,9 @@ body:
       required: true
 
   - type: dropdown
-    id: foreign-dwmapi
+    id: foreign-hid
     attributes:
-      label: Была ли в каталоге игры чужая `dwmapi.dll`
+      label: Была ли в каталоге игры чужая `hid.dll`
       description: GRAFT чужой прокси не трогает и отказывается ставиться поверх — это штатное поведение, а не баг.
       options:
         - Нет, каталог был чистый
