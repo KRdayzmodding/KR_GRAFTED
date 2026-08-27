@@ -53,7 +53,7 @@ std::vector<const graft_native_desc*> pointers(const std::vector<graft_native_de
     return out;
 }
 
-}  // namespace
+} // namespace
 
 std::string proto_decl(const graft_native_desc& n) {
     std::string s;
@@ -110,18 +110,20 @@ std::string proto_file(const std::vector<const graft_native_desc*>& source, cons
         }
     }
     for (const char* c : classes) {
-        // Заголовок: у шаблонного класса он несёт параметры и объявляется целиком
-        // (`class Имя<Class K, Class V>`), у обычного — правится существующий
-        // (`modded class Имя`).
+        // Заголовок: если он задан явно (`declare_as`), класс НАШ — и объявляется
+        // целиком, `class Имя`. Так печатаются и шаблонные классы (заголовок несёт
+        // параметры: `class Имя<Class K, Class V>`), и обычные новые. Если не задан —
+        // класс движковый, и мы к нему только дописываем: `modded class Имя`.
         const char* header = c;
+        bool        ours   = false;
         for (const graft_native_desc* n : all) {
             if (n->class_name && std::strcmp(n->class_name, c) == 0 && n->declare_as) {
                 header = n->declare_as;
+                ours   = true;
                 break;
             }
         }
-        const bool templated = std::strchr(header, '<') != nullptr;
-        out += templated ? "\nclass " : "\nmodded class ";
+        out += ours ? "\nclass " : "\nmodded class ";
         out += header;
         out += "\n{\n";
         for (const graft_native_desc* n : all) {
@@ -145,8 +147,7 @@ std::vector<std::string> proto_modules(const std::vector<const graft_native_desc
     std::vector<std::string> modules;
     for (const graft_native_desc* n : source) {
         if (n->generate && n->module &&
-            std::none_of(modules.begin(), modules.end(),
-                         [&](const std::string& m) { return m == n->module; })) {
+            std::none_of(modules.begin(), modules.end(), [&](const std::string& m) { return m == n->module; })) {
             modules.emplace_back(n->module);
         }
     }
@@ -158,4 +159,4 @@ std::vector<std::string> proto_modules() {
     return proto_modules(pointers(all));
 }
 
-}  // namespace graft
+} // namespace graft

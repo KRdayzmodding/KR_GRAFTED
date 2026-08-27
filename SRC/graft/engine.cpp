@@ -66,29 +66,6 @@ bool serving() {
 
 namespace {
 
-std::vector<scan::view> sections_of(HMODULE mod) {
-    auto* base = reinterpret_cast<std::uint8_t*>(mod);
-    auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
-    if (dos->e_magic != IMAGE_DOS_SIGNATURE) {
-        return {};
-    }
-    auto* nt = reinterpret_cast<IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
-    if (nt->Signature != IMAGE_NT_SIGNATURE) {
-        return {};
-    }
-    std::vector<scan::view> out;
-    IMAGE_SECTION_HEADER* sec = IMAGE_FIRST_SECTION(nt);
-    for (unsigned i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++sec) {
-        if (!(sec->Characteristics & IMAGE_SCN_MEM_READ) || sec->Misc.VirtualSize == 0) {
-            continue;
-        }
-        std::uint8_t* at = base + sec->VirtualAddress;
-        out.push_back({at, sec->Misc.VirtualSize, reinterpret_cast<std::uintptr_t>(at),
-                       (sec->Characteristics & IMAGE_SCN_MEM_EXECUTE) != 0});
-    }
-    return out;
-}
-
 // Общая часть: зарегистрировать метод на уже найденном классе и привести флаги к
 // member-виду (движок, создавая функцию раньше разбора мода, метит её static|external).
 void register_on_class(void* ctx, void* cls, const char* owner, const char* class_name,
@@ -227,7 +204,7 @@ void install() {
     set_log_dir(profile.empty() ? exe_dir : profile);
     say_banner();
 
-    const std::vector<scan::view> sections = sections_of(GetModuleHandleW(nullptr));
+    const std::vector<scan::view> sections = scan::sections_of(GetModuleHandleW(nullptr));
     g_api = scan::discover(sections);
     if (!g_api) {
         return;  // в процессе нет движка Enforce — просто уходим

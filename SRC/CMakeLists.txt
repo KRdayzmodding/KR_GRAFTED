@@ -14,6 +14,7 @@
 # Общее для обеих сторон: зонд памяти, арена возвращаемых строк, логика загрузчика.
 add_library(graft_common STATIC
     graft/probe.cpp
+    graft/scan.cpp
     graft/text.cpp
     graft/guard.cpp
     graft/plugins.cpp
@@ -28,7 +29,6 @@ target_link_libraries(graft_common PUBLIC graft_std)
 
 # Только хост: поиск точек движка, доступ к script-контекстам, журнал.
 add_library(graft_host STATIC
-    graft/scan.cpp
     graft/script_host.cpp
     graft/objects.cpp
     graft/log_host.cpp

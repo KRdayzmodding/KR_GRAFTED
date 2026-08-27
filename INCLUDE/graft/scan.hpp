@@ -4,6 +4,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 // Поиск движковых точек регистрации нативов в загруженном образе — без единого
@@ -21,47 +22,43 @@ namespace graft::scan {
 
 // Секция отображённого образа: байты + адрес, по которому они лежат в памяти.
 struct view {
-    const std::uint8_t* data = nullptr;
-    std::size_t size = 0;
-    std::uintptr_t base = 0;  // адрес data[0]
-    bool exec = false;        // исполняемая: только в таких ищем инструкции
+    std::span<const std::uint8_t> bytes;        // сама секция: указатель и длина вместе
+    std::uintptr_t                base = 0;     // адрес bytes[0]
+    bool                          exec = false; // исполняемая: в таких ищем инструкции
 
     // Адрес C-строки ровно text (не подстроки), начиная с ea. 0 — нет.
     std::uintptr_t find_cstr(const char* text, std::uintptr_t from = 0) const;
     // Адрес инструкции `lea reg,[rip+d]` (opcode — 3 байта префикса), указывающей на target.
-    std::uintptr_t find_lea(const std::uint8_t (&opcode)[3], std::uintptr_t target,
-                            std::uintptr_t from = 0) const;
+    std::uintptr_t find_lea(std::span<const std::uint8_t, 3> opcode, std::uintptr_t target, std::uintptr_t from = 0) const;
     // Цели всех `call rel32` после/до ea в пределах span байт, по порядку адресов.
     // Их несколько, потому что байт 0xE8 может встретиться и внутри чужого смещения —
     // отсеивает уже вызывающий код (цель обязана лежать в исполняемой секции).
     std::vector<std::uintptr_t> calls_after(std::uintptr_t ea, std::size_t span = 0x40) const;
     std::vector<std::uintptr_t> calls_before(std::uintptr_t ea, std::size_t span = 0x40) const;
-    bool contains(std::uintptr_t ea) const { return ea >= base && ea - base < size; }
+
+    bool contains(std::uintptr_t ea) const { return ea >= base && ea - base < bytes.size(); }
 };
 
-inline constexpr std::uint8_t lea_rdx[3] = {0x48, 0x8D, 0x15};  // 2-й аргумент fastcall
-inline constexpr std::uint8_t lea_r8[3] = {0x4C, 0x8D, 0x05};   // 3-й аргумент fastcall
+inline constexpr std::uint8_t lea_rdx[3] = {0x48, 0x8D, 0x15}; // 2-й аргумент fastcall
+inline constexpr std::uint8_t lea_r8[3]  = {0x4C, 0x8D, 0x05}; // 3-й аргумент fastcall
 
 // Точки движка. Сигнатуры выведены из декомпиляции (re/out/server/reg_*.c):
 // последний числовой аргумент — размер буфера возврата, для `proto native` он 0.
-using reg_global_fn = void*(__fastcall*)(void* ctx, const char* name, void* impl,
-                                         unsigned ret_buf);
-using reg_method_fn = void*(__fastcall*)(void* ctx, void* cls, const char* name, void* impl,
-                                         unsigned ret_buf, char create);
+using reg_global_fn = void*(__fastcall*)(void* ctx, const char* name, void* impl, unsigned ret_buf);
+using reg_method_fn = void*(__fastcall*)(void* ctx, void* cls, const char* name, void* impl, unsigned ret_buf, char create);
 using find_class_fn = void*(__fastcall*)(void* ctx, const char* name);
 
 struct api {
     reg_global_fn register_global = nullptr;
     reg_method_fn register_method = nullptr;
-    find_class_fn find_class = nullptr;
+    find_class_fn find_class      = nullptr;
+
     explicit operator bool() const { return register_global && register_method && find_class; }
 };
 
 // Голосование нескольких якорей: случайный байт 0xE8 в чужом смещении может дать
 // ложный call, но совпасть у трёх разных якорей он не может.
-std::uintptr_t vote(const std::vector<view>& sections, const std::uint8_t (&opcode)[3],
-                    const char* const* anchors, bool before = false,
-                    const std::uintptr_t* reject = nullptr, std::size_t reject_n = 0);
+std::uintptr_t vote(const std::vector<view>& sections, std::span<const std::uint8_t, 3> opcode, const char* const* anchors, bool before = false, const std::uintptr_t* reject = nullptr, std::size_t reject_n = 0);
 
 api discover(const std::vector<view>& sections);
 
@@ -96,11 +93,11 @@ struct frame_entry {
     //
     // Поэтому перенаправляется не функция, а `call` в CGame::Update: тогда к нам приходит
     // ровно то, что кладёт это место, и только оно.
-    using prepare_fn = void(__fastcall*)(void* self, void* frame, std::uint32_t index,
-                                         std::uint32_t sim, double dt);
-    std::uintptr_t site = 0;              // адрес самой инструкции `call` в CGame::Update
-    prepare_fn prepare = nullptr;         // куда она ведёт сейчас
-    const std::int32_t* index = nullptr;  // движковый кэш индекса OnUpdate
+    using prepare_fn            = void(__fastcall*)(void* self, void* frame, std::uint32_t index, std::uint32_t sim, double dt);
+    std::uintptr_t      site    = 0;       // адрес самой инструкции `call` в CGame::Update
+    prepare_fn          prepare = nullptr; // куда она ведёт сейчас
+    const std::int32_t* index   = nullptr; // движковый кэш индекса OnUpdate
+
     explicit operator bool() const { return site && prepare && index; }
 };
 
@@ -108,7 +105,22 @@ frame_entry find_frame_entry(const std::vector<view>& sections);
 
 // Цель первого `call rel32` внутри функции — так добираемся до внутренностей
 // движка, у которых нет своих строк-маяков (линковщик, поиск функции по имени).
-std::uintptr_t first_call(const std::vector<view>& sections, std::uintptr_t fn,
-                          std::size_t span = 0x60);
+std::uintptr_t first_call(const std::vector<view>& sections, std::uintptr_t fn, std::size_t span = 0x60);
 
-}  // namespace graft::scan
+// Секции загруженного образа. Одна на всех: и хосту для поиска регистрации, и
+// плагину для поиска внутренностей движка.
+std::vector<view> sections_of(void* module);
+
+// ── Сверка найденного ────────────────────────────────────────────────────────
+// Ход по call-графу даёт КАНДИДАТА; кандидат становится ответом только когда его
+// первые байты совпали с сигнатурой. Так «нашлось не то» превращается в отказ, а не
+// в прыжок в середину чужого кода.
+bool begins_with(std::uintptr_t ea, std::span<const std::uint8_t> sig);
+
+// Смещение из инструкции с таким опкодом в [ea, ea+span): `nth`-й по счёту.
+// Возвращает false, если такой инструкции там нет. Этим достаются и поля структур
+// (`mov rax,[rcx+disp]`), и адреса глобалей (`mov [rip+disp],rax`).
+bool disp32_of(std::uintptr_t ea, std::size_t span, std::span<const std::uint8_t> opcode, std::int32_t& out, std::uintptr_t* site = nullptr, unsigned nth = 1);
+bool disp8_of(std::uintptr_t ea, std::size_t span, std::span<const std::uint8_t> opcode, unsigned& out, unsigned nth = 1);
+
+} // namespace graft::scan
