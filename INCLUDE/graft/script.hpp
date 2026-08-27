@@ -195,7 +195,7 @@ void note_call_miss(const char* class_name, const char* name, void* self, const 
 // движок объект разрушит. Скрипт для этого ничего не объявляет: движок разрушает объект
 // через ВИРТУАЛЬНЫЙ нулевой слот его собственной C++ таблицы, и мы подменяем объекту
 // таблицу на свою копию — слот наш, остальное как было. Тем же слотом чистят себя
-// array/map/set (см. RESEARCH/README.md).
+// array/map/set (см. RESEARCH/theory/abi.md).
 void watch_object(void* self, void (*forget)(void*));
 
 // ── Чистые чтения памяти: inline ─────────────────────────────────────────────
