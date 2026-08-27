@@ -24,6 +24,9 @@ project(graft VERSION 0.1.2 LANGUAGES CXX C)
 #  graft::tool (graft.exe), graft::proxy (hid.dll).
 # ══════════════════════════════════════════════════════════════════════════════
 
+# База, которую CMake умеет выразить для clang-cl. Настоящий стандарт — C++26, его
+# ставит graft_std ниже: `cxx_std_26` в таблице CMake для этого компилятора нет, а
+# чужим целям (тому же gtest) флаг навязывать нельзя — они собираются своим.
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
