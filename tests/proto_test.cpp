@@ -34,7 +34,31 @@ struct DemoState : graft::script_object<"DemoState"> {
     void Bump() { ++hits; }
 };
 
+// graft::value в сигнатуре означает «любой тип» и печатается как void — так же, как
+// у ванильных proto void Print(void var) и Serializer.Write(void value_in).
+// Смешивать с обычными типами можно: маршалируемый вызов везёт ВСЕ аргументы блоком
+// с тегами, поэтому объявленный тип на форму вызова не влияет.
+bool DemoAny(graft::value v) {
+    return !v.empty();
+}
+
+// Строка рядом с value: маршалируемый путь обязан принимать graft::str, иначе
+// «любой тип» нельзя смешать с обычной строкой.
+bool DemoText2(graft::str name, graft::value payload) {
+    return !name.empty() && !payload.empty();
+}
+
+bool DemoMixed(graft::i32 n, graft::obj o, graft::vec3 v, graft::value payload) {
+    return n > 0 && static_cast<bool>(o) && v.x == 0 && !payload.empty();
+}
+
+struct DemoStatics : graft::script_object<"DemoStatics"> {
+    static bool Any(graft::value v) { return !v.empty(); }
+};
+
 GRAFT_BINDINGS("1_Core") {
+    bind.global<&DemoAny>("DemoAny").global<&DemoMixed>("DemoMixed").global<&DemoText2>("DemoText2");
+    bind.class_<DemoStatics>().static_method<&DemoStatics::Any>("Any");
     bind.global<&DemoPing>("DemoPing")
         .global<&DemoAll>("DemoEverything")
         .global<&DemoText>("DemoText");
@@ -66,6 +90,31 @@ TEST(Proto, MapsEverySupportedType) {
 
 TEST(Proto, OwnedStringReturn) {
     EXPECT_EQ(graft::proto_decl(find("DemoText")), "proto native owned string DemoText();");
+}
+
+// Глобальный натив с graft::value обязан объявляться маршалируемым (`proto`, не
+// `proto native`) — форма вызова у него другая, и перепутать их значит упасть.
+TEST(Proto, GlobalWithValueIsMarshalled) {
+    EXPECT_EQ(graft::proto_decl(find("DemoAny")), "proto bool DemoAny(void p0);");
+    EXPECT_TRUE(find("DemoAny").marshalled);
+    EXPECT_FALSE(find("DemoPing").marshalled);
+}
+
+// Точная типизация там, где она есть, и «любой» только там, где нужен.
+TEST(Proto, MarshalledArgsCanBeMixed) {
+    EXPECT_EQ(graft::proto_decl(find("DemoMixed")),
+              "proto bool DemoMixed(int p0, Class p1, vector p2, void p3);");
+    EXPECT_TRUE(find("DemoMixed").marshalled);
+}
+
+TEST(Proto, MarshalledAcceptsEngineString) {
+    EXPECT_EQ(graft::proto_decl(find("DemoText2")), "proto bool DemoText2(string p0, void p1);");
+    EXPECT_TRUE(find("DemoText2").marshalled);
+}
+
+TEST(Proto, StaticMethodWithValueIsMarshalled) {
+    EXPECT_EQ(graft::proto_decl(find("Any")), "static proto bool Any(void p0);");
+    EXPECT_TRUE(find("Any").marshalled);
 }
 
 TEST(Proto, StaticMethodKeepsAllArgs) {

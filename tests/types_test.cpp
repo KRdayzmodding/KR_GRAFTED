@@ -62,6 +62,61 @@ private:
     std::vector<std::uint8_t> object_;
 };
 
+// ── Различение объекта и обёртки ────────────────────────────────────────────
+// deref_object обязан разворачивать обёртку {vtable, счётчик, объект} и НЕ трогать
+// прямой указатель на объект. Быстрый отвод по +8 (дескриптор класса против счётчика
+// ссылок) не должен менять ни одного ответа — только убирать VirtualQuery.
+namespace {
+
+// Раскладки из graft/script.hpp: у объекта +8 дескриптор класса, +32 обратная ссылка;
+// у обёртки +8 счётчик, +16 объект.
+struct fake_object {
+    void* vtable = nullptr;        // +0
+    void* class_desc = nullptr;    // +8
+    std::uint64_t pad = 0;         // +16
+    std::uint64_t pad2 = 0;        // +24
+    void* back_ref = nullptr;      // +32
+};
+
+struct fake_wrapper {
+    void* vtable = nullptr;        // +0
+    std::uint64_t refcount = 1;    // +8  — маленькое число, не указатель
+    void* object = nullptr;        // +16
+};
+
+}  // namespace
+
+TEST(DerefObject, PlainObjectIsReturnedAsIs) {
+    int class_desc = 0;
+    fake_object obj;
+    obj.class_desc = &class_desc;   // указатель => это объект, не обёртка
+    EXPECT_EQ(graft::script::deref_object(&obj), &obj);
+}
+
+TEST(DerefObject, WrapperIsUnwrapped) {
+    int class_desc = 0;
+    fake_object obj;
+    obj.class_desc = &class_desc;
+    fake_wrapper wrap;
+    wrap.object = &obj;
+    obj.back_ref = &wrap;           // обратная ссылка замыкает пару
+    EXPECT_EQ(graft::script::deref_object(&wrap), &obj);
+}
+
+TEST(DerefObject, WrapperWithoutBackRefIsNotUnwrapped) {
+    fake_object obj;                // class_desc == nullptr => медленный путь
+    fake_wrapper wrap;
+    wrap.object = &obj;
+    obj.back_ref = nullptr;         // пара не замкнута — разворачивать нельзя
+    EXPECT_EQ(graft::script::deref_object(&wrap), &wrap);
+}
+
+TEST(DerefObject, GarbageIsReturnedAsIs) {
+    EXPECT_EQ(graft::script::deref_object(nullptr), nullptr);
+    void* misaligned = reinterpret_cast<void*>(std::uintptr_t{0x1003});
+    EXPECT_EQ(graft::script::deref_object(misaligned), misaligned);
+}
+
 TEST(ArrayView, ReadsSizeAndElements) {
     FakeArray fake({1, 2, 39});
     const graft::array<graft::i32> a{fake.ptr()};

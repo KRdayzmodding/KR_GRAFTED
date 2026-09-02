@@ -272,6 +272,22 @@ inline void* deref_object(void* maybe_wrapper) {
     if (!detail::plausible(maybe_wrapper)) {
         return maybe_wrapper;
     }
+    // Быстрый отвод, БЕЗ обращения к системе. Раскладки различимы по +8: у ОБЪЕКТА там
+    // дескриптор класса, то есть указатель; у ОБЁРТКИ {vtable, счётчик, объект} — сам
+    // счётчик ссылок, то есть маленькое число. Похоже на указатель — обёрткой это быть
+    // не может, и разворачивать нечего.
+    //
+    // Промах возможен только в сторону медленного пути: счётчик в 65536+ ссылок
+    // отправит на тот же VirtualQuery, что и раньше. Обратного промаха нет —
+    // дескриптор класса указателем быть обязан.
+    //
+    // Ради чего: VirtualQuery стоит ~175 нс (замерено), а объектный аргумент есть у
+    // каждого маршалируемого вызова. Без этого отвода `void` в сигнатуре стоит дороже
+    // всей работы, которую натив делает.
+    if (detail::plausible(
+            *reinterpret_cast<void**>(static_cast<char*>(maybe_wrapper) + layout::object_class))) {
+        return maybe_wrapper;
+    }
     void* inner =
         *reinterpret_cast<void**>(static_cast<char*>(maybe_wrapper) + layout::wrapper_object);
     if (!detail::readable(inner, layout::object_back_ref + sizeof(void*))) {

@@ -54,6 +54,60 @@ inline value read_var(const void* var) {
     }
 }
 
+// Значение скриптовой переменной как КОНКРЕТНЫЙ тип C++ (а не value). Путь через value
+// стоил бы на каждый аргумент сборки и разрушения варианта (внутри него std::string, то
+// есть нетривиальный деструктор), а для строки — ещё и лишней копии: одна в вариант,
+// вторая из него. Решения по тегу здесь ровно те же, что и в read_var.
+template <class T>
+T as_typed(const void* var) {
+    if constexpr (std::is_same_v<T, value>) {
+        return read_var(var);
+    } else {
+        if (!var) {
+            return T{};
+        }
+        const auto* at = static_cast<const char*>(var);
+        const auto tag = *reinterpret_cast<const std::uint32_t*>(at + 16);
+        const auto raw = *reinterpret_cast<const std::uint64_t*>(at);
+        const auto family = tag & script::type_family;
+        if constexpr (std::is_same_v<T, bool>) {
+            return tag == script::type_bool && raw != 0;
+        } else if constexpr (std::is_same_v<T, i32>) {
+            return family == script::type_int && tag != script::type_bool
+                       ? static_cast<i32>(static_cast<std::uint32_t>(raw))
+                       : i32{};
+        } else if constexpr (std::is_same_v<T, f32>) {
+            if (family != script::type_float) {
+                return f32{};
+            }
+            return std::bit_cast<f32>(static_cast<std::uint32_t>(raw));
+        } else if constexpr (std::is_same_v<T, str>) {
+            // Строка движка как есть: указатель живёт до конца вызова, копии нет.
+            // Без этой ветки graft::str в маршалируемой сигнатуре не собирался —
+            // разбор уходил в value::as<str>(), а в варианте лежит std::string.
+            return family == script::type_string ? str{reinterpret_cast<const char*>(raw)} : str{};
+        } else if constexpr (std::is_same_v<T, std::string>) {
+            if (family != script::type_string) {
+                return read_var(var).to_string();  // не строка — приводим к тексту
+            }
+            const auto* text = reinterpret_cast<const char*>(raw);
+            return text ? std::string{text} : std::string{};
+        } else if constexpr (std::is_same_v<T, vector>) {
+            // vector в 8 байт не влезает — в переменной указатель на сами 12 байт.
+            const auto* p = reinterpret_cast<const vector*>(raw);
+            return family == script::type_vector && p ? *p : vector{};
+        } else if constexpr (std::is_same_v<T, obj>) {
+            return family == script::type_class
+                       ? obj{script::deref_object(reinterpret_cast<void*>(raw))}
+                       : obj{};
+        } else if constexpr (std::is_same_v<T, type>) {
+            return family == script::type_typename ? type{reinterpret_cast<void*>(raw)} : type{};
+        } else {
+            return read_var(var).template as<T>();
+        }
+    }
+}
+
 // Возврат кладём в переменную, которую движок уже подготовил под тип инстанциации:
 // тег там стоит правильный, поэтому приводим значение к нему, а тег не трогаем.
 // out — пишем в аргумент, а не в возврат. Разница принципиальная для строк: возврат
@@ -121,9 +175,19 @@ inline constexpr bool is_out_param = std::is_lvalue_reference_v<T> &&
                                      !std::is_const_v<std::remove_reference_t<T>>;
 
 // Как этот тип называется в объявлении скрипта: голый value — «любой» (void),
-// param<"K"> — своим именем.
+// param<"K"> — своим именем, обычный тип — как везде.
+//
+// Смешивать можно: маршалируемый вызов передаёт ВСЕ аргументы блоком с тегами, и
+// объявленный тип аргумента на форму вызова не влияет. Поэтому сигнатура вроде
+// `bool Emit(i32 schema, obj player, vector pos, value data)` объявляется как
+// `proto bool Emit(int p0, Class p1, vector p2, void p3)` — точная типизация там,
+// где она есть, и «любой» только там, где он нужен.
 template <class T>
 struct marshal_name {
+    static constexpr name_t id = enf_type<std::remove_cvref_t<T>>::id;
+};
+template <>
+struct marshal_name<value> {
     static constexpr name_t id{"void"};
 };
 template <name_t N>
@@ -164,14 +228,23 @@ inline constexpr bool needs_marshal = is_value_type<R> || (is_value_type<A> || .
 
 template <class R, class... A>
 struct marshal_check {
-    static_assert((is_value_type<A> && ... && true),
-                  "у маршалируемого метода аргументы — graft::value (по значению или out-ссылкой)");
+    static_assert(((!is_out_param<A> || is_value_type<A>) && ... && true),
+                  "out-аргумент маршалируемого метода обязан быть graft::value: обратно "
+                  "движку значение отдаётся по тегу");
     static_assert(std::is_void_v<R> || std::is_constructible_v<value, R>,
                   "возврат маршалируемого метода должен приводиться к graft::value");
     static constexpr const char* ret = marshal_ret<R>::value;
     // out-аргументы объявляются с модификатором: движок забирает записанное обратно.
     static constexpr const char* const args[] = {marshal_arg<A>::value..., nullptr};
 };
+
+// Аргумент маршалируемого вызова. graft::value отдаётся как есть, обычный тип —
+// приведением по тегу приехавшей переменной, БЕЗ промежуточного варианта: не тот тип
+// на входе даёт пустое значение (0 / "" / null), а не порчу памяти.
+template <class T>
+std::remove_cvref_t<T> from_var(const void* var) {
+    return as_typed<std::remove_cvref_t<T>>(var);
+}
 
 // Результат маршалируемого метода: graft::value или что-то, из чего он строится.
 template <class T>
@@ -192,11 +265,13 @@ template <class R, class... A, class C, class M, std::size_t... I>
 std::int64_t marshal_run(C&& object, M method, void** block, void* ret,
                          std::index_sequence<I...>) {
     // Значения живут до конца вызова: out-ссылки смотрят именно на них.
-    std::tuple<std::remove_cvref_t<A>...> slots{read_var(block ? block[I] : nullptr)...};
+    std::tuple<std::remove_cvref_t<A>...> slots{from_var<A>(block ? block[I] : nullptr)...};
     const auto write_back = [&] {
-        ((is_out_param<A> ? write_var(block ? block[I] : nullptr, std::get<I>(slots), var_kind::out)
-                          : void()),
-         ...);
+        ([&] {
+            if constexpr (is_out_param<A> && is_value_type<A>) {
+                write_var(block ? block[I] : nullptr, std::get<I>(slots), var_kind::out);
+            }
+        }(), ...);
     };
     if constexpr (std::is_void_v<R>) {
         (object.*method)(static_cast<A>(std::get<I>(slots))...);
@@ -233,6 +308,57 @@ struct marshal_thunk<C, F> : marshal_check<R, A...> {
         const C& object = instance_of<C>(self);
         return marshal_run<R, A...>(object, F, args ? *args : nullptr, ret ? *ret : nullptr,
                                     std::index_sequence_for<A...>{});
+    }
+};
+
+// ── Маршалируемый вызов БЕЗ ПРИЁМНИКА: глобальные и статические нативы ──────
+//
+// RESEARCH/theory/abi.md, «Форм вызова ДВЕ»: у метода настоящего класса приёмник
+// лежит в rcx (`impl(self, args, ret)`), а у статического его нет вовсе
+// (`impl(args, ret)`) — так зовутся EnScript.GetClassVar и Class.CastTo. Глобальный
+// `proto` (ванильный Print(void var)) — та же форма: получателя у него тоже нет.
+//
+// Флаг маршалируемости глобальному нативу ставить не нужно: движок линкует его по
+// имени с УЖЕ РАЗОБРАННЫМ прототипом, и `proto` против `proto native` он берёт из
+// объявления в скрипте. Поэтому здесь достаточно правильной формы вызова и правильно
+// напечатанного объявления.
+template <class R, class... A, class Fn, std::size_t... I>
+std::int64_t marshal_run_free(Fn fn, void** block, void* ret, std::index_sequence<I...>) {
+    // Значения живут до конца вызова: out-ссылки смотрят именно на них.
+    std::tuple<std::remove_cvref_t<A>...> slots{from_var<A>(block ? block[I] : nullptr)...};
+    const auto write_back = [&] {
+        ([&] {
+            if constexpr (is_out_param<A> && is_value_type<A>) {
+                write_var(block ? block[I] : nullptr, std::get<I>(slots), var_kind::out);
+            }
+        }(), ...);
+    };
+    if constexpr (std::is_void_v<R>) {
+        fn(static_cast<A>(std::get<I>(slots))...);
+        write_back();
+    } else {
+        value result = to_value(fn(static_cast<A>(std::get<I>(slots))...));
+        write_back();
+        write_var(ret, result);
+    }
+    return 0;
+}
+
+template <auto F>
+struct marshal_free_thunk;
+
+template <class R, class... A, R (*F)(A...)>
+struct marshal_free_thunk<F> : marshal_check<R, A...> {
+    static std::int64_t __fastcall call(void*** args, void** ret) {
+        // Тело — отдельной функцией: у x64-SEH таблица областей описывает диапазоны
+        // адресов, и защита работает, только если сбой случился ВНУТРИ вызова.
+        return guarded<std::int64_t>(reinterpret_cast<void*>(&call),
+                                     [&] { return body(args, ret); });
+    }
+    static std::int64_t body(void*** args, void** ret) {
+        [[maybe_unused]] arena_scope<R> alive;
+        return marshal_run_free<R, A...>(F, args ? *args : nullptr, ret ? *ret : nullptr,
+                                         std::index_sequence_for<A...>{});
     }
 };
 

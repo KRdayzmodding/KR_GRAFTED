@@ -94,10 +94,17 @@ public:
         }
 
         // Статический метод: объекта нет, подойдёт любая свободная функция.
+        // graft::value в сигнатуре переключает на маршалируемый путь — у статического
+        // вызова приёмника нет, форма та же, что у глобального.
         template <auto F>
         class_scope& static_method(const char* name) {
-            using T = detail::free_thunk<F>;
-            return put(name, reinterpret_cast<void*>(&T::call), true, T::ret, T::args);
+            if constexpr (detail::marshalled_free<F>) {
+                using T = detail::marshal_free_thunk<F>;
+                return put(name, reinterpret_cast<void*>(&T::call), true, T::ret, T::args, true);
+            } else {
+                using T = detail::free_thunk<F>;
+                return put(name, reinterpret_cast<void*>(&T::call), true, T::ret, T::args);
+            }
         }
 
     private:
@@ -201,10 +208,18 @@ public:
     }
 
 private:
+    // graft::value в сигнатуре глобального натива делает его маршалируемым: в
+    // объявлении такой аргумент печатается как `void` — «любой», ровно как у
+    // ванильных proto void Print(void var) и Serializer.Write(void).
     template <auto Fn>
     bindings& put_global(const char* name, bool generate) {
-        using T = detail::free_thunk<Fn>;
-        detail::add({nullptr, name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args, nullptr, false, module_, generate});
+        if constexpr (detail::marshalled_free<Fn>) {
+            using T = detail::marshal_free_thunk<Fn>;
+            detail::add({nullptr, name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args, nullptr, true, module_, generate});
+        } else {
+            using T = detail::free_thunk<Fn>;
+            detail::add({nullptr, name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args, nullptr, false, module_, generate});
+        }
         return *this;
     }
 

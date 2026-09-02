@@ -134,55 +134,6 @@ param_slots<N> slots_of(void* self) {
     return cached;
 }
 
-// Значение скриптовой переменной как КОНКРЕТНЫЙ тип C++ (а не value). Путь через value
-// стоил бы на каждый аргумент сборки и разрушения варианта (внутри него std::string, то
-// есть нетривиальный деструктор), а для строки — ещё и лишней копии: одна в вариант,
-// вторая из него. Решения по тегу здесь ровно те же, что и в read_var.
-template <class T>
-T as_typed(const void* var) {
-    if constexpr (std::is_same_v<T, value>) {
-        return read_var(var);
-    } else {
-        if (!var) {
-            return T{};
-        }
-        const auto* at = static_cast<const char*>(var);
-        const auto tag = *reinterpret_cast<const std::uint32_t*>(at + 16);
-        const auto raw = *reinterpret_cast<const std::uint64_t*>(at);
-        const auto family = tag & script::type_family;
-        if constexpr (std::is_same_v<T, bool>) {
-            return tag == script::type_bool && raw != 0;
-        } else if constexpr (std::is_same_v<T, i32>) {
-            return family == script::type_int && tag != script::type_bool
-                       ? static_cast<i32>(static_cast<std::uint32_t>(raw))
-                       : i32{};
-        } else if constexpr (std::is_same_v<T, f32>) {
-            if (family != script::type_float) {
-                return f32{};
-            }
-            return std::bit_cast<f32>(static_cast<std::uint32_t>(raw));
-        } else if constexpr (std::is_same_v<T, std::string>) {
-            if (family != script::type_string) {
-                return read_var(var).to_string();  // не строка — приводим к тексту
-            }
-            const auto* text = reinterpret_cast<const char*>(raw);
-            return text ? std::string{text} : std::string{};
-        } else if constexpr (std::is_same_v<T, vector>) {
-            // vector в 8 байт не влезает — в переменной указатель на сами 12 байт.
-            const auto* p = reinterpret_cast<const vector*>(raw);
-            return family == script::type_vector && p ? *p : vector{};
-        } else if constexpr (std::is_same_v<T, obj>) {
-            return family == script::type_class
-                       ? obj{script::deref_object(reinterpret_cast<void*>(raw))}
-                       : obj{};
-        } else if constexpr (std::is_same_v<T, type>) {
-            return family == script::type_typename ? type{reinterpret_cast<void*>(raw)} : type{};
-        } else {
-            return read_var(var).template as<T>();
-        }
-    }
-}
-
 // Трамплин для одной инстанциации: аргументы приводятся к настоящим типам метода.
 template <class Inst, auto F>
 struct typed_thunk;
@@ -310,6 +261,12 @@ struct dispatch2<C, Pick, type_list<K...>, type_list<V...>> {
                                                ret ? *ret : nullptr);
     }
 };
+
+// Нужен ли этой свободной функции маршалируемый путь.
+template <auto F>
+inline constexpr bool marshalled_free = false;
+template <class R, class... A, R (*F)(A...)>
+inline constexpr bool marshalled_free<F> = needs_marshal<R, A...>;
 
 // Нужен ли этому указателю на член маршалируемый путь.
 template <auto F>
