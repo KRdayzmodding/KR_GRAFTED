@@ -19,7 +19,7 @@ extern "C" {
 #endif
 
 // Версия интерфейса: меняется при любой правке структур ниже.
-#define GRAFT_ABI_VERSION 5u
+#define GRAFT_ABI_VERSION 6u
 
 // Версия РАСКЛАДКИ движковых структур (graft::layout::version). Отдельная от ABI, потому
 // что ломается по другой причине: смещения запекаются в машинный код плагина, поэтому
@@ -94,6 +94,12 @@ typedef struct graft_native_desc {
     uint8_t is_static;
     uint8_t marshalled;        // объявлять как `proto`, а не `proto native`
     uint8_t generate;          // печатать объявление генератором
+    // Имена аргументов через запятую ("player, uid") и однострочное описание.
+    // Оба необязательны: без них генератор печатает p0, p1 и обходится без
+    // комментария. Пользователь объявления читает не типы, а имена, поэтому
+    // задавать их стоит везде, где натив зовут не только свои.
+    const char* param_names;
+    const char* doc;
 } graft_native_desc;
 
 typedef struct graft_plugin_info {

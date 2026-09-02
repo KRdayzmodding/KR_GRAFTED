@@ -4,6 +4,8 @@
 #include <cstring>
 #include <format>
 #include <ranges>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "graft/native.hpp"
@@ -27,7 +29,7 @@ graft_native_desc to_desc(const native& n) {
             n.declare_as,
             static_cast<std::uint8_t>(n.is_static),
             static_cast<std::uint8_t>(n.marshalled),
-            static_cast<std::uint8_t>(n.generate)};
+            static_cast<std::uint8_t>(n.generate), n.param_names, n.doc};
 }
 
 // Список складывается LIFO — разворачиваем к порядку объявления в исходнике.
@@ -55,6 +57,39 @@ std::vector<const graft_native_desc*> pointers(const std::vector<graft_native_de
 
 } // namespace
 
+namespace {
+
+// Имена аргументов из строки "player, uid, zone". Пусто или не хватает — недостающие
+// печатаются как p0, p1: объявление обязано остаться валидным, даже если про имена
+// забыли.
+std::vector<std::string> split_params(const char* csv) {
+    std::vector<std::string> out;
+    if (!csv) {
+        return out;
+    }
+    std::string_view rest{csv};
+    while (!rest.empty()) {
+        const std::size_t comma = rest.find(',');
+        std::string_view one = rest.substr(0, comma);
+        while (!one.empty() && one.front() == ' ') {
+            one.remove_prefix(1);
+        }
+        while (!one.empty() && one.back() == ' ') {
+            one.remove_suffix(1);
+        }
+        if (!one.empty()) {
+            out.emplace_back(one);
+        }
+        if (comma == std::string_view::npos) {
+            break;
+        }
+        rest.remove_prefix(comma + 1);
+    }
+    return out;
+}
+
+} // namespace
+
 std::string proto_decl(const graft_native_desc& n) {
     std::string s;
     if (n.class_name && n.is_static) {
@@ -65,11 +100,17 @@ std::string proto_decl(const graft_native_desc& n) {
     s += ' ';
     s += n.name;
     s += '(';
+    const std::vector<std::string> names = split_params(n.param_names);
     for (const auto [i, arg] : std::views::enumerate(arg_names(n.args))) {
         if (i) {
             s += ", ";
         }
-        s += std::format("{} p{}", arg, i);
+        const auto idx = static_cast<std::size_t>(i);
+        if (idx < names.size()) {
+            s += std::format("{} {}", arg, names[idx]);
+        } else {
+            s += std::format("{} p{}", arg, i);
+        }
     }
     s += ");";
     return s;
@@ -97,6 +138,13 @@ std::string proto_file(const std::vector<const graft_native_desc*>& source, cons
 
     for (const graft_native_desc* n : all) {
         if (!n->class_name) {
+            // Описание — строкой комментария над объявлением: пользователь читает
+            // сгенерированный файл, и типов ему мало.
+            if (n->doc && *n->doc) {
+                out += "// ";
+                out += n->doc;
+                out += "\n";
+            }
             out += proto_decl(*n) + "\n";
         }
     }
@@ -129,6 +177,11 @@ std::string proto_file(const std::vector<const graft_native_desc*>& source, cons
         for (const graft_native_desc* n : all) {
             if (!n->class_name || std::strcmp(n->class_name, c) != 0) {
                 continue;
+            }
+            if (n->doc && *n->doc) {
+                out += "    // ";
+                out += n->doc;
+                out += "\n";
             }
             out += "    ";
             out += proto_decl(*n) + "\n";

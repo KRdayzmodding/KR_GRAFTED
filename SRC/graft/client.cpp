@@ -208,6 +208,8 @@ const std::vector<graft_native_desc>& flatten() {
             d.is_static = static_cast<uint8_t>(n.is_static);
             d.marshalled = static_cast<uint8_t>(n.marshalled);
             d.generate = static_cast<uint8_t>(n.generate);
+            d.param_names = n.param_names;
+            d.doc = n.doc;
             out.push_back(d);
         }
         return out;

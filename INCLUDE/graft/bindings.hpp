@@ -83,13 +83,16 @@ public:
         // класс: одна привязка на общий класс работает для всех инстанциаций, а типы
         // приезжают в рантайме. Библиотека переключается на этот путь сама.
         template <auto F>
-        class_scope& method(const char* name) {
+        class_scope& method(const char* name, const char* params = nullptr,
+                            const char* doc = nullptr) {
             if constexpr (detail::marshalled_member<F>) {
                 using T = detail::marshal_thunk<C, F>;
-                return put(name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args, true);
+                return put(name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args, true,
+                           params, doc);
             } else {
                 using T = detail::method_thunk<C, F>;
-                return put(name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args);
+                return put(name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args, false,
+                           params, doc);
             }
         }
 
@@ -97,19 +100,25 @@ public:
         // graft::value в сигнатуре переключает на маршалируемый путь — у статического
         // вызова приёмника нет, форма та же, что у глобального.
         template <auto F>
-        class_scope& static_method(const char* name) {
+        class_scope& static_method(const char* name, const char* params = nullptr,
+                                   const char* doc = nullptr) {
             if constexpr (detail::marshalled_free<F>) {
                 using T = detail::marshal_free_thunk<F>;
-                return put(name, reinterpret_cast<void*>(&T::call), true, T::ret, T::args, true);
+                return put(name, reinterpret_cast<void*>(&T::call), true, T::ret, T::args, true,
+                           params, doc);
             } else {
                 using T = detail::free_thunk<F>;
-                return put(name, reinterpret_cast<void*>(&T::call), true, T::ret, T::args);
+                return put(name, reinterpret_cast<void*>(&T::call), true, T::ret, T::args, false,
+                           params, doc);
             }
         }
 
     private:
-        class_scope& put(const char* name, void* impl, bool is_static, const char* ret, const char* const* args, bool marshalled = false) {
-            detail::add({class_name_, name, impl, is_static, ret, args, nullptr, marshalled, module_, generate_, declare_});
+        class_scope& put(const char* name, void* impl, bool is_static, const char* ret,
+                         const char* const* args, bool marshalled = false,
+                         const char* params = nullptr, const char* doc = nullptr) {
+            detail::add({class_name_, name, impl, is_static, ret, args, nullptr, params, doc,
+                         marshalled, module_, generate_, declare_});
             return *this;
         }
 
@@ -119,9 +128,15 @@ public:
         const char* declare_ = nullptr;
     };
 
+    // params — имена аргументов через запятую ("player, uid"), doc — однострочное
+    // описание. Оба попадают в сгенерированное объявление: пользователь читает не
+    // типы, а имена и назначение.
+    //
+    //   bind.global<&KRT_Attach>("KRT_Attach", "player, player_uid, char_uid",
+    //                            "Подключить игрока: слот актора и конверт.");
     template <auto Fn>
-    bindings& global(const char* name) {
-        return put_global<Fn>(name, true);
+    bindings& global(const char* name, const char* params = nullptr, const char* doc = nullptr) {
+        return put_global<Fn>(name, true, params, doc);
     }
 
     template <auto Fn>
@@ -212,13 +227,16 @@ private:
     // объявлении такой аргумент печатается как `void` — «любой», ровно как у
     // ванильных proto void Print(void var) и Serializer.Write(void).
     template <auto Fn>
-    bindings& put_global(const char* name, bool generate) {
+    bindings& put_global(const char* name, bool generate, const char* params = nullptr,
+                         const char* doc = nullptr) {
         if constexpr (detail::marshalled_free<Fn>) {
             using T = detail::marshal_free_thunk<Fn>;
-            detail::add({nullptr, name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args, nullptr, true, module_, generate});
+            detail::add({nullptr, name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args,
+                         nullptr, params, doc, true, module_, generate});
         } else {
             using T = detail::free_thunk<Fn>;
-            detail::add({nullptr, name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args, nullptr, false, module_, generate});
+            detail::add({nullptr, name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args,
+                         nullptr, params, doc, false, module_, generate});
         }
         return *this;
     }

@@ -56,7 +56,20 @@ struct DemoStatics : graft::script_object<"DemoStatics"> {
     static bool Any(graft::value v) { return !v.empty(); }
 };
 
+// Имена аргументов и описание: объявление читает человек, а не компилятор.
+bool DemoNamed(graft::i32 slot, graft::str zone, graft::obj player) {
+    return slot >= 0 && !zone.empty() && static_cast<bool>(player);
+}
+
+struct DemoDocs : graft::script_object<"DemoDocs"> {
+    void Move(graft::f32 speed) const { (void)speed; }
+};
+
 GRAFT_BINDINGS("1_Core") {
+    bind.global<&DemoNamed>("DemoNamed", "slot, zone, player",
+                            "Переселить игрока в зону.");
+    bind.class_<DemoDocs>().method<&DemoDocs::Move>("Move", "speed_cms",
+                                                    "Задать скорость в см/с.");
     bind.global<&DemoAny>("DemoAny").global<&DemoMixed>("DemoMixed").global<&DemoText2>("DemoText2");
     bind.class_<DemoStatics>().static_method<&DemoStatics::Any>("Any");
     bind.global<&DemoPing>("DemoPing")
@@ -77,6 +90,29 @@ const graft::native& find(const char* name) {
     ADD_FAILURE() << "натив не зарегистрирован: " << name;
     static const graft::native missing{};
     return missing;
+}
+
+// Без имён объявление обязано остаться валидным: p0, p1, ...
+TEST(Proto, UnnamedArgsFallBackToPositional) {
+    EXPECT_EQ(graft::proto_decl(find("DemoPing")), "proto native int DemoPing(int p0);");
+}
+
+TEST(Proto, ArgsAreNamedWhenGiven) {
+    EXPECT_EQ(graft::proto_decl(find("DemoNamed")),
+              "proto native bool DemoNamed(int slot, string zone, Class player);");
+}
+
+TEST(Proto, DocGoesAboveDeclaration) {
+    const std::string file = graft::proto_file();
+    EXPECT_NE(file.find("// Переселить игрока в зону.\nproto native bool DemoNamed("),
+              std::string::npos);
+}
+
+TEST(Proto, MethodArgsAreNamedAndDocumented) {
+    EXPECT_EQ(graft::proto_decl(find("Move")), "proto native void Move(float speed_cms);");
+    const std::string file = graft::proto_file();
+    EXPECT_NE(file.find("    // Задать скорость в см/с.\n    proto native void Move("),
+              std::string::npos);
 }
 
 TEST(Proto, MapsScalarTypes) {

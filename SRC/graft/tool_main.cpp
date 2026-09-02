@@ -131,7 +131,7 @@ std::vector<graft_native_desc> host_descs() {
         out.push_back({n.class_name, n.name, n.impl, n.ret, n.args, n.module, n.declare_as,
                        static_cast<std::uint8_t>(n.is_static),
                        static_cast<std::uint8_t>(n.marshalled),
-                       static_cast<std::uint8_t>(n.generate)});
+                       static_cast<std::uint8_t>(n.generate), n.param_names, n.doc});
     }
     return out;
 }
