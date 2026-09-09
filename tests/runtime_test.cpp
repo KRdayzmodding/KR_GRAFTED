@@ -480,6 +480,19 @@ TEST(World, CastKeepsPointerAcrossTypes) {
     EXPECT_EQ(graft::cast<graft::ref<"EntityAI">>(man).ptr, &marker);
 }
 
+// Позиция сущности: без движка натива GetOrigin нет, и ответ — нули, а не падение и не
+// чтение по мусорному имплу. Настоящее значение сверяется в игре (кейс
+// Entity_MethodsFromCpp гоняет ровно этот путь против скриптового GetPosition).
+TEST(World, PositionWithoutEngineIsZeroNotCrash) {
+    int marker = 0;
+    EXPECT_EQ(graft::position(graft::ref<"Object">{&marker}), graft::vector{});
+    EXPECT_EQ(graft::position(graft::ref<"Object">{}), graft::vector{});
+
+    const auto tried = graft::try_position(graft::ref<"Object">{});
+    ASSERT_FALSE(tried.has_value());
+    EXPECT_EQ(tried.error(), graft::miss::null_object);
+}
+
 TEST(World, BorrowedResetForgetsEverything) {
     int marker = 0;
     graft::borrowed<graft::ref<"Man">> kept{graft::ref<"Man">{&marker}};
