@@ -79,28 +79,62 @@ if(NOT GRAFT_BUILD_HOST)
 endif()
 
 include(FetchContent)
-FetchContent_Declare(minhook
-    GIT_REPOSITORY https://github.com/TsudaKageyu/minhook.git
-    GIT_TAG        v1.3.3
+
+# Zydis — дизассемблер, на котором стоит разбор пролога у safetyhook. Знает набор команд
+# целиком, включая VEX и EVEX; HDE64 внутри MinHook, стоявший здесь раньше, на таком
+# прологе честно отказывал, и это был потолок старой механики.
+# Из Zydis нужен ТОЛЬКО декодер: safetyhook меряет длину инструкции и смотрит её
+# операнды, но ничего не печатает и не собирает обратно. В hid.dll форматтер с энкодером
+# и так не попадают — Zydis статический, и линкер не тянет из него объектники, на
+# которые никто не ссылается (проверено: размер hid.dll от этих двух строк не меняется).
+# Выключены они ради времени сборки: десять файлов с большими таблицами меньше.
+#
+# ZYDIS_MINIMAL_MODE здесь НЕ годится: он выбрасывает как раз операнды и категорию
+# перехода, по которым safetyhook и решает, что переносить в трамплин.
+set(ZYDIS_FEATURE_ENCODER   OFF CACHE BOOL "" FORCE)
+set(ZYDIS_FEATURE_FORMATTER OFF CACHE BOOL "" FORCE)
+set(ZYDIS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(ZYDIS_BUILD_TOOLS    OFF CACHE BOOL "" FORCE)
+set(ZYDIS_BUILD_DOXYGEN  OFF CACHE BOOL "" FORCE)
+set(ZYDIS_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(zydis
+    GIT_REPOSITORY https://github.com/zyantific/zydis.git
+    GIT_TAG        v4.1.0
+    GIT_SUBMODULES_RECURSE ON
     EXCLUDE_FROM_ALL)
-FetchContent_MakeAvailable(minhook)
+FetchContent_MakeAvailable(zydis)
+
+# safetyhook: тянем ТОЛЬКО исходники. SOURCE_SUBDIR указан в несуществующий каталог,
+# поэтому его CMakeLists не выполняется — иначе он потащил бы свой Zydis через CPM и
+# собрал бы свой слой ОС, а он нам не подходит: см. SRC/vendor и graft/freeze.hpp.
+FetchContent_Declare(safetyhook
+    GIT_REPOSITORY https://github.com/cursey/safetyhook.git
+    GIT_TAG        v0.7.0
+    SOURCE_SUBDIR  do-not-configure
+    EXCLUDE_FROM_ALL)
+FetchContent_MakeAvailable(safetyhook)
 
 # Врезка в чужой код — своя цель, а не кусок hid.dll. Её линкует не только хост, но и
-# сьюта: иначе graft::hook проверялся бы только выездом на стенд. Копия MinHook в
+# сьюта: иначе graft::hook проверялся бы только выездом на стенд. Механика врезки в
 # процессе при этом остаётся одна — целей, которые её тянут, ровно две, и в одном
 # процессе они не встречаются.
 #
-# v1.3.3 без корневого CMakeLists — компилируем его C-исходники прямо сюда.
+# Из safetyhook берём три файла из восьми: mid_hook, vmt_hook, easy и слой Linux не нужны
+# никому, а в hid.dll ехали бы. Слой ОС — наш: vendor/safetyhook-os-windows.cpp, копия
+# апстримного с одной заменённой функцией (там же записано, какой и почему).
 add_library(graft_hook STATIC
     graft/hook.cpp
-    dll/intrinsics.c
-    "${minhook_SOURCE_DIR}/src/buffer.c"
-    "${minhook_SOURCE_DIR}/src/hook.c"
-    "${minhook_SOURCE_DIR}/src/trampoline.c"
-    "${minhook_SOURCE_DIR}/src/hde/hde64.c"
+    vendor/safetyhook-os-windows.cpp
+    "${safetyhook_SOURCE_DIR}/src/allocator.cpp"
+    "${safetyhook_SOURCE_DIR}/src/inline_hook.cpp"
+    "${safetyhook_SOURCE_DIR}/src/utility.cpp"
 )
-target_link_libraries(graft_hook PUBLIC graft_common)
-target_include_directories(graft_hook PRIVATE "${minhook_SOURCE_DIR}/include")
+target_link_libraries(graft_hook PUBLIC graft_common PRIVATE Zydis)
+# Заголовки safetyhook — внутрь цели; SRC на пути ради graft/freeze.hpp, который лежит
+# рядом с реализацией и наружу не выходит: плагину он не нужен и вреден.
+target_include_directories(graft_hook PRIVATE
+    "${safetyhook_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}")
 add_library(graft::hook ALIAS graft_hook)
 set_target_properties(graft_hook PROPERTIES FOLDER graft)
 
