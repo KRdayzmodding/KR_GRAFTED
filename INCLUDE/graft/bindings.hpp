@@ -176,7 +176,12 @@ public:
             using MA  = decltype(Pick{}.template operator()<C<i32, f32>>());
             using MB  = decltype(Pick{}.template operator()<C<f32, i32>>());
             using Sig = detail::template_sig<MA, MB>;
-            detail::add({class_name_, name, reinterpret_cast<void*>(&D::call), false, Sig::ret(params_, param_count_), Sig::args(params_, param_count_), nullptr, true, module_, true, declare_});
+            // Порядок полей — как в graft::native (registry.hpp): next, имена аргументов,
+            // описание, marshalled, модуль, печатать ли, заголовок класса. У шаблонного
+            // метода имён и описания нет: генератор печатает их по параметрам класса.
+            detail::add({class_name_, name, reinterpret_cast<void*>(&D::call), false,
+                         Sig::ret(params_, param_count_), Sig::args(params_, param_count_),
+                         nullptr, nullptr, nullptr, true, module_, true, declare_});
             return *this;
         }
 

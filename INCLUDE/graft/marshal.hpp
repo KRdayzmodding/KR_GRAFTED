@@ -60,7 +60,10 @@ inline value read_var(const void* var) {
 // вторая из него. Решения по тегу здесь ровно те же, что и в read_var.
 template <class T>
 T as_typed(const void* var) {
-    if constexpr (std::is_same_v<T, value>) {
+    // Наследник value (param<"K"> и прочие имена для объявления) — это тот же value:
+    // разбирать его надо по тегу переменной, а не искать в варианте тип, которого там
+    // нет. Без этого param<> в сигнатуре не собирался вовсе.
+    if constexpr (std::is_base_of_v<value, T>) {
         return read_var(var);
     } else {
         if (!var) {
