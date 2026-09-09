@@ -138,6 +138,17 @@ TEST(Hook, BatchIsAllOrNothing) {
     EXPECT_FALSE(graft::unhook(&answer));
 }
 
+// Две заявки на ОДНУ цель в одной пачке — отказ. Словарь занятых целей их не поймает:
+// цели в нём ещё нет, а safetyhook под ним принял бы обе и построил цепочку.
+TEST(Hook, BatchRefusesTheSameTargetTwice) {
+    answer_fn first = nullptr;
+    answer_fn again = nullptr;
+    EXPECT_FALSE(graft::hook_all({graft::hooked(&answer, &detour_flat, &first),
+                                  graft::hooked(&answer, &detour_flat, &again)}));
+    EXPECT_EQ(g_call(1), 2) << "цель тронули, хотя пачку отклонили";
+    EXPECT_FALSE(graft::unhook(&answer));
+}
+
 TEST(Hook, EmptyBatchIsHarmless) {
     EXPECT_TRUE(graft::hook_all({}));
 }

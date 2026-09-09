@@ -54,7 +54,12 @@ std::vector<HANDLE> g_frozen;
 //
 // Здесь же и вся цена врезки: снимок снимает потоки ВСЕЙ СИСТЕМЫ и лишь потом
 // фильтруется по своему процессу. Отсюда десятки миллисекунд, отсюда же и пачка.
-void collect() {
+//
+// noexcept намеренно. Бросить здесь может только push_back и только при нехватке памяти
+// на ПЕРВОМ вызове (дальше ёмкость у вектора уже есть). Улететь из конструктора области
+// значит оставить общий замок захваченным навсегда: процесс встанет молча и без дампа.
+// Честное падение здесь движок хотя бы запишет.
+void collect() noexcept {
     g_frozen.clear();
     const HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
     if (snap == INVALID_HANDLE_VALUE) {
@@ -221,8 +226,17 @@ bool hook_all(std::span<const hook_request> all) {
     // строит трамплин. Морозит включение — поэтому создаём все, включаем одной очередью.
     std::vector<safetyhook::InlineHook> made;
     made.reserve(all.size());
+    const auto forget_originals = [&] {
+        // Адреса трамплинов уже розданы, а трамплины сейчас исчезнут вместе с made.
+        // Оставить их у вызывающего значит подложить ему указатель в освобождённую
+        // память; ноль он хотя бы заметит на первом же вызове.
+        for (const hook_request& want : all) {
+            *want.original = nullptr;
+        }
+    };
     for (const hook_request& want : all) {
         if (!prepare(want, made)) {
+            forget_originals();
             return false;  // не включено ещё ничего — откатывать нечего
         }
     }
@@ -237,9 +251,7 @@ bool hook_all(std::span<const hook_request> all) {
                 for (std::size_t j = 0; j < i; ++j) {
                     (void)made[j].disable();
                 }
-                for (const hook_request& want : all) {
-                    *want.original = nullptr;
-                }
+                forget_originals();
                 return false;
             }
         }
