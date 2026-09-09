@@ -211,7 +211,7 @@ void install() {
         scan::first_call(sections, reinterpret_cast<std::uintptr_t>(g_api.register_method));
     g_find_index = linker ? scan::first_call(sections, linker) : 0;
 
-    // Через тот же сервис, что отдаётся плагинам: копия MinHook в процессе одна, и хост
+    // Через тот же сервис, что отдаётся плагинам: механика врезки в процессе одна, и хост
     // не исключение — иначе «одна копия» держалась бы на честном слове.
     hook(g_api.register_method, &hook_register_method, &g_orig_method);
 

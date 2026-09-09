@@ -156,7 +156,7 @@ jobs:
         run: gh release list --json name,isDraft --jq '.[] | select(.isDraft) | .name' | xargs -r -I {} gh release delete {} --yes
 
       # THIRD_PARTY.md обязан ехать рядом с бинарником: в hid.dll вкомпилированы
-      # MinHook и HDE под BSD-2, и это требование их лицензии, а не вежливость.
+      # Zydis и Zycore под MIT, и это требование их лицензии, а не вежливость.
       - name: Архив
         run: |
           cp THIRD_PARTY.md LICENSE LICENSE-EXCEPTION pack/

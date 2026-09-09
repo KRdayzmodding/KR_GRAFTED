@@ -131,8 +131,8 @@ itself is not. Note that the name is not licensed (GPLv3 §7e), and Bohemia's ow
 DayZ mod monetization apply on top of all this — GRAFT's license neither grants nor
 overrides them.
 
-Third-party code (MinHook and HDE, both BSD-2, linked into `hid.dll`):
-[THIRD_PARTY.md](THIRD_PARTY.md).
+Third-party code (safetyhook under BSL-1.0; Zydis and Zycore, both MIT; all linked into
+`hid.dll`): [THIRD_PARTY.md](THIRD_PARTY.md).
 
 ## Contributing
 

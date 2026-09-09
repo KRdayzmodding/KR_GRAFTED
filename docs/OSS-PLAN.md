@@ -279,7 +279,7 @@ release.
 [aui-framework/aui](https://github.com/aui-framework/aui), см. §7). Каждый пуш в `main`:
 сносит прошлые черновики, считает следующий `v<версия из CMakeLists>-rc.N`
 ([.github/next-version.py](../.github/next-version.py)), кладёт `hid.dll`, `graft.exe`,
-обе лицензии и `THIRD_PARTY.md` (обязан ехать рядом с бинарником — BSD-2 MinHook/HDE)
+обе лицензии и `THIRD_PARTY.md` (обязан ехать рядом с бинарником — MIT Zydis/Zycore)
 в один zip и создаёт **черновик** пред-релиза. Заметки собираются из строки про сборку
 DayZ, чисел `ABI`/`LAYOUT`, вытащенных прямо из `abi.h`, и автосписка PR.
 
