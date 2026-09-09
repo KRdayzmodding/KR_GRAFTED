@@ -2,10 +2,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH LicenseRef-GRAFT-plugin-exception-1.0
 // Мод на GRAFT ничего не обязан — даже закрытый и платный. См. LICENSE-EXCEPTION.
 #pragma once
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <span>
+#include <string_view>
+#include <type_traits>
 #include <vector>
+
+#include "graft/name.hpp"
 
 // Поиск движковых точек регистрации нативов в загруженном образе — без единого
 // зашитого адреса. Якоря — имена ванильных нативов и скриптовых классов: они часть
@@ -30,11 +36,19 @@ struct view {
     std::uintptr_t find_cstr(const char* text, std::uintptr_t from = 0) const;
     // Адрес инструкции `lea reg,[rip+d]` (opcode — 3 байта префикса), указывающей на target.
     std::uintptr_t find_lea(std::span<const std::uint8_t, 3> opcode, std::uintptr_t target, std::uintptr_t from = 0) const;
-    // Цели всех `call rel32` после/до ea в пределах span байт, по порядку адресов.
-    // Их несколько, потому что байт 0xE8 может встретиться и внутри чужого смещения —
-    // отсеивает уже вызывающий код (цель обязана лежать в исполняемой секции).
-    std::vector<std::uintptr_t> calls_after(std::uintptr_t ea, std::size_t span = 0x40) const;
-    std::vector<std::uintptr_t> calls_before(std::uintptr_t ea, std::size_t span = 0x40) const;
+    // Цели всех rel32-переходов с таким опкодом после/до ea в пределах span байт, по
+    // порядку адресов: 0xE8 — call, 0xE9 — хвостовой jmp. Их несколько, потому что байт
+    // опкода может встретиться и внутри чужого смещения — отсеивает уже вызывающий код
+    // (цель обязана лежать в исполняемой секции, см. rel32_targets).
+    std::vector<std::uintptr_t> rel32_after(std::uintptr_t ea, std::size_t span, std::uint8_t opcode) const;
+    std::vector<std::uintptr_t> rel32_before(std::uintptr_t ea, std::size_t span, std::uint8_t opcode) const;
+
+    std::vector<std::uintptr_t> calls_after(std::uintptr_t ea, std::size_t span = 0x40) const {
+        return rel32_after(ea, span, 0xE8);
+    }
+    std::vector<std::uintptr_t> calls_before(std::uintptr_t ea, std::size_t span = 0x40) const {
+        return rel32_before(ea, span, 0xE8);
+    }
 
     bool contains(std::uintptr_t ea) const { return ea >= base && ea - base < bytes.size(); }
 };
@@ -122,5 +136,175 @@ bool begins_with(std::uintptr_t ea, std::span<const std::uint8_t> sig);
 // (`mov rax,[rcx+disp]`), и адреса глобалей (`mov [rip+disp],rax`).
 bool disp32_of(std::uintptr_t ea, std::size_t span, std::span<const std::uint8_t> opcode, std::int32_t& out, std::uintptr_t* site = nullptr, unsigned nth = 1);
 bool disp8_of(std::uintptr_t ea, std::size_t span, std::span<const std::uint8_t> opcode, unsigned& out, unsigned nth = 1);
+
+// Сигнатура с ДЖОКЕРАМИ: элемент < 0 — «любой байт». Сверять можно не всё: там, где в
+// инструкцию запечено смещение поля или регистр, выбранный компилятором игры, сверять
+// нечего — а всё остальное сверить обязаны. Пишется ровно так, как читается в отладчике:
+//
+//   scan::matches(fn, {0x48, 0x89, 0x5C, 0x24, -1, 0x57})
+//
+// begins_with — тот же приём без джокеров; он остаётся отдельным, потому что сверка
+// готового блока байт не должна проходить через int-массив.
+bool matches(std::uintptr_t ea, std::span<const int> sig);
+
+inline bool matches(std::uintptr_t ea, std::initializer_list<int> sig) {
+    return matches(ea, std::span<const int>{sig.begin(), sig.size()});
+}
+
+// Та же сигнатура, но так, как она читается в отладчике — строкой:
+//
+//   scan::matches(fn, scan::sig<"48 89 5C 24 ?? 57">)
+//
+// Разбирается на КОМПИЛЯЦИИ, поэтому опечатка («4» вместо «48», лишняя буква, `??` из
+// трёх знаков) — ошибка сборки, а не сигнатура, которая молча ничего не находит и
+// отлаживается уже на живом сервере. Лишние пробелы законны: строку копируют из
+// отладчика, а он выравнивает столбцы.
+namespace detail {
+
+consteval int sig_nibble(char c) {
+    if (c >= '0' && c <= '9') {
+        return c - '0';
+    }
+    if (c >= 'a' && c <= 'f') {
+        return c - 'a' + 10;
+    }
+    if (c >= 'A' && c <= 'F') {
+        return c - 'A' + 10;
+    }
+    // consteval бросать не умеет — и это ровно то, что нужно: вызов перестаёт быть
+    // константным выражением, и компилятор показывает эту строку в цепочке ошибки.
+    throw "в сигнатуре бывают только шестнадцатеричные байты, ?? и пробелы";
+}
+
+consteval int sig_byte(std::string_view token) {
+    if (token == "??" || token == "?") {
+        return -1;  // джокер: там смещение поля или регистр, выбранный компилятором игры
+    }
+    if (token.size() != 2) {
+        throw "байт сигнатуры — ровно две шестнадцатеричные цифры либо ??";
+    }
+    return (sig_nibble(token[0]) * 16) + sig_nibble(token[1]);
+}
+
+consteval std::size_t sig_size(std::string_view text) {
+    std::size_t n = 0;
+    for (std::size_t i = 0; i < text.size();) {
+        if (text[i] == ' ') {
+            ++i;
+            continue;
+        }
+        ++n;
+        while (i < text.size() && text[i] != ' ') {
+            ++i;
+        }
+    }
+    return n;
+}
+
+template <name_t S>
+consteval auto parse_sig() {
+    constexpr std::string_view text{S.value};
+    constexpr std::size_t      n = sig_size(text);
+    static_assert(n > 0, "пустая сигнатура");
+    std::array<int, n> out{};
+    std::size_t        k = 0;
+    for (std::size_t i = 0; i < text.size();) {
+        if (text[i] == ' ') {
+            ++i;
+            continue;
+        }
+        std::size_t j = i;
+        while (j < text.size() && text[j] != ' ') {
+            ++j;
+        }
+        out[k++] = sig_byte(text.substr(i, j - i));
+        i        = j;
+    }
+    return out;
+}
+
+}  // namespace detail
+
+template <name_t S>
+inline constexpr auto sig = detail::parse_sig<S>();
+
+// Цели всех rel32-переходов с этим опкодом в [ea, ea+span). Мусорные отброшены: 0xE8/0xE9
+// встречается и внутри чужого смещения, а настоящая цель обязана лежать в исполняемой
+// секции образа. Так разбирается тело найденной функции — куда она зовёт и чем кончается.
+std::vector<std::uintptr_t> rel32_targets(const std::vector<view>& sections, std::uintptr_t ea, std::size_t span, std::uint8_t opcode = 0xE8);
+
+// ── RTTI: от имени класса к его таблице ──────────────────────────────────────
+// Чистая механика MSVC, про DayZ она не знает ничего. Нужна там, где у метода нет своей
+// строки-маяка: невиртуальный метод берётся по коду класса, а к коду ведёт таблица.
+//
+// Раскладка (x64, RVA считаются от базы образа):
+//   _TypeDescriptor  { void* vfptr; void* spare; char name[]; }   имя лежит на +16
+//   CompleteObjectLocator { u32 signature; u32 offset; u32 cd_offset;
+//                           u32 type_rva; u32 class_rva; u32 self_rva }
+//   перед самой таблицей лежит указатель на локатор, поэтому таблица — это `ptr + 8`
+//
+// mangled — имя как его пишет компилятор. Буква после `.?A` — это ВИД типа, и перепутать
+// её легко: `V` у class, `U` у struct, `W` у enum. ".?AVAIBehaviourGoToTarget@@".
+//
+// Ноль — не нашли; это отказ, а не повод идти дальше по догадке.
+std::uintptr_t rtti_vtable(const std::vector<view>& sections, std::uintptr_t image_base, const char* mangled);
+// То же от модуля: базу и секции берёт сам. Столько же работы, на одну ошибку меньше —
+// перепутать базу с базой первой секции нечем.
+std::uintptr_t rtti_vtable(void* module, const char* mangled);
+
+// Отображены ли n байт по адресу. Спрашивается у системы, а не пробным чтением под SEH:
+// движок ставит свой фильтр исключений и рапортует о падении раньше, чем сработал бы
+// наш __except (проверено — вылет 0xC0000005 с адресом внутри hid.dll).
+//
+// ВЫРАВНИВАНИЯ НЕ ТРЕБУЕТ, и это не мелочь: рядом живёт script::detail::readable, который
+// сперва спрашивает «похоже ли это вообще на указатель» (в том числе кратность восьми).
+// Там это правильно — он проверяет ЗНАЧЕНИЕ ПОЛЯ; здесь неправильно — адрес внутри
+// функции ничем не выровнен. Отсюда две функции при одной проверке страницы.
+bool readable(const void* p, std::size_t n);
+
+// Исполняемая ли страница по адресу. Спрашивается у системы, а не у таблицы секций:
+// так узнаются и трамплины, и чужие модули, а не только образ игры.
+bool is_code(const void* p);
+
+// Длина C++ таблицы: подряд идущие адреса машинного кода. Длину её никто не хранит,
+// поэтому считаем сами; потолок — не от жадности, а чтобы не уехать в соседние данные,
+// если .rdata продолжается такими же указателями.
+std::size_t vtable_slots(void* const* vt);
+
+// ── Позвать НАСТОЯЩИЙ метод C++ движка ───────────────────────────────────────
+// Это НЕ натив: натив зарегистрирован через RegisterMethod, за ним стоит обёртка движка,
+// и зовут его через ref::call. Здесь — метод, найденный по RTTI и таблице (rtti_vtable),
+// то есть обычная функция-член, как её собрал MSVC.
+//
+// Разница ровно одна, и она смертельна. Возврат больше 8 байт (скриптовый vector — это
+// 12) в RAX не влезает: под него заводится буфер, адрес которого вызывающая сторона
+// передаёт скрытым аргументом. У ФУНКЦИИ-ЧЛЕНА этот адрес идёт ВТОРЫМ, после this; у
+// свободной — первым. Снято с clang-cl:
+//
+//   vec3 Ent::GetOrigin()      ->  mov rcx, this  ; mov rdx, буфер ; call
+//   vec3 __fastcall f(void*)   ->  mov rcx, буфер ; mov rdx, объект; call
+//
+// Поэтому `reinterpret_cast<vector(__fastcall*)(void*)>(метод)(self)` кладёт буфер туда,
+// где метод ждёт this, а объект — туда, куда он пишет результат: чтение по мусору и
+// запись поверх чужого объекта. Это и есть 0xC0000005 на ровном месте.
+//
+// Обратное тоже верно и тоже проверено на живом движке: у ЗАРЕГИСТРИРОВАННОГО натива
+// буфер идёт первым — см. graft::position в world.hpp, там разобран импл IEntity.GetOrigin.
+template <class R>
+concept returned_in_register =
+    std::is_void_v<R> || ((sizeof(R) == 1 || sizeof(R) == 2 || sizeof(R) == 4 ||
+                           sizeof(R) == 8) &&
+                          std::is_trivially_copyable_v<R>);
+
+template <class R, class... A>
+R member_call(void* fn, void* self, A... args) {
+    if constexpr (returned_in_register<R>) {
+        return reinterpret_cast<R(__fastcall*)(void*, A...)>(fn)(self, args...);
+    } else {
+        R out{};
+        reinterpret_cast<void(__fastcall*)(void*, R*, A...)>(fn)(self, &out, args...);
+        return out;
+    }
+}
 
 } // namespace graft::scan

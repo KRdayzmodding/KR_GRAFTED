@@ -69,7 +69,7 @@ std::uintptr_t view::find_lea(std::span<const std::uint8_t, 3> opcode, std::uint
     return 0;
 }
 
-std::vector<std::uintptr_t> view::calls_after(std::uintptr_t ea, std::size_t span) const {
+std::vector<std::uintptr_t> view::rel32_after(std::uintptr_t ea, std::size_t span, std::uint8_t opcode) const {
     std::vector<std::uintptr_t> out;
     if (!contains(ea)) {
         return out;
@@ -77,14 +77,14 @@ std::vector<std::uintptr_t> view::calls_after(std::uintptr_t ea, std::size_t spa
     const std::size_t off = static_cast<std::size_t>(ea - base);
     const std::size_t end = (span > bytes.size() - off) ? bytes.size() : off + span;
     for (std::size_t i = off; i + 5 <= end; ++i) {
-        if (bytes[i] == 0xE8) {
+        if (bytes[i] == opcode) {
             out.push_back(rip_target(base + i + 5, rel32(bytes.data() + i + 1)));
         }
     }
     return out;
 }
 
-std::vector<std::uintptr_t> view::calls_before(std::uintptr_t ea, std::size_t span) const {
+std::vector<std::uintptr_t> view::rel32_before(std::uintptr_t ea, std::size_t span, std::uint8_t opcode) const {
     std::vector<std::uintptr_t> out;
     if (!contains(ea)) {
         return out;
@@ -92,7 +92,7 @@ std::vector<std::uintptr_t> view::calls_before(std::uintptr_t ea, std::size_t sp
     const std::size_t off   = static_cast<std::size_t>(ea - base);
     const std::size_t start = (span > off) ? 0 : off - span;
     for (std::size_t i = start; i + 5 <= off; ++i) {
-        if (bytes[i] == 0xE8) {
+        if (bytes[i] == opcode) {
             out.push_back(rip_target(base + i + 5, rel32(bytes.data() + i + 1)));
         }
     }
@@ -193,6 +193,30 @@ std::uintptr_t first_call(const std::vector<view>& sections, std::uintptr_t fn, 
         }
     }
     return 0;
+}
+
+std::vector<std::uintptr_t> rel32_targets(const std::vector<view>& sections, std::uintptr_t ea, std::size_t span, std::uint8_t opcode) {
+    auto is_exec = [&](std::uintptr_t at) {
+        for (const view& s : sections) {
+            if (s.exec && s.contains(at)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    std::vector<std::uintptr_t> out;
+    for (const view& code : sections) {
+        if (!code.exec || !code.contains(ea)) {
+            continue;
+        }
+        for (std::uintptr_t target : code.rel32_after(ea, span, opcode)) {
+            if (is_exec(target)) {
+                out.push_back(target);
+            }
+        }
+        break;  // адрес лежит ровно в одной секции
+    }
+    return out;
 }
 
 frame_entry find_frame_entry(const std::vector<view>& sections) {
@@ -323,19 +347,26 @@ std::vector<view> sections_of(void* module) {
     return out;
 }
 
-namespace {
-
 // Читать по чужому адресу можно только убедившись, что страница есть: кандидат мог
 // прийти из мусорного смещения, и тогда сверка обязана вернуть «не совпало», а не
-// уронить процесс.
-bool readable(std::uintptr_t ea, std::size_t n) {
+// уронить процесс. Единственная реализация этой проверки на всю библиотеку —
+// script::detail::readable надстраивает над ней сверку «похоже на указатель».
+bool readable(const void* p, std::size_t n) {
     MEMORY_BASIC_INFORMATION mbi{};
-    auto*                    at = reinterpret_cast<const void*>(ea);
-    if (ea == 0 || VirtualQuery(at, &mbi, sizeof mbi) == 0 || mbi.State != MEM_COMMIT) {
+    if (p == nullptr || VirtualQuery(p, &mbi, sizeof mbi) == 0 || mbi.State != MEM_COMMIT) {
+        return false;
+    }
+    if ((mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) != 0) {
         return false;
     }
     const auto end = reinterpret_cast<std::uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
-    return ea + n <= end;
+    return reinterpret_cast<std::uintptr_t>(p) + n <= end;
+}
+
+namespace {
+
+bool readable(std::uintptr_t ea, std::size_t n) {
+    return scan::readable(reinterpret_cast<const void*>(ea), n);
 }
 
 } // namespace
@@ -362,6 +393,25 @@ std::size_t nth_at(std::uintptr_t ea, std::size_t span, std::span<const std::uin
     return span;
 }
 
+// Таблица, перед которой лежит указатель на locator: линковщик кладёт его последним
+// элементом перед первым слотом, поэтому сам слот — это `место указателя + 8`.
+std::uintptr_t table_after(const std::vector<view>& sections, std::uintptr_t locator) {
+    for (const view& v : sections) {
+        if (v.exec) {
+            continue;
+        }
+        const std::uint8_t* b = v.bytes.data();
+        for (std::size_t o = 0; o + sizeof(void*) <= v.bytes.size(); o += sizeof(void*)) {
+            std::uintptr_t held = 0;
+            std::memcpy(&held, b + o, sizeof held);
+            if (held == locator) {
+                return v.base + o + sizeof(void*);
+            }
+        }
+    }
+    return 0;
+}
+
 } // namespace
 
 bool disp32_of(std::uintptr_t ea, std::size_t span, std::span<const std::uint8_t> opcode, std::int32_t& out, std::uintptr_t* site, unsigned nth) {
@@ -383,6 +433,106 @@ bool disp8_of(std::uintptr_t ea, std::size_t span, std::span<const std::uint8_t>
     }
     out = reinterpret_cast<const std::uint8_t*>(ea)[at + opcode.size()];
     return true;
+}
+
+bool matches(std::uintptr_t ea, std::span<const int> sig) {
+    if (sig.empty() || !readable(ea, sig.size())) {
+        return false;
+    }
+    const auto* body = reinterpret_cast<const std::uint8_t*>(ea);
+    for (std::size_t i = 0; i < sig.size(); ++i) {
+        if (sig[i] >= 0 && body[i] != static_cast<std::uint8_t>(sig[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// ── Таблицы классов ──────────────────────────────────────────────────────────
+
+bool is_code(const void* p) {
+    if (!p) {
+        return false;
+    }
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (VirtualQuery(p, &mbi, sizeof mbi) == 0 || mbi.State != MEM_COMMIT) {
+        return false;
+    }
+    constexpr DWORD kExec =
+        PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+    return (mbi.Protect & kExec) != 0 && (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) == 0;
+}
+
+std::size_t vtable_slots(void* const* vt) {
+    constexpr std::size_t kMaxSlots = 256;
+    if (!vt) {
+        return 0;
+    }
+    std::size_t n = 0;
+    // Спрашиваем систему и про сам слот: у последней таблицы в секции следующая страница
+    // может быть не отображена, и чтение за край — падение на ровном месте.
+    while (n < kMaxSlots && readable(reinterpret_cast<std::uintptr_t>(&vt[n]), sizeof(void*)) &&
+           is_code(vt[n])) {
+        ++n;
+    }
+    return n;
+}
+
+std::uintptr_t rtti_vtable(const std::vector<view>& sections, std::uintptr_t image_base, const char* mangled) {
+    // 1. ВСЕ места, где лежит это имя, а не первое попавшееся. Их в образе несколько:
+    //    одно — в дескрипторе типа, остальные — обычные строковые литералы. И первым
+    //    почти всегда оказывается литерал ТОГО, КТО ИЩЕТ: имя приезжает сюда как
+    //    `rtti_vtable(mod, ".?AVFoo@@")`, то есть своя же копия строки лежит в .rdata
+    //    вызывающего. Поиск по первому совпадению на живом бинаре не находил ничего.
+    //
+    //    Дескриптор типа при этом лежит в ЗАПИСЫВАЕМОЙ секции (у него есть поле-кэш
+    //    декорированного имени), а локатор и таблица — в read-only. Поэтому по правам
+    //    страниц здесь отсеять нечего: смотрим все неисполняемые секции.
+    std::vector<std::uint32_t> wanted;
+    for (const view& v : sections) {
+        if (v.exec) {
+            continue;
+        }
+        for (std::uintptr_t at = v.find_cstr(mangled); at; at = v.find_cstr(mangled, at + 1)) {
+            if (at >= image_base + 16) {
+                wanted.push_back(static_cast<std::uint32_t>(at - 16 - image_base));
+            }
+        }
+    }
+    if (wanted.empty()) {
+        return 0;
+    }
+    // 2. Локатор, который на один из них ссылается. Один проход на всех кандидатов сразу:
+    //    проход стоит куда дороже сверки, а кандидатов единицы.
+    //
+    //    Локатор узнаётся не «похоже на структуру», а ПО СЕБЕ САМОМУ: у x64-версии есть
+    //    поле pSelf со своим же RVA (сигнатура == 1 именно об этом и говорит). Случайный
+    //    dword, равный RVA имени, такую проверку не проходит.
+    for (const view& v : sections) {
+        if (v.exec) {
+            continue;
+        }
+        const std::uint8_t* b = v.bytes.data();
+        for (std::size_t o = 0; o + 24 <= v.bytes.size(); o += 4) {
+            std::uint32_t field[6]{};
+            std::memcpy(field, b + o, sizeof field);
+            if (field[0] != 1 || field[5] != v.base + o - image_base) {
+                continue;
+            }
+            if (std::find(wanted.begin(), wanted.end(), field[3]) == wanted.end()) {
+                continue;
+            }
+            // 3. Указатель на локатор. Он лежит ровно перед таблицей — она и есть ответ.
+            if (const std::uintptr_t vt = table_after(sections, v.base + o)) {
+                return vt;
+            }
+        }
+    }
+    return 0;
+}
+
+std::uintptr_t rtti_vtable(void* module, const char* mangled) {
+    return rtti_vtable(sections_of(module), reinterpret_cast<std::uintptr_t>(module), mangled);
 }
 
 } // namespace graft::scan
