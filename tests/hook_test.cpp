@@ -5,8 +5,22 @@
 // краснеет обычным прогоном, а не выездом на стенд.
 #include <gtest/gtest.h>
 
+// Часть кейсов ниже проверяет, что врезка не мешает обработке сбоев: для этого нужны и
+// SEH, и векторный обработчик, и права на страницу — то есть Win32 целиком.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+
+#include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <iostream>
+#include <thread>
+#include <vector>
 
 #include "graft/engine.hpp"
 
@@ -48,6 +62,12 @@ int __fastcall detour_twice(int x) {
 
 int __fastcall detour_thrice(int x) {
     return g_thrice(x) * 1000;
+}
+
+// Детур, которому оригинал не нужен вовсе: для кейсов, где важен сам факт патча, а не
+// достижимость оригинала. Значение выбрано так, чтобы его нельзя было спутать ни с чем.
+int __fastcall detour_flat(int) {
+    return 777;
 }
 
 // Через указатель, а не по имени: иначе компилятор подставит тело на месте вызова и
@@ -171,4 +191,172 @@ TEST(Hook, BatchIsCheaperThanOneByOne) {
     std::cout << "  [замер] три врезки: по одной " << one_by_one << " мс -> пачкой " << batched
               << " мс" << std::endl;
     EXPECT_LT(batched, one_by_one);
+}
+
+// ── Врезка и обработка сбоев: они обязаны не мешать друг другу ────────────────
+// Библиотека забирает падение натива себе (guard.hpp, __try/__except) и на этом держится
+// обещание «кривой плагин не уносит сервер». Врезка стоит НИЖЕ по стеку обработчиков:
+// она не имеет права ни съесть чужой сбой, ни оставить после себя что-то, что съест его
+// потом. Кейсы ниже проверяют оба конца этого обещания фактом, а не рассуждением.
+//
+// Почему это тесты именно ЗДЕСЬ, а не в runtime_test: они краснеют только от смены
+// механики врезки — и обязаны покраснеть, если она однажды сменится на такую, которая
+// ставит свой обработчик исключений процесса.
+
+namespace {
+
+// Сбой обязан лежать в ОТДЕЛЬНОЙ noinline функции: у x64-SEH таблица областей описывает
+// ДИАПАЗОНЫ АДРЕСОВ, и обращение по нулю, написанное прямо в защищённой функции,
+// компилятор выносит за её пределы (RESEARCH/theory/crashes.md).
+__declspec(noinline) int read_at(const volatile int* where) {
+    return *where;
+}
+
+// `try` и `__try` в одной функции стоять не могут — отсюда два слоя и здесь тоже.
+int guarded_read(const volatile int* where) {
+    __try {
+        return read_at(where);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -1;
+    }
+}
+
+}  // namespace
+
+// Врезка стоит — сбой в чужом коде по-прежнему доходит до нашего __except. Если этот
+// кейс покраснел, значит механика врезки завела в процессе свой обработчик и встала
+// ВЫШЕ кадрового: с этого момента guard.hpp больше не защита, а видимость.
+TEST(Hook, FaultStillReachesSehWhileHooked) {
+    answer_fn original = nullptr;
+    ASSERT_TRUE(graft::hook(&answer, &detour, &original));
+
+    EXPECT_EQ(guarded_read(nullptr), -1);
+
+    EXPECT_TRUE(graft::unhook(&answer));
+    // И после снятия — тоже: снятие обязано возвращать процесс в исходное состояние.
+    EXPECT_EQ(guarded_read(nullptr), -1);
+}
+
+// Снятая врезка не оставляет за собой ничего, что съест ЧУЖОЙ сбой потом.
+//
+// ЗАЧЕМ ЭТОТ КЕЙС. Механику врезки можно построить двумя способами. Первый — заморозить
+// потоки на время патча и переставить rip тем, кто стоит внутри переписываемых байт;
+// после этого в процессе не остаётся ничего. Второй — снять со страницы бит исполнения
+// и ловить обращения СВОИМ векторным обработчиком, отвечая ему «продолжай». Второй
+// способ дешевле в реализации и ровно поэтому опасен: обработчик остаётся зарегистрирован
+// на весь процесс, список отравленных страниц не чистится, и однажды настоящий сбой на
+// такой странице получит «продолжай» — то есть вечный цикл вместо падения. Для
+// библиотеки, которая обещает ЗАБРАТЬ падение и записать, кто упал, это подмена обещания.
+//
+// Проверяем поведением, а не заглядыванием внутрь: врезаемся в свою страницу, снимаем
+// врезку, отравляем страницу и смотрим, СКОЛЬКО РАЗ сбой будет доставлен. Ровно один —
+// значит его отдали нашему __except. Два — значит кто-то вернул «продолжай».
+namespace {
+
+std::uint8_t* g_poisoned = nullptr;
+std::atomic<long> g_faults{0};
+
+// Считает сбои на отравленной странице и пропускает их дальше по цепочке — к чужим
+// обработчикам и к нашему __except. Со второго раза снимает отраву сам: если цепочку
+// замкнуло в цикл, кейс обязан покраснеть, а не подвесить прогон.
+long CALLBACK count_faults(EXCEPTION_POINTERS* ep) {
+    if (ep->ExceptionRecord->ExceptionCode != EXCEPTION_ACCESS_VIOLATION ||
+        ep->ExceptionRecord->NumberParameters < 2) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    const auto at = reinterpret_cast<std::uint8_t*>(ep->ExceptionRecord->ExceptionInformation[1]);
+    if (g_poisoned == nullptr || at < g_poisoned || at >= g_poisoned + 0x1000) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    if (g_faults.fetch_add(1) + 1 >= 2) {
+        DWORD was = 0;
+        VirtualProtect(g_poisoned, 0x1000, PAGE_EXECUTE_READWRITE, &was);
+        return EXCEPTION_CONTINUE_EXECUTION;  // страховка от вечного цикла
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+int __fastcall detour_on_page(int x) {
+    return x;
+}
+
+}  // namespace
+
+TEST(Hook, RemovedHookLeavesNothingThatSwallowsFaults) {
+    auto* page = static_cast<std::uint8_t*>(
+        VirtualAlloc(nullptr, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+    ASSERT_NE(page, nullptr);
+
+    // Обычный пролог MSVC и возврат: десять байт под переход и корректный разбор любым
+    // дизассемблером. Тело не зовём — важно только то, что во врезку оно годится.
+    const std::uint8_t body[] = {0x48, 0x89, 0x5C, 0x24, 0x08,   // mov [rsp+8], rbx
+                                 0x48, 0x89, 0x6C, 0x24, 0x10,   // mov [rsp+10h], rbp
+                                 0xC3};                          // ret
+    memcpy(page, body, sizeof body);
+    FlushInstructionCache(GetCurrentProcess(), page, sizeof body);
+
+    void* original = nullptr;
+    ASSERT_TRUE(graft::hook(page, reinterpret_cast<void*>(&detour_on_page), &original));
+    ASSERT_TRUE(graft::unhook(page));
+
+    g_poisoned = page;
+    g_faults.store(0);
+    void* const veh = AddVectoredExceptionHandler(1, &count_faults);
+    ASSERT_NE(veh, nullptr);
+
+    DWORD was = 0;
+    ASSERT_NE(VirtualProtect(page, 0x1000, PAGE_NOACCESS, &was), 0);
+    // Читаем в стороне от переписанных байт, но на той же странице: именно так выглядит
+    // случайный сбой рядом с целью, а не попадание ровно в патч.
+    const int got = guarded_read(reinterpret_cast<const volatile int*>(page + 0x100));
+
+    RemoveVectoredExceptionHandler(veh);
+    VirtualProtect(page, 0x1000, PAGE_EXECUTE_READWRITE, &was);
+    g_poisoned = nullptr;
+    VirtualFree(page, 0, MEM_RELEASE);
+
+    EXPECT_EQ(g_faults.load(), 1) << "сбой доставлен дважды — кто-то ответил «продолжай»";
+    EXPECT_EQ(got, -1) << "сбой не дошёл до __except: врезка забрала его себе";
+}
+
+// Врезка под нагрузкой: цель зовут с других потоков, пока пролог переписывают.
+//
+// Это и есть тот случай, ради которого патч обязан останавливать потоки: поток, снятый
+// планировщиком внутри переписываемых байт, после возобновления продолжит с середины
+// новой инструкции. Кейс не ловит эту гонку прицельно (она редкая), но ловит всё, чем
+// такая механика ломается заметно: незамороженный поток на пропавшем прологе, потерянный
+// ResumeThread, взаимная блокировка на своём же замке.
+TEST(Hook, TargetUnderTrafficSurvivesInstallAndRemoval) {
+    std::atomic<bool> stop{false};
+    std::atomic<long long> spins{0};
+    std::atomic<long> wrong{0};
+
+    // Детур НЕ зовёт оригинал: иначе кейс проверял бы ещё и время жизни трамплина, а
+    // после снятия врезки поток может оказаться внутри уже освобождённого.
+    static answer_fn s_unused = nullptr;
+
+    std::vector<std::jthread> hammer;
+    for (int i = 0; i < 4; ++i) {
+        hammer.emplace_back([&] {
+            while (!stop.load(std::memory_order_relaxed)) {
+                const int got = g_call(1);
+                if (got != 2 && got != 777) {
+                    wrong.fetch_add(1, std::memory_order_relaxed);
+                }
+                spins.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+    }
+
+    for (int round = 0; round < 10; ++round) {
+        ASSERT_TRUE(graft::hook(&answer, &detour_flat, &s_unused));
+        ASSERT_TRUE(graft::unhook(&answer));
+    }
+
+    stop.store(true);
+    hammer.clear();  // jthread: join на разрушении
+
+    EXPECT_EQ(wrong.load(), 0) << "цель вернула то, чего не возвращают ни оригинал, ни детур";
+    EXPECT_GT(spins.load(), 0) << "потоки не крутились — их не разморозили";
+    EXPECT_EQ(g_call(1), 2) << "после снятия цель обязана быть исходной";
 }
