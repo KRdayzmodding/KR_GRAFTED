@@ -3,6 +3,7 @@
 // Этот файл линкуется в КАЖДЫЙ плагин, поэтому едет с исключением: мод на GRAFT ничего
 // не обязан — даже закрытый и платный. См. LICENSE-EXCEPTION.
 #include <format>
+#include <mutex>
 #include <unordered_map>
 #include <utility>
 
@@ -57,6 +58,12 @@ void* script_root() {
 }
 
 namespace {
+// Замок на весь отчёт о падении. Не роскошь: сбой может прийти с любого потока, и два
+// одновременных падения рвали бы unordered_map ниже прямо внутри обработчика падений.
+// Падение кода, который существует ради того, чтобы не падать, — худший вид падения.
+//
+// Форматирование оставлено СНАРУЖИ замка: под ним только правки состояния и журнал.
+std::mutex g_fault_lock;
 std::size_t g_faults = 0;
 std::string g_last_fault;
 // Сколько строк в журнал отдано на один трамплин. Натив, падающий каждый кадр, иначе
@@ -70,7 +77,6 @@ constexpr std::size_t kMaxLinesPerNative = 3;
 // скрипте. Ничего другого у нас на руках нет, а этого достаточно, чтобы в журнале была
 // не «где-то в hid», а «плагин SIXW_GRAFT, натив SeraphNode.Id».
 void note_fault(void* impl, std::uint32_t code, const void* at, const char* what) {
-    ++g_faults;
     const char* owner = "?";
     const char* class_name = nullptr;
     const char* name = "?";
@@ -84,9 +90,13 @@ void note_fault(void* impl, std::uint32_t code, const void* at, const char* what
     }
     const std::string who =
         class_name ? std::format("{}.{}", class_name, name) : std::string{name};
-    g_last_fault =
+    std::string line =
         what ? std::format("[{}] {}: исключение — {}", owner, who, what)
              : std::format("[{}] {}: сбой {:#x} по адресу {}", owner, who, code, at);
+
+    const std::scoped_lock held{g_fault_lock};
+    ++g_faults;
+    g_last_fault = std::move(line);
     const std::size_t said = g_fault_lines[impl]++;
     if (said < kMaxLinesPerNative) {
         graft::log("! " + g_last_fault + " — вызов отменён, игра продолжает работу");
@@ -96,10 +106,12 @@ void note_fault(void* impl, std::uint32_t code, const void* at, const char* what
 }
 
 std::size_t fault_count() {
+    const std::scoped_lock held{g_fault_lock};
     return g_faults;
 }
 
 std::string last_fault() {
+    const std::scoped_lock held{g_fault_lock};
     return g_last_fault;
 }
 

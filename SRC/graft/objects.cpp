@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "graft/engine.hpp"
+#include "graft/guard.hpp"
 #include "graft/scan.hpp"
 #include "graft/script.hpp"
 
@@ -62,7 +63,11 @@ void* __fastcall on_destroy(void* self, unsigned flags) {
     auto** vt = *reinterpret_cast<void***>(self);
     auto* record = *reinterpret_cast<patched**>(vt - 1);
     for (void (*forget)(void*) : forgetters()) {
-        forget(self);
+        // Это код плагина, и зовут его ИЗ ДВИЖКОВОГО пути разрушения объекта: упасть тут
+        // значит уронить игру на её собственном коде, не добравшись даже до оригинального
+        // деструктора ниже. Обёртка та же, что у нативов, и по той же причине.
+        ::graft::detail::guarded<void>(reinterpret_cast<void*>(forget),
+                                       [&] { forget(self); });
     }
     return record->original ? record->original(self, flags) : nullptr;
 }

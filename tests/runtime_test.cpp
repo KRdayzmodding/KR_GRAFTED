@@ -6,9 +6,18 @@
 // каждую мелочь.
 #include <gtest/gtest.h>
 
+// Коды исключений и EXCEPTION_* — кейсы ниже проверяют фильтр напрямую.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <malloc.h>
+
+#include <iostream>
 #include <string>
 #include <vector>
 
@@ -566,6 +575,71 @@ TEST(Guard, VoidNativeSurvivesToo) {
     const std::size_t before = graft::loader::fault_count();
     graft::detail::guarded<void>(nullptr, [] { read_null(); });
     EXPECT_EQ(graft::loader::fault_count(), before + 1);
+}
+
+// Переполнение стека ловится, и ВТОРОЕ тоже. Второе — весь смысл кейса: __except ловит
+// 0xC00000FD и без всякой подготовки, но страница-сторож после этого не восстановлена, и
+// следующее переполнение убивает процесс, сколько бы обёрток вокруг ни стояло. Чинит это
+// _resetstkoflw, и позвать его можно только на раскрученном стеке — из обработчика, а не
+// из фильтра. Заодно проверяется, что отчёт вообще написался: в фильтре его писать нечем,
+// там стека уже нет, поэтому он отложен до обработчика.
+// Предохранитель обязателен, и не ради безопасности. БЕЗ него рекурсия безусловно
+// бесконечна, и компилятор вправе свернуть её в цикл: стек тогда не растёт, переполнения
+// не наступает, а кейс висит вечно. Проверено — именно так он и повёл себя. С условием
+// выхода кадры остаются кадрами, и стек кончается на глубине около шестнадцати тысяч.
+__declspec(noinline) int burn_stack(int depth) {
+    volatile char pad[4096];
+    pad[0] = static_cast<char>(depth);
+    if (depth > 4'000'000) {
+        return 0;
+    }
+    return pad[0] + burn_stack(depth + 1);
+}
+
+
+TEST(Guard, CatchesStackOverflowAndSurvivesTheSecondOne) {
+    const std::size_t before = graft::loader::fault_count();
+
+    EXPECT_EQ(graft::detail::guarded<int>(nullptr, [] { return burn_stack(0); }), 0);
+    EXPECT_EQ(graft::loader::fault_count(), before + 1);
+    // Код в отчёте есть, значит отчёт дошёл: писать его в фильтре было нечем — там стека
+    // уже не оставалось, — и он отложен до обработчика.
+    EXPECT_NE(graft::loader::last_fault().find("c00000fd"), std::string::npos);
+
+    // Вот ради чего _resetstkoflw. Без него страница-сторож не вернулась бы, и сюда мы
+    // просто не дошли: процесс умер бы молча на втором переполнении.
+    EXPECT_EQ(graft::detail::guarded<int>(nullptr, [] { return burn_stack(0); }), 0);
+    EXPECT_EQ(graft::loader::fault_count(), before + 2);
+}
+
+// Порчу кучи фильтр не берёт и не притворяется. Раньше он возвращал «обрабатываем» на
+// любой код и держался только на том, что движок заберёт 0xC0000374 раньше. Обещание,
+// которое не собираешься выполнять, хуже отсутствующего: продолжать после порчи кучи
+// нельзя — следующий new упадёт в другом месте, где виноватого уже не найти.
+TEST(Guard, RefusesToClaimHeapCorruption) {
+    EXPECT_EQ(graft::detail::fault_filter(nullptr, 0xC0000374ul, nullptr),
+              EXCEPTION_CONTINUE_SEARCH);
+
+    // А обычный сбой берёт — иначе кейс выше ничего бы не значил.
+    const std::size_t before = graft::loader::fault_count();
+    EXPECT_EQ(graft::detail::fault_filter(nullptr, 0xC0000005ul, nullptr),
+              EXCEPTION_EXECUTE_HANDLER);
+    EXPECT_EQ(graft::loader::fault_count(), before + 1);
+}
+
+// Упал ВЛОЖЕННЫЙ вызов — глубина обязана вернуться на уровень внешнего, а не в ноль.
+// Ноль сказал бы арене, что началась новая внешняя цепочка: она сбросила бы окно и
+// прибралась под ногами у внешнего вызова, который ещё жив и держит свои строки.
+TEST(Guard, NestedFaultRestoresDepthToTheCallerNotToZero) {
+    const graft::detail::call_scope outer;
+    ASSERT_EQ(graft::detail::call_depth(), 1u);
+
+    graft::detail::guarded<int>(nullptr, [] {
+        const graft::detail::call_scope inner;
+        return read_null();
+    });
+
+    EXPECT_EQ(graft::detail::call_depth(), 1u);
 }
 
 TEST(Guard, ReportNamesThePluginAndTheNative) {

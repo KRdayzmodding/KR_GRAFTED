@@ -110,6 +110,14 @@ std::size_t churn_arena(std::size_t bytes);
 void enter_call();
 void leave_call();
 
+// Глубина на входе в защищённый вызов и возврат к ней. Нужны падению: деструкторы при
+// раскрутке SEH не бегут, call_scope сам не закроется, и глубину надо чинить руками.
+// Именно ВОССТАНОВИТЬ, а не обнулить: если упал ВЛОЖЕННЫЙ вызов, ноль означал бы, что
+// началась новая внешняя цепочка, и арена затёрла бы строки внешнего вызова, пока он ещё
+// жив и собирается их вернуть.
+std::size_t call_depth();
+void restore_call_depth(std::size_t was);
+
 struct call_scope {
     call_scope() { enter_call(); }
     ~call_scope() { leave_call(); }
