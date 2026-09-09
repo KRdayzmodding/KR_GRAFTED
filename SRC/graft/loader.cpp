@@ -115,6 +115,18 @@ void api_watch_object(void* self, void (*forget)(void*)) {
     script::watch_object(self, forget);
 }
 
+uint8_t api_install_hook(void* target, void* detour, void** original) {
+    return hook(target, detour, original) ? 1u : 0u;
+}
+
+uint8_t api_remove_hook(void* target) {
+    return unhook(target) ? 1u : 0u;
+}
+
+uint8_t api_install_hooks(const graft_hook_request* items, uint32_t count) {
+    return hook_all(std::span{items, count}) ? 1u : 0u;
+}
+
 const graft_host_api& host_api() {
     static const graft_host_api api{sizeof(graft_host_api),
                                     GRAFT_ABI_VERSION,
@@ -129,7 +141,10 @@ const graft_host_api& host_api() {
                                     &api_script_root,
                                     &api_note_fault,
                                     &api_watch_object,
-                                    &api_find_global};
+                                    &api_find_global,
+                                    &api_install_hook,
+                                    &api_remove_hook,
+                                    &api_install_hooks};
     return api;
 }
 

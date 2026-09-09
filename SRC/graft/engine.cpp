@@ -11,8 +11,6 @@
 #include <string_view>
 #include <vector>
 
-#include <MinHook.h>
-
 #include "graft/loader.hpp"
 #include "graft/native.hpp"
 #include "graft/plugins.hpp"
@@ -213,21 +211,11 @@ void install() {
         scan::first_call(sections, reinterpret_cast<std::uintptr_t>(g_api.register_method));
     g_find_index = linker ? scan::first_call(sections, linker) : 0;
 
-    if (MH_Initialize() != MH_OK) {
-        log("! MinHook init failed");
-        return;
-    }
+    // Через тот же сервис, что отдаётся плагинам: копия MinHook в процессе одна, и хост
+    // не исключение — иначе «одна копия» держалась бы на честном слове.
+    hook(g_api.register_method, &hook_register_method, &g_orig_method);
 
-    if (MH_CreateHook(reinterpret_cast<void*>(g_api.register_method),
-                      reinterpret_cast<void*>(&hook_register_method),
-                      reinterpret_cast<void**>(&g_orig_method)) == MH_OK) {
-        MH_EnableHook(reinterpret_cast<void*>(g_api.register_method));
-    }
-
-    if (MH_CreateHook(reinterpret_cast<void*>(g_api.register_global),
-                      reinterpret_cast<void*>(&hook_register_global),
-                      reinterpret_cast<void**>(&g_orig)) != MH_OK ||
-        MH_EnableHook(reinterpret_cast<void*>(g_api.register_global)) != MH_OK) {
+    if (!hook(g_api.register_global, &hook_register_global, &g_orig)) {
         log("! hook failed");
         return;
     }

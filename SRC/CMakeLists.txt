@@ -85,21 +85,33 @@ FetchContent_Declare(minhook
     EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(minhook)
 
-# v1.3.3 без корневого CMakeLists — компилируем его C-исходники прямо в DLL.
-add_library(graft_proxy SHARED
-    dll/proxy.cpp
+# Врезка в чужой код — своя цель, а не кусок hid.dll. Её линкует не только хост, но и
+# сьюта: иначе graft::hook проверялся бы только выездом на стенд. Копия MinHook в
+# процессе при этом остаётся одна — целей, которые её тянут, ровно две, и в одном
+# процессе они не встречаются.
+#
+# v1.3.3 без корневого CMakeLists — компилируем его C-исходники прямо сюда.
+add_library(graft_hook STATIC
+    graft/hook.cpp
     dll/intrinsics.c
-    graft/engine.cpp
-    graft/loader.cpp
-    graft/frame.cpp
-    graft/host_natives.cpp
     "${minhook_SOURCE_DIR}/src/buffer.c"
     "${minhook_SOURCE_DIR}/src/hook.c"
     "${minhook_SOURCE_DIR}/src/trampoline.c"
     "${minhook_SOURCE_DIR}/src/hde/hde64.c"
 )
-target_link_libraries(graft_proxy PRIVATE graft_host)
-target_include_directories(graft_proxy PRIVATE "${minhook_SOURCE_DIR}/include")
+target_link_libraries(graft_hook PUBLIC graft_common)
+target_include_directories(graft_hook PRIVATE "${minhook_SOURCE_DIR}/include")
+add_library(graft::hook ALIAS graft_hook)
+set_target_properties(graft_hook PROPERTIES FOLDER graft)
+
+add_library(graft_proxy SHARED
+    dll/proxy.cpp
+    graft/engine.cpp
+    graft/loader.cpp
+    graft/frame.cpp
+    graft/host_natives.cpp
+)
+target_link_libraries(graft_proxy PRIVATE graft_host graft_hook)
 # Игра ищет hid.dll рядом с exe -> так и называем, без префикса lib.
 set_target_properties(graft_proxy PROPERTIES
     OUTPUT_NAME "hid" PREFIX "" FOLDER graft

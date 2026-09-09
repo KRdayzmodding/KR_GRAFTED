@@ -67,6 +67,7 @@ add_executable(graft_tests
     plugins/ping.cpp
     ping_test.cpp
     scan_test.cpp
+    hook_test.cpp
     proto_test.cpp
     types_test.cpp
     plugins_test.cpp
@@ -74,7 +75,8 @@ add_executable(graft_tests
     enfparse_test.cpp
     runtime_test.cpp
 )
-target_link_libraries(graft_tests PRIVATE graft::host graft::gen GTest::gtest_main)
+# graft::hook — ради hook_test: врезка проверяется на своей же функции, без игры.
+target_link_libraries(graft_tests PRIVATE graft::host graft::gen graft::hook GTest::gtest_main)
 target_include_directories(graft_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
 include(GoogleTest)

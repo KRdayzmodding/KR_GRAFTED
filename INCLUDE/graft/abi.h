@@ -19,7 +19,7 @@ extern "C" {
 #endif
 
 // Версия интерфейса: меняется при любой правке структур ниже.
-#define GRAFT_ABI_VERSION 6u
+#define GRAFT_ABI_VERSION 7u
 
 // Версия РАСКЛАДКИ движковых структур (graft::layout::version). Отдельная от ABI, потому
 // что ломается по другой причине: смещения запекаются в машинный код плагина, поэтому
@@ -35,6 +35,13 @@ extern "C" {
 #define GRAFT_ERR_ABI 1u        // плагин собран под другую версию интерфейса
 #define GRAFT_ERR_LAYOUT 2u     // плагин собран под другую раскладку движка
 #define GRAFT_ERR_INTERNAL 3u
+
+// Одна заявка на врезку: куда, чем и куда положить адрес трамплина.
+typedef struct graft_hook_request {
+    void* target;
+    void* detour;
+    void** original;
+} graft_hook_request;
 
 typedef struct graft_method_info {
     void* impl;
@@ -79,6 +86,16 @@ typedef struct graft_host_api {
     // find_method. Хост знает их все — врезка стоит на регистрации. Через них ходят
     // журналы самой игры: Print в script-лог, ErrorEx в crash-лог.
     void* (*find_global)(const char* name);
+    // Врезка в чужой код: MinHook хоста, отданный наружу. Копия в процессе обязана быть
+    // ОДНА — две не знают друг о друге, и вторая перепишет пролог, в котором уже стоит
+    // чужой переход: трамплин первой после этого ведёт в середину инструкции.
+    // original получает адрес трамплина; оригинал зовут через него, а не по target.
+    uint8_t (*install_hook)(void* target, void* detour, void** original);
+    uint8_t (*remove_hook)(void* target);
+    // Пачкой. Не удобство: врезка останавливает ВСЕ потоки процесса (снимок через
+    // toolhelp снимает потоки всей системы), и это десятки миллисекунд НА КАЖДУЮ. У
+    // пачки заморозка одна на всех. Ставится целиком либо не ставится вовсе.
+    uint8_t (*install_hooks)(const graft_hook_request* items, uint32_t count);
 } graft_host_api;
 
 // Один натив. POD-зеркало graft::native без указателя на следующий: строки живут в

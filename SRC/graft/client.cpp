@@ -61,6 +61,24 @@ void log(std::string_view line) {
 
 // Имя подставляется само — то самое, которым плагин представился в GRAFT_PLUGIN.
 // Дальше обе строки идут общим путём (log_script.cpp) — в журналы самой игры.
+// Врезка — сервис хоста: копия MinHook в процессе одна, и она не наша. Своей плагину и
+// не нужно: см. graft::hook в engine.hpp, там записано, чем кончаются две копии.
+bool hook(void* target, void* detour, void** original) {
+    return g_host && g_host->install_hook && g_host->install_hook(target, detour, original) != 0;
+}
+
+bool unhook(void* target) {
+    return g_host && g_host->remove_hook && g_host->remove_hook(target) != 0;
+}
+
+bool hook_all(std::span<const hook_request> all) {
+    if (all.empty()) {
+        return true;
+    }
+    return g_host && g_host->install_hooks &&
+           g_host->install_hooks(all.data(), static_cast<uint32_t>(all.size())) != 0;
+}
+
 bool print(std::string_view line) {
     return detail::say(false, graft_plugin_name_ ? graft_plugin_name_ : "plugin", line);
 }

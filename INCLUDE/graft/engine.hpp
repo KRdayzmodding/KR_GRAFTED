@@ -2,8 +2,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH LicenseRef-GRAFT-plugin-exception-1.0
 // Мод на GRAFT ничего не обязан — даже закрытый и платный. См. LICENSE-EXCEPTION.
 #pragma once
+#include <initializer_list>
+#include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
+
+#include "graft/abi.h"
 
 // Врезка в живой процесс игры: найти точки регистрации нативов и подсунуть движку
 // всё, что накопили блоки GRAFT_BINDINGS. Зашитых адресов нет, см. scan.hpp.
@@ -93,6 +98,71 @@ void say_banner();
 // печатать; до тех пор честно отвечает false — зовущей стороне достаточно позвать снова
 // на следующем проходе отложенного (см. retry_pending).
 bool say_banner_to_game();
+
+// ── Врезка в чужой код ───────────────────────────────────────────────────────
+// Найти движковую функцию библиотека уже умеет (scan.hpp); перехватить её — вторая
+// половина того же дела, и делать её плагину самому нечем.
+//
+// ПОЧЕМУ ЭТО СЕРВИС ХОСТА, А НЕ БИБЛИОТЕКА В ПЛАГИНЕ. Две копии MinHook в одном процессе
+// друг о друге не знают: у каждой свой пул трамплинов и свой список целей. Пока цели
+// разные — сходит с рук; как только двум плагинам понадобится одна функция, второй
+// перепишет пролог, в котором уже стоит чужой переход, и трамплин первого поведёт в
+// середину инструкции. Одна копия на процесс это просто не даёт сделать: повторная
+// врезка в ту же цель — честный отказ.
+//
+// original получает адрес ТРАМПЛИНА: оригинал зовут через него, а не по target — по
+// target теперь лежит переход к детуру.
+//
+// Ловушка, стоившая трёх падений сервера, записана в scan.hpp у frame_entry: хук на
+// ФУНКЦИЮ, которую зовут из сотен мест с разными аргументами, ломает чужие вызовы —
+// детур на C++ считает регистры xmm своими. Если место вызова известно, перенаправлять
+// надо его (так сделан кадр, SRC/graft/frame.cpp), а не функцию.
+bool hook(void* target, void* detour, void** original);
+bool unhook(void* target);
+
+// Те же, но без трёх приведений на месте вызова. Типы цели, детура и оригинала обязаны
+// СОВПАСТЬ — иначе кадр вызова разъедется молча, а компилятор об этом не скажет:
+//   graft::hook(&Engine_Foo, &my_foo, &g_orig);
+template <class F>
+    requires std::is_pointer_v<F>
+bool hook(F target, F detour, F* original) {
+    return hook(reinterpret_cast<void*>(target), reinterpret_cast<void*>(detour),
+                reinterpret_cast<void**>(original));
+}
+
+template <class F>
+    requires std::is_pointer_v<F>
+bool unhook(F target) {
+    return unhook(reinterpret_cast<void*>(target));
+}
+
+// ── Врезка пачкой ────────────────────────────────────────────────────────────
+// Ставить хуки по одному дорого, и не из-за патча пролога: врезка ОСТАНАВЛИВАЕТ ВСЕ
+// ПОТОКИ процесса, чтобы проверить, не стоит ли чей-то rip внутри переписываемых байт.
+// Список потоков берётся снимком toolhelp, а тот снимает потоки ВСЕЙ СИСТЕМЫ и потом
+// фильтрует по своему процессу — отсюда десятки миллисекунд на каждую врезку (замер
+// печатает кейс Hook.BatchIsCheaperThanOneByOne). У пачки заморозка одна на всех.
+//
+// Пачка встаёт ЦЕЛИКОМ либо не встаёт вовсе: половина врезок — это состояние, в котором
+// мод уже сломан, но ещё считает себя живым.
+using hook_request = graft_hook_request;
+
+bool hook_all(std::span<const hook_request> all);
+
+inline bool hook_all(std::initializer_list<hook_request> all) {
+    return hook_all(std::span<const hook_request>{all.begin(), all.size()});
+}
+
+// Заявка со сверкой типов — чтобы на месте вызова не было трёх приведений к void*, за
+// которыми компилятор уже ничего не проверяет:
+//   graft::hook_all({graft::hooked(&Engine_Foo, &my_foo, &g_foo),
+//                    graft::hooked(&Engine_Bar, &my_bar, &g_bar)});
+template <class F>
+    requires std::is_pointer_v<F>
+hook_request hooked(F target, F detour, F* original) {
+    return {reinterpret_cast<void*>(target), reinterpret_cast<void*>(detour),
+            reinterpret_cast<void**>(original)};
+}
 
 // ── Точка входа для кода на C++ ──────────────────────────────────────────────
 // Своего потока у библиотеки нет и не будет: строковый аллокатор движка без блокировок,
