@@ -1,26 +1,14 @@
 // Copyright (C) 2025-2026 6wingSerap
 // SPDX-License-Identifier: GPL-3.0-or-later
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-// tlhelp32.h требует windows.h раньше себя — порядок здесь значащий.
-#include <tlhelp32.h>
-
 #include <safetyhook/inline_hook.hpp>
-#include <safetyhook/os.hpp>
 
-#include <cstdint>
+#include <cstddef>
 #include <map>
 #include <mutex>
 #include <utility>
 #include <vector>
 
 #include "graft/engine.hpp"
-#include "graft/freeze.hpp"
 
 // Единственная копия механики врезки в процессе. Своя TU, а не кусок engine.cpp, по двум
 // причинам: её линкует не только hid.dll, но и сьюта (иначе graft::hook проверялся бы
@@ -30,128 +18,33 @@
 // Плагин зовёт эти же функции, но через таблицу сервисов: у него своей копии нет и быть
 // не должно, см. комментарий у graft::hook в engine.hpp.
 //
-// РАЗБОР ИНСТРУКЦИЙ — Zydis (внутри safetyhook). Он знает набор команд целиком, включая
-// VEX и EVEX; HDE64 внутри MinHook, стоявший здесь раньше, на таком прологе отказывал.
-// СЛОЙ ОС — свой, см. freeze.hpp: штатный у safetyhook держит в процессе векторный
-// обработчик и никогда не чистит список отравленных страниц, а это ровно то, что
-// отобрало бы у guard.hpp его обещание.
-static_assert(sizeof(void*) == 8, "слой врезки правит Rip: рассчитан на x64");
-
-// ── Заморозка потоков ────────────────────────────────────────────────────────
-namespace graft::freeze {
-namespace {
-
-// Замок общий на весь патч: два потока не должны переписывать чужой код одновременно.
-// Рекурсивный, потому что область вложенная — пачка открывает свою, а каждое включение
-// внутри неё открывает ещё одну.
-std::recursive_mutex g_lock;
-int g_depth = 0;
-std::vector<HANDLE> g_frozen;
-
-// Собрать потоки процесса, КРОМЕ своего. Отдельным шагом до первой остановки: и снимок
-// toolhelp, и вектор дескрипторов выделяют память, а под заморозкой этого делать нельзя —
-// кучный замок может оказаться у остановленного потока, и мы встанем насмерть.
+// Под капотом safetyhook как есть, без единой правки: разбор пролога у него на Zydis,
+// знающем набор команд целиком, включая VEX и EVEX. Своего здесь ровно одно — реестр
+// занятых целей, которого у safetyhook нет.
 //
-// Здесь же и вся цена врезки: снимок снимает потоки ВСЕЙ СИСТЕМЫ и лишь потом
-// фильтруется по своему процессу. Отсюда десятки миллисекунд, отсюда же и пачка.
-//
-// noexcept намеренно. Бросить здесь может только push_back и только при нехватке памяти
-// на ПЕРВОМ вызове (дальше ёмкость у вектора уже есть). Улететь из конструктора области
-// значит оставить общий замок захваченным навсегда: процесс встанет молча и без дампа.
-// Честное падение здесь движок хотя бы запишет.
-void collect() noexcept {
-    g_frozen.clear();
-    const HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-    if (snap == INVALID_HANDLE_VALUE) {
-        return;  // не смогли перечислить — патчим без заморозки, это лучше, чем не патчить
-    }
-    const DWORD mine = GetCurrentProcessId();
-    const DWORD self = GetCurrentThreadId();
-    THREADENTRY32 entry{};
-    entry.dwSize = sizeof entry;
-    if (Thread32First(snap, &entry) != FALSE) {
-        do {
-            // dwSize у записи свой: поле процесса читаем, только если оно вообще пришло.
-            if (entry.dwSize < FIELD_OFFSET(THREADENTRY32, th32OwnerProcessID) + sizeof(DWORD) ||
-                entry.th32OwnerProcessID != mine || entry.th32ThreadID == self) {
-                continue;
-            }
-            const HANDLE thread =
-                OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT, FALSE,
-                           entry.th32ThreadID);
-            if (thread != nullptr) {
-                g_frozen.push_back(thread);
-            }
-        } while (Thread32Next(snap, &entry) != FALSE);
-    }
-    CloseHandle(snap);
-}
-
-}  // namespace
-
-scope::scope() {
-    g_lock.lock();
-    if (g_depth++ > 0) {
-        return;  // уже заморожены: вложенная область только держит замок
-    }
-    collect();
-    for (const HANDLE thread : g_frozen) {
-        SuspendThread(thread);
-    }
-}
-
-scope::~scope() {
-    if (--g_depth == 0) {
-        for (const HANDLE thread : g_frozen) {
-            ResumeThread(thread);
-            CloseHandle(thread);
-        }
-        g_frozen.clear();
-    }
-    g_lock.unlock();
-}
-
-void scope::relocate(void* from, void* to, std::size_t len) const {
-    auto* const first = static_cast<std::uint8_t*>(from);
-    for (const HANDLE thread : g_frozen) {
-        // CONTEXT на x64 обязан быть выровнен по 16 — иначе GetThreadContext откажет.
-        alignas(16) CONTEXT ctx{};
-        ctx.ContextFlags = CONTEXT_CONTROL;
-        if (GetThreadContext(thread, &ctx) == FALSE) {
-            continue;
-        }
-        auto* const rip = reinterpret_cast<std::uint8_t*>(ctx.Rip);
-        if (rip < first || rip >= first + len) {
-            continue;
-        }
-        // Отображение побайтовое: первые len байт трамплина — копия пролога, и байт i
-        // там значит то же, что байт i здесь.
-        //
-        // ponytail: неверно ровно для одного случая — если в прологе был короткий переход
-        // и трамплин растянул его до длинного, байты за ним съезжают. Точное отображение
-        // требует таблицы границ инструкций (так делает MinHook); заводить её стоит
-        // тогда, когда найдётся движковая цель с переходом в первых байтах.
-        safetyhook::fix_ip(&ctx, rip, static_cast<std::uint8_t*>(to) + (rip - first));
-        SetThreadContext(thread, &ctx);
-    }
-}
-
-}  // namespace graft::freeze
-
-// ── Врезка ───────────────────────────────────────────────────────────────────
+// Как он патчит и почему это важно знать за пределами этого файла: safetyhook снимает
+// права со страницы, пишет переход и своим векторным обработчиком ловит тех, кто по
+// странице исполняется, отвечая им «продолжай». То есть врезка ШТАТНО порождает в
+// процессе поток обращений к недоступной памяти. Что из этого следует для обработки
+// сбоев — записано в guard.hpp, и это не теория: обработчик, считавший такие сбои
+// аномалией, вешал сьюту наглухо.
 namespace graft {
 namespace {
 
 // Реестр целей. У safetyhook его нет вовсе: вторую врезку в ту же функцию он примет и
 // построит цепочку, а снятие в неверном порядке порвёт её молча — первый вернёт на место
 // исходные байты поверх чужого перехода, и трамплин второго поведёт в никуда. Обещание
-// «одна копия на процесс» держится именно этим словарём, а не библиотекой.
+// «одна механика на процесс, повторная врезка — честный отказ» держит именно этот
+// словарь, а не библиотека под ним.
 std::mutex g_lock;
 std::map<void*, safetyhook::InlineHook> g_hooks;
 
-// Создать выключенным и сразу отдать адрес трамплина. Выключенным — потому что включение
-// это заморозка потоков, и в пачке она одна на всех; адрес сразу — потому что оригинал
-// обязан быть достижим ДО того, как детур станет доступен чужому потоку.
+// Создать выключенным и сразу отдать адрес трамплина.
+//
+// Выключенным — потому что пачка обязана либо встать целиком, либо не встать вовсе, а
+// создание, в отличие от включения, чужой пролог не трогает: откатывать после него
+// нечего. Адрес сразу — потому что оригинал обязан быть достижим ДО того, как детур
+// станет доступен чужому потоку, иначе первый же вызов уйдёт в ноль.
 bool prepare(const hook_request& want, std::vector<safetyhook::InlineHook>& into) {
     auto made = safetyhook::InlineHook::create(want.target, want.detour,
                                                safetyhook::InlineHook::StartDisabled);
@@ -222,8 +115,6 @@ bool hook_all(std::span<const hook_request> all) {
         }
     }
 
-    // Создание пролог не трогает и потоки не морозит: только разбирает инструкции и
-    // строит трамплин. Морозит включение — поэтому создаём все, включаем одной очередью.
     std::vector<safetyhook::InlineHook> made;
     made.reserve(all.size());
     const auto forget_originals = [&] {
@@ -240,20 +131,13 @@ bool hook_all(std::span<const hook_request> all) {
             return false;  // не включено ещё ничего — откатывать нечего
         }
     }
-
-    {
-        // Вот здесь — одна остановка потоков на всю пачку. Она же держит обещание «либо
-        // целиком, либо никак» буквально: пока идёт откат, чужой поток не бежит и не
-        // может застать половину пачки живой.
-        const freeze::scope frozen;
-        for (std::size_t i = 0; i < made.size(); ++i) {
-            if (!made[i].enable()) {
-                for (std::size_t j = 0; j < i; ++j) {
-                    (void)made[j].disable();
-                }
-                forget_originals();
-                return false;
+    for (std::size_t i = 0; i < made.size(); ++i) {
+        if (!made[i].enable()) {
+            for (std::size_t j = 0; j < i; ++j) {
+                (void)made[j].disable();
             }
+            forget_originals();
+            return false;
         }
     }
 

@@ -104,9 +104,9 @@ FetchContent_Declare(zydis
     EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(zydis)
 
-# safetyhook: тянем ТОЛЬКО исходники. SOURCE_SUBDIR указан в несуществующий каталог,
-# поэтому его CMakeLists не выполняется — иначе он потащил бы свой Zydis через CPM и
-# собрал бы свой слой ОС, а он нам не подходит: см. SRC/vendor и graft/freeze.hpp.
+# safetyhook: тянем ТОЛЬКО исходники и компилируем нужные сами. SOURCE_SUBDIR указан в
+# несуществующий каталог, поэтому его CMakeLists не выполняется — иначе он потащил бы
+# свой Zydis через CPM, а он у нас уже собран выше со своими настройками.
 FetchContent_Declare(safetyhook
     GIT_REPOSITORY https://github.com/cursey/safetyhook.git
     GIT_TAG        v0.7.0
@@ -119,22 +119,17 @@ FetchContent_MakeAvailable(safetyhook)
 # процессе при этом остаётся одна — целей, которые её тянут, ровно две, и в одном
 # процессе они не встречаются.
 #
-# Из safetyhook берём три файла из восьми: mid_hook, vmt_hook, easy и слой Linux не нужны
-# никому, а в hid.dll ехали бы. Слой ОС — наш: vendor/safetyhook-os-windows.cpp, копия
-# апстримного с одной заменённой функцией (там же записано, какой и почему).
+# Из safetyhook берём четыре файла из восьми: mid_hook, vmt_hook, easy и слой Linux не
+# нужны никому, а в hid.dll ехали бы.
 add_library(graft_hook STATIC
     graft/hook.cpp
-    vendor/safetyhook-os-windows.cpp
     "${safetyhook_SOURCE_DIR}/src/allocator.cpp"
     "${safetyhook_SOURCE_DIR}/src/inline_hook.cpp"
+    "${safetyhook_SOURCE_DIR}/src/os.windows.cpp"
     "${safetyhook_SOURCE_DIR}/src/utility.cpp"
 )
 target_link_libraries(graft_hook PUBLIC graft_common PRIVATE Zydis)
-# Заголовки safetyhook — внутрь цели; SRC на пути ради graft/freeze.hpp, который лежит
-# рядом с реализацией и наружу не выходит: плагину он не нужен и вреден.
-target_include_directories(graft_hook PRIVATE
-    "${safetyhook_SOURCE_DIR}/include"
-    "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(graft_hook PRIVATE "${safetyhook_SOURCE_DIR}/include")
 add_library(graft::hook ALIAS graft_hook)
 set_target_properties(graft_hook PROPERTIES FOLDER graft)
 
