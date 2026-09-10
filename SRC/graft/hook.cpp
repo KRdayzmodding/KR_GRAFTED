@@ -1,19 +1,8 @@
 // Copyright (C) 2025-2026 6wingSerap
 // SPDX-License-Identifier: GPL-3.0-or-later
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-// tlhelp32.h требует windows.h раньше себя — порядок здесь значащий.
-#include <tlhelp32.h>
-
 #include <safetyhook/inline_hook.hpp>
 
 #include <cstddef>
-#include <cstdint>
 #include <map>
 #include <mutex>
 #include <utility>
@@ -30,8 +19,8 @@
 // не должно, см. комментарий у graft::hook в engine.hpp.
 //
 // Под капотом safetyhook как есть, без единой правки: разбор пролога у него на Zydis,
-// знающем набор команд целиком, включая VEX и EVEX. Своего здесь ровно одно — реестр
-// занятых целей, которого у safetyhook нет.
+// знающем набор команд целиком, включая VEX и EVEX. Своего здесь ровно две вещи: реестр
+// занятых целей, которого у safetyhook нет, и отставка снятых врезок вместо разрушения.
 //
 // Как он патчит и почему это важно знать за пределами этого файла: safetyhook снимает
 // права со страницы, пишет переход и своим векторным обработчиком ловит тех, кто по
@@ -39,6 +28,33 @@
 // процессе поток обращений к недоступной памяти. Что из этого следует для обработки
 // сбоев — записано в guard.hpp, и это не теория: обработчик, считавший такие сбои
 // аномалией, вешал сьюту наглухо.
+//
+// ── КОГДА ВРЕЗКА БЕЗОПАСНА, И ПОЧЕМУ ЭТО НЕ ПОЖЕЛАНИЕ ────────────────────────
+//
+// Патч переписывает первые байты чужой функции. Байт там обычно несколько, и внутри них
+// есть границы инструкций. Поток, снятый планировщиком РОВНО НА ТАКОЙ ГРАНИЦЕ, после
+// пробуждения продолжит с середины уже другой инструкции: сбоя у него нет, он просто
+// спит, и ловушка на правах страницы его не видит. Проверено стресс-кейсом — вылет
+// C000001D с rip на один байт внутри цели.
+//
+// Закрыть это можно только остановкой всех потоков процесса на время патча. Так делал
+// MinHook, так пробовали и здесь — и убрали. SuspendThread останавливает поток где
+// угодно, в том числе внутри кучного или ядерного замка, а нам под остановкой нужен и
+// тот и другой: взаимная блокировка неустранима, и цена ей — вечно висящий сервер вместо
+// редкого падения. В этом дереве такого вызова нет ни одного, и это осознанно.
+//
+// Вместо него — условие, при котором гонки НЕ СУЩЕСТВУЕТ: врезаться, пока исполнять цель
+// в процессе некому. У graft это не пожелание, а устройство:
+//
+//   hid.dll лежит рядом с exe и тянется его таблицей импорта ДО main(). В DllMain
+//   заводится поток; он делает скан, ставит свои врезки и тут же зовёт точки входа всех
+//   плагинов (SRC/graft/loader.cpp). Движок к этому моменту не создал ещё ни одного
+//   своего потока — останавливать нечего и некого.
+//
+// Отсюда контракт, и он один: ВРЕЗКУ СТАВЯТ ИЗ ТОЧКИ ВХОДА ПЛАГИНА. Не с тика, не по
+// событию в игре, не по команде из скрипта. Поставленное там безопасно без единой
+// остановки потока; поставленное позже — под ответственность того, кто это делает, и
+// цена записана у кейса Hook.TargetUnderTrafficSurvivesInstallAndRemoval.
 namespace graft {
 namespace {
 
@@ -77,108 +93,6 @@ std::vector<safetyhook::InlineHook>& retired() {
     return *all;
 }
 
-// ── Поток, снятый планировщиком на прологе ───────────────────────────────────
-// Единственная гонка, которую механика патча не закрывает и закрыть не может.
-//
-// safetyhook на время записи снимает со страницы права и ловит своим обработчиком тех,
-// кто по ней ИСПОЛНЯЕТСЯ: им он переставляет rip в трамплин. Но поток, снятый
-// планировщиком ВНУТРИ переписываемых байт, сбоя не получает — он просто спит. Права
-// вернут, его разбудят, и он продолжит с середины уже другой инструкции.
-//
-// Так это и выглядит, поймано фильтром необработанных исключений на стресс-кейсе:
-//
-//     [СБОЙ] code=C000001D rip=...51F1 ... answer=...51F0
-//
-// C000001D — недопустимая инструкция, rip на один байт внутри цели. Ровно тот случай.
-//
-// Лечится одним способом: остановить потоки на время патча и переставить rip тем, кто
-// попал внутрь. Здесь это делается ВОКРУГ safetyhook, а не вместо него: библиотека
-// остаётся нетронутой, её собственная ловушка под заморозкой просто не срабатывает —
-// исполняться по странице некому.
-class frozen_threads {
-public:
-    frozen_threads() {
-        // Собрать ДО первой остановки: снимок и вектор выделяют память, а под заморозкой
-        // этого делать нельзя — кучный замок может оказаться у остановленного потока.
-        const HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-        if (snap == INVALID_HANDLE_VALUE) {
-            return;  // не перечислили — патчим без заморозки: это лучше, чем не патчить
-        }
-        const DWORD mine = GetCurrentProcessId();
-        const DWORD self = GetCurrentThreadId();
-        THREADENTRY32 entry{};
-        entry.dwSize = sizeof entry;
-        if (Thread32First(snap, &entry) != FALSE) {
-            do {
-                if (entry.dwSize < FIELD_OFFSET(THREADENTRY32, th32OwnerProcessID) + sizeof(DWORD) ||
-                    entry.th32OwnerProcessID != mine || entry.th32ThreadID == self) {
-                    continue;
-                }
-                const HANDLE one = OpenThread(
-                    THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT, FALSE,
-                    entry.th32ThreadID);
-                if (one != nullptr) {
-                    held_.push_back(one);
-                }
-            } while (Thread32Next(snap, &entry) != FALSE);
-        }
-        CloseHandle(snap);
-        for (const HANDLE one : held_) {
-            SuspendThread(one);
-        }
-    }
-
-    ~frozen_threads() {
-        for (const HANDLE one : held_) {
-            ResumeThread(one);
-            CloseHandle(one);
-        }
-    }
-
-    frozen_threads(const frozen_threads&) = delete;
-    frozen_threads& operator=(const frozen_threads&) = delete;
-
-    // Переставить rip тем, кто стоит внутри [from, from + len). Звать ПОСЛЕ записи и ДО
-    // разморозки: снаружи потоки уже бегут, и правка контекста опоздает.
-    void relocate(const void* from, const void* to, std::size_t len) const {
-        const auto* const first = static_cast<const std::uint8_t*>(from);
-        for (const HANDLE one : held_) {
-            // CONTEXT на x64 обязан быть выровнен по 16 — иначе GetThreadContext откажет.
-            alignas(16) CONTEXT ctx{};
-            ctx.ContextFlags = CONTEXT_CONTROL;
-            if (GetThreadContext(one, &ctx) == FALSE) {
-                continue;
-            }
-            const auto* const rip = reinterpret_cast<const std::uint8_t*>(ctx.Rip);
-            if (rip < first || rip >= first + len) {
-                continue;
-            }
-            // Отображение побайтовое: первые len байт трамплина — копия пролога.
-            //
-            // ponytail: неверно ровно для одного случая — если в прологе был короткий
-            // переход и трамплин растянул его до длинного, байты за ним съезжают. Точное
-            // отображение требует таблицы границ инструкций; заводить её стоит тогда,
-            // когда найдётся движковая цель с переходом в первых байтах.
-            ctx.Rip = reinterpret_cast<DWORD64>(static_cast<const std::uint8_t*>(to) +
-                                                (rip - first));
-            SetThreadContext(one, &ctx);
-        }
-    }
-
-private:
-    std::vector<HANDLE> held_;
-};
-
-// Включить под заморозкой и подобрать тех, кто остался внутри пролога.
-bool turn_on(safetyhook::InlineHook& one) {
-    const frozen_threads frozen;
-    if (!one.enable()) {
-        return false;
-    }
-    frozen.relocate(one.target(), one.trampoline().data(), one.original_bytes().size());
-    return true;
-}
-
 // Создать выключенным и сразу отдать адрес трамплина.
 //
 // Выключенным — потому что пачка обязана либо встать целиком, либо не встать вовсе, а
@@ -212,7 +126,7 @@ bool hook(void* target, void* detour, void** original) {
     }
     // Врезка и включение — одно действие: созданный, но выключенный хук наружу выглядит
     // как успех, которого не случилось.
-    if (!turn_on(made.front())) {
+    if (!made.front().enable()) {
         *original = nullptr;
         return false;
     }
@@ -233,20 +147,9 @@ bool unhook(void* target) {
     // выгрузки процесса. А вот разрушать нельзя: см. retired().
     safetyhook::InlineHook going = std::move(found->second);
     hooks().erase(found);
-    bool off = false;
-    {
-        // Снятие — тот же патч наоборот, и та же гонка: поток может стоять внутри
-        // трамплина, куда его перевела врезка. Переставляем обратно в цель.
-        const frozen_threads frozen;
-        off = going.disable().has_value();
-        if (off) {
-            frozen.relocate(going.trampoline().data(), going.target(),
-                            going.original_bytes().size());
-        }
-    }
+    const bool off = going.disable().has_value();
     // В отставку в любом случае, даже когда выключить не вышло: разрушить сейчас значит
-    // освободить трамплин, а в нём может стоять чужой поток. Выделение памяти здесь, а не
-    // под заморозкой, — намеренно: кучный замок мог бы оказаться у остановленного потока.
+    // освободить трамплин, а в нём может стоять чужой поток.
     retired().push_back(std::move(going));
     return off;
 }
@@ -287,20 +190,13 @@ bool hook_all(std::span<const hook_request> all) {
             return false;  // не включено ещё ничего — откатывать нечего
         }
     }
-    {
-        // Одна заморозка на всю пачку: пока идёт откат, чужой поток не бежит и половину
-        // пачки живой не застанет.
-        const frozen_threads frozen;
-        for (std::size_t i = 0; i < made.size(); ++i) {
-            if (!made[i].enable()) {
-                for (std::size_t j = 0; j < i; ++j) {
-                    (void)made[j].disable();
-                }
-                forget_originals();
-                return false;
+    for (std::size_t i = 0; i < made.size(); ++i) {
+        if (!made[i].enable()) {
+            for (std::size_t j = 0; j < i; ++j) {
+                (void)made[j].disable();
             }
-            frozen.relocate(made[i].target(), made[i].trampoline().data(),
-                            made[i].original_bytes().size());
+            forget_originals();
+            return false;
         }
     }
 
