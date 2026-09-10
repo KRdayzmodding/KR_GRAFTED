@@ -18,13 +18,31 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
 #include <thread>
 #include <vector>
 
 #include "graft/engine.hpp"
+#include "graft/loader.hpp"
+#include "graft/thunk.hpp"
+#include "graft/loader.hpp"
 
 namespace {
+
+// Числа нагрузки читаются из окружения: гонка редкая, и разбирали её прогонами вида
+// GRAFT_HAMMERS=16 GRAFT_ROUNDS=600. По умолчанию скромные — кейс живёт в обычной сьюте,
+// а каждая врезка стоит десятки миллисекунд. getenv_s, а не getenv: второй у MSVC помечен
+// устаревшим, и сьюта собирается без предупреждений.
+int from_env(const char* name, int fallback) {
+    char buf[32]{};
+    std::size_t len = 0;
+    if (getenv_s(&len, buf, sizeof buf, name) != 0 || len == 0) {
+        return fallback;
+    }
+    const int got = std::atoi(buf);
+    return got > 0 ? got : fallback;
+}
 
 using answer_fn = int(__fastcall*)(int);
 
@@ -153,16 +171,18 @@ TEST(Hook, EmptyBatchIsHarmless) {
     EXPECT_TRUE(graft::hook_all({}));
 }
 
-// Цена. Сам ВЫЗОВ после врезки стоит один переход — мерить там нечего. Установка тоже
-// оказалась дешёвой, и это стоит зафиксировать числом: safetyhook потоки НЕ останавливает
-// (он патчит пролог под снятыми правами страницы и ловит тех, кто по ней исполняется,
-// своим обработчиком), поэтому снимка toolhelp по всей системе здесь нет. Врезка на
-// прежней механике стоила около 70 мс, на этой — сотые доли миллисекунды.
+// Цена. Сам ВЫЗОВ после врезки стоит один переход — мерить там нечего. А вот УСТАНОВКА
+// стоит десятки миллисекунд, и число здесь ради того, чтобы это было видно, а не
+// подразумевалось: safetyhook потоки не останавливает
+// сам, а graft делает это вокруг него — иначе поток, снятый планировщиком внутри
+// переписываемых байт, проснётся на середине новой инструкции.
 //
-// Практический вывод один: врезку больше не обязательно делать только на старте.
+// Дорогая часть — заморозка потоков: снимок toolhelp снимает потоки ВСЕЙ СИСТЕМЫ и лишь
+// потом фильтруется по своему процессу. Она обязательна, и почему — записано у
+// frozen_threads в SRC/graft/hook.cpp. Практический вывод: врезку ставят на старте.
 TEST(Hook, InstallCostIsMeasured) {
     answer_fn original = nullptr;
-    constexpr int rounds = 256;
+    constexpr int rounds = 16;
 
     const auto t0 = std::chrono::steady_clock::now();
     for (int i = 0; i < rounds; ++i) {
@@ -252,32 +272,59 @@ int __fastcall detour_on_page(int x) {
 
 }  // namespace
 
-// ИЗВЕСТНЫЙ ПОТОЛОК, зафиксированный намеренно.
+// Детур под защитой: падение внутри него отменяет ВЫЗОВ, а не игру.
 //
-// safetyhook патчит чужой пролог так: снимает со страницы права, пишет переход и ловит
-// обращения к этой странице своим векторным обработчиком, отвечая ему «продолжай». Пока
-// патч идёт, это ровно то, что нужно. Но список отравленных страниц он НЕ ЧИСТИТ: после
-// снятия врезки страница остаётся в нём навсегда, и настоящий сбой на ней получит то же
-// «продолжай» — то есть повтор той же инструкции вместо падения.
+// Натив плагина был обёрнут всегда, а детур — нет: hook принимал голый указатель, и код
+// того же плагина падал по-разному в зависимости от того, как его позвали. Форма
+// hook<&detour>(target, &orig) это закрывает.
+namespace {
+
+int __fastcall detour_that_falls(int) {
+    return read_at(nullptr);  // отдельная noinline функция: иначе сбой уедет из области
+}
+
+}  // namespace
+
+TEST(Hook, GuardedDetourSurvivesItsOwnFault) {
+    answer_fn original = nullptr;
+    const std::size_t before = graft::loader::fault_count();
+
+    ASSERT_TRUE(graft::hook<&detour_that_falls>(&answer, &original));
+    // Детур падает на каждом вызове, а цель продолжает отвечать — нулём по умолчанию.
+    EXPECT_EQ(g_call(1), 0);
+    EXPECT_EQ(g_call(1), 0);
+    EXPECT_EQ(graft::loader::fault_count(), before + 2);
+
+    EXPECT_TRUE(graft::unhook(&answer));
+    EXPECT_EQ(g_call(1), 2);
+}
+
+// Голая форма осталась и по-прежнему не оборачивает: это осознанный выход для детура,
+// который обязан досылать управление оригиналу при любом исходе.
+TEST(Hook, RawDetourFormIsStillAvailable) {
+    answer_fn original = nullptr;
+    ASSERT_TRUE(graft::hook(&answer, &detour_flat, &original));
+    EXPECT_EQ(g_call(1), 777);
+    EXPECT_TRUE(graft::unhook(&answer));
+}
+
+// Снятая врезка не оставляет за собой ничего, что съест ЧУЖОЙ сбой потом.
 //
-// Мы это принимаем, и вот почему. Отравленные страницы — это страницы кода движка с
-// нашими целями и страницы трамплинов. Адрес, по которому промахнулся кривой натив, —
-// это его данные: ноль или мусор. Совпадение возможно, но для него нужно, чтобы битый
-// указатель показал ровно в одну из нескольких страниц кода из ста двадцати восьми
-// терабайт адресного пространства. Кейс ниже подстраивает это совпадение руками —
-// сам по себе он не случается.
+// Штатный safetyhook патчит так: снимает со страницы права и ловит обращения к ней своим
+// векторным обработчиком, отвечая ему «продолжай». Список отравленных страниц он НЕ
+// ЧИСТИТ никогда — каждая пара врезка+снятие добавляет в него две записи навсегда, — а
+// обработчик стоит первым в цепочке, выше кадрового. Настоящий сбой на такой странице
+// после снятия врезки получал бы «продолжай»: вечный цикл вместо падения с дампом, и
+// guard.hpp со своим __except до него просто не доходил.
 //
-// Цена альтернативы измерена, а не прикинута: свой слой ОС с заморозкой потоков вместо
-// этого обработчика был написан и убран. Около четырёхсот строк своего кода и форк чужого
-// файла, врезка дороже в две с половиной тысячи раз (70 мс против 0.03 мс) — и при этом
-// на стресс-тесте ниже он падал так же, как штатный. Ради случая, который не наступает,
-// платить было нечем.
+// В graft этого обработчика нет: патч идёт под заморозкой потоков, исполняться по
+// странице в этот момент некому, и ловушка не срабатывала ни разу — только копила. Она
+// убрана вендорной копией слоя ОС (SRC/vendor, шапка файла объясняет что и почему).
 //
-// Кейс живёт здесь как характеристика чужого поведения: если safetyhook однажды начнёт
-// чистить список, он покраснеет, и это будет хорошей новостью, а не поломкой. А guard за
-// это время успеет написать в журнал, что сбой доставлен повторно (detail::watch_faults):
-// без этой строки такой случай выглядит как молча зависший сервер.
-TEST(Hook, FaultOnAPageOfARemovedHookIsRetried) {
+// Кейс подстраивает совпадение руками: врезается в свою страницу, снимает врезку,
+// отравляет страницу и смотрит, сколько раз будет доставлен сбой. Один — значит его
+// отдали нашему __except. Два — значит кто-то в цепочке снова отвечает «продолжай».
+TEST(Hook, RemovedHookLeavesNothingThatSwallowsFaults) {
     auto* page = static_cast<std::uint8_t*>(
         VirtualAlloc(nullptr, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
     ASSERT_NE(page, nullptr);
@@ -310,11 +357,8 @@ TEST(Hook, FaultOnAPageOfARemovedHookIsRetried) {
     g_poisoned = nullptr;
     VirtualFree(page, 0, MEM_RELEASE);
 
-    // Ровно два: первый сбой съеден и повторён, второй наша страховка развернула сама.
-    // Станет один — значит список отравленных страниц начали чистить, и потолка больше
-    // нет; тогда этот кейс надо не чинить, а выбрасывать.
-    EXPECT_EQ(g_faults.load(), 2) << "потолок исчез — перечитай комментарий выше";
-    EXPECT_EQ(got, 0) << "сбой дошёл до __except, хотя страница отравлена";
+    EXPECT_EQ(g_faults.load(), 1) << "сбой доставлен дважды — кто-то ответил «продолжай»";
+    EXPECT_EQ(got, -1) << "сбой не дошёл до __except: врезка забрала его себе";
 }
 
 // Врезка под нагрузкой: цель зовут с других потоков, пока пролог переписывают.
@@ -335,7 +379,30 @@ TEST(Hook, FaultOnAPageOfARemovedHookIsRetried) {
 // на живой цели не поддержано НИ ОДНОЙ из механик. Врезку ставят на старте и не трогают.
 // До двух тысяч оборотов штатный safetyhook проходит устойчиво (три прогона из трёх),
 // двести — с запасом.
+namespace {
+long CALLBACK report_unhandled(EXCEPTION_POINTERS* ep) {
+    const auto rip = static_cast<std::uintptr_t>(ep->ContextRecord->Rip);
+    const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+    char buf[512];
+    _snprintf_s(buf, sizeof buf, _TRUNCATE,
+                "\n[СБОЙ] code=%08lX rip=%p (RVA %llX) обращение=%p поток=%lu answer=%p\n",
+                ep->ExceptionRecord->ExceptionCode, reinterpret_cast<void*>(rip),
+                static_cast<unsigned long long>(rip >= base ? rip - base : rip),
+                ep->ExceptionRecord->NumberParameters >= 2
+                    ? reinterpret_cast<void*>(ep->ExceptionRecord->ExceptionInformation[1])
+                    : nullptr,
+                GetCurrentThreadId(), reinterpret_cast<void*>(&answer));
+    DWORD wrote = 0;
+    WriteFile(GetStdHandle(STD_ERROR_HANDLE), buf, static_cast<DWORD>(strlen(buf)), &wrote, nullptr);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+}  // namespace
+
 TEST(Hook, TargetUnderTrafficSurvivesInstallAndRemoval) {
+    // Фильтр необработанных исключений: без него падение этого кейса выглядит как молча
+    // исчезнувший прогон. Именно он и показал причину — rip на байт внутри цели.
+    // Восстанавливаем прежний в конце: фильтр общий на процесс.
+    LPTOP_LEVEL_EXCEPTION_FILTER const was_filter = SetUnhandledExceptionFilter(&report_unhandled);
     std::atomic<bool> stop{false};
     std::atomic<long long> spins{0};
     std::atomic<long> wrong{0};
@@ -345,7 +412,8 @@ TEST(Hook, TargetUnderTrafficSurvivesInstallAndRemoval) {
     static answer_fn s_unused = nullptr;
 
     std::vector<std::jthread> hammer;
-    for (int i = 0; i < 4; ++i) {
+    const int threads = from_env("GRAFT_HAMMERS", 4);
+    for (int i = 0; i < threads; ++i) {
         hammer.emplace_back([&] {
             while (!stop.load(std::memory_order_relaxed)) {
                 const int got = g_call(1);
@@ -365,7 +433,7 @@ TEST(Hook, TargetUnderTrafficSurvivesInstallAndRemoval) {
 
     // Оборотов много именно потому, что они дешёвые: каждый — окно, в котором чужой поток
     // может оказаться на переписываемом прологе. Это и есть смысл кейса.
-    constexpr int rounds = 200;
+    const int rounds = from_env("GRAFT_ROUNDS", 40);
     const auto t0 = std::chrono::steady_clock::now();
     for (int round = 0; round < rounds; ++round) {
         ASSERT_TRUE(graft::hook(&answer, &detour_flat, &s_unused));
@@ -382,4 +450,5 @@ TEST(Hook, TargetUnderTrafficSurvivesInstallAndRemoval) {
     EXPECT_EQ(wrong.load(), 0) << "цель вернула то, чего не возвращают ни оригинал, ни детур";
     EXPECT_GT(spins.load(), 0) << "потоки не крутились — их не разморозили";
     EXPECT_EQ(g_call(1), 2) << "после снятия цель обязана быть исходной";
+    SetUnhandledExceptionFilter(was_filter);
 }

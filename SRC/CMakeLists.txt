@@ -119,13 +119,15 @@ FetchContent_MakeAvailable(safetyhook)
 # процессе при этом остаётся одна — целей, которые её тянут, ровно две, и в одном
 # процессе они не встречаются.
 #
-# Из safetyhook берём четыре файла из восьми: mid_hook, vmt_hook, easy и слой Linux не
-# нужны никому, а в hid.dll ехали бы.
+# Из safetyhook берём три файла из восьми: mid_hook, vmt_hook, easy и слой Linux не нужны
+# никому, а в hid.dll ехали бы. Четвёртый, слой ОС, взят вендорной копией: в апстримном
+# живёт векторный обработчик, который под нашей заморозкой не срабатывает ни разу, но
+# копит отравленные страницы навсегда. Что именно заменено — в шапке самого файла.
 add_library(graft_hook STATIC
     graft/hook.cpp
+    vendor/safetyhook-os-windows.cpp
     "${safetyhook_SOURCE_DIR}/src/allocator.cpp"
     "${safetyhook_SOURCE_DIR}/src/inline_hook.cpp"
-    "${safetyhook_SOURCE_DIR}/src/os.windows.cpp"
     "${safetyhook_SOURCE_DIR}/src/utility.cpp"
 )
 target_link_libraries(graft_hook PUBLIC graft_common PRIVATE Zydis)
