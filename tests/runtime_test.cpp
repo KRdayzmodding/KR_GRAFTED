@@ -642,6 +642,26 @@ TEST(Guard, NestedFaultRestoresDepthToTheCallerNotToZero) {
     EXPECT_EQ(graft::detail::call_depth(), 1u);
 }
 
+// Защита ловит сбой ВНУТРИ своей области, и деструкторы снаружи неё отрабатывают.
+//
+// Раскрутка SEH деструкторы не зовёт. Поэтому код, который подменяет ОБЩЕЕ состояние и
+// возвращает его деструктором, ставит защиту внутри своей области, вокруг самого вызова:
+// обёртка, поставленная СНАРУЖИ, поймала бы сбой и оставила подменённое состояние
+// неотданным — это хуже падения. Вот доказательство, что защиты внутри достаточно.
+TEST(Guard, ScopesAroundTheGuardStillUnwindNormally) {
+    bool restored = false;
+    {
+        struct restorer {
+            bool& flag;
+            ~restorer() { flag = true; }
+        } held{restored};
+
+        EXPECT_EQ(graft::detail::guarded<int>(nullptr, [] { return read_null(); }), 0);
+        EXPECT_FALSE(restored) << "деструктор сработал раньше выхода из области";
+    }
+    EXPECT_TRUE(restored) << "область не закрылась: значит защиту поставили не туда";
+}
+
 TEST(Guard, ReportNamesThePluginAndTheNative) {
     // Кто упал, известно только по адресу трамплина: хост ищет его в реестре. Без этого
     // в журнале осталось бы «где-то в hid», а нужно «плагин такой-то, натив такой-то».
