@@ -107,10 +107,17 @@ FetchContent_MakeAvailable(zydis)
 # safetyhook: тянем ТОЛЬКО исходники и компилируем нужные сами. SOURCE_SUBDIR указан в
 # несуществующий каталог, поэтому его CMakeLists не выполняется — иначе он потащил бы
 # свой Zydis через CPM, а он у нас уже собран выше со своими настройками.
+#
+# PATCH_COMMAND: одна правка в его слое ОС, см. patches/README.md. Заплаткой, а не копией
+# файла в дереве, ровно ради обновляемости — подъём тега, тронувший тот же кусок, встанет
+# здесь с текстом конфликта, а не проедет молча.
 FetchContent_Declare(safetyhook
     GIT_REPOSITORY https://github.com/cursey/safetyhook.git
     GIT_TAG        v0.7.0
     SOURCE_SUBDIR  do-not-configure
+    PATCH_COMMAND  "${CMAKE_COMMAND}"
+                   "-DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/patches/safetyhook-trap-lifetime.patch"
+                   -P "${CMAKE_CURRENT_SOURCE_DIR}/patches/apply-patch.cmake"
     EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(safetyhook)
 
