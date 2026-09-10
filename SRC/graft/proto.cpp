@@ -88,6 +88,28 @@ std::vector<std::string> split_params(const char* csv) {
     return out;
 }
 
+// Описание — комментарием НАД объявлением. Многострочное печатается несколькими
+// строками: одну строку на всё объяснение читать невозможно, а голый перенос разорвал
+// бы комментарий и сломал файл.
+void emit_doc(std::string& out, const char* doc, std::string_view indent) {
+    if (!doc || !*doc) {
+        return;
+    }
+    std::string_view rest{doc};
+    while (true) {
+        const std::size_t nl = rest.find('\n');
+        const std::string_view line = rest.substr(0, nl);
+        out += indent;
+        out += line.empty() ? "//" : "// ";
+        out += line;
+        out += '\n';
+        if (nl == std::string_view::npos) {
+            return;
+        }
+        rest.remove_prefix(nl + 1);
+    }
+}
+
 } // namespace
 
 std::string proto_decl(const graft_native_desc& n) {
@@ -138,13 +160,8 @@ std::string proto_file(const std::vector<const graft_native_desc*>& source, cons
 
     for (const graft_native_desc* n : all) {
         if (!n->class_name) {
-            // Описание — строкой комментария над объявлением: пользователь читает
-            // сгенерированный файл, и типов ему мало.
-            if (n->doc && *n->doc) {
-                out += "// ";
-                out += n->doc;
-                out += "\n";
-            }
+            // Пользователь читает сгенерированный файл, и типов ему мало.
+            emit_doc(out, n->doc, "");
             out += proto_decl(*n) + "\n";
         }
     }
@@ -178,11 +195,7 @@ std::string proto_file(const std::vector<const graft_native_desc*>& source, cons
             if (!n->class_name || std::strcmp(n->class_name, c) != 0) {
                 continue;
             }
-            if (n->doc && *n->doc) {
-                out += "    // ";
-                out += n->doc;
-                out += "\n";
-            }
+            emit_doc(out, n->doc, "    ");
             out += "    ";
             out += proto_decl(*n) + "\n";
         }

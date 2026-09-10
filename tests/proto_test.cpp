@@ -65,11 +65,19 @@ struct DemoDocs : graft::script_object<"DemoDocs"> {
     void Move(graft::f32 speed) const { (void)speed; }
 };
 
+// Описание в несколько строк: объяснение натива в одну строку не влезает, а перенос
+// обязан остаться комментарием — иначе сгенерированный файл не компилируется.
+bool DemoWrapped(graft::i32 slot) {
+    return slot >= 0;
+}
+
 GRAFT_BINDINGS("1_Core") {
     bind.global<&DemoNamed>("DemoNamed", "slot, zone, player",
                             "Переселить игрока в зону.");
     bind.class_<DemoDocs>().method<&DemoDocs::Move>("Move", "speed_cms",
                                                     "Задать скорость в см/с.");
+    bind.global<&DemoWrapped>("DemoWrapped", "slot",
+                              "Занять слот.\n\nВозврат — влез ли.");
     bind.global<&DemoAny>("DemoAny").global<&DemoMixed>("DemoMixed").global<&DemoText2>("DemoText2");
     bind.class_<DemoStatics>().static_method<&DemoStatics::Any>("Any");
     bind.global<&DemoPing>("DemoPing")
@@ -105,6 +113,12 @@ TEST(Proto, ArgsAreNamedWhenGiven) {
 TEST(Proto, DocGoesAboveDeclaration) {
     const std::string file = graft::proto_file();
     EXPECT_NE(file.find("// Переселить игрока в зону.\nproto native bool DemoNamed("),
+              std::string::npos);
+}
+
+TEST(Proto, MultilineDocStaysComment) {
+    const std::string file = graft::proto_file();
+    EXPECT_NE(file.find("// Занять слот.\n//\n// Возврат — влез ли.\nproto native bool DemoWrapped("),
               std::string::npos);
 }
 
