@@ -615,3 +615,186 @@ TEST(SpanArg, OnlyForPlainElements) {
 }
 
 }  // namespace span_arg
+
+namespace {
+
+// ── Поле объекта: слоты, указатели и паритет читателей ───────────────────────
+// Синтетический объект с настоящим дескриптором класса: variable_address/find_variable
+// — чистые чтения по раскладке, поэтому игра для них не нужна. Раскладка поля-вектора
+// взята с живого объекта: в слоте УКАЗАТЕЛЬ, а сами три float лежат сразу за ним.
+//
+//   +8  дескриптор класса      база полей = 16
+//   +16 (слот 0) m_id          int прямо в слоте
+//   +24 (слот 2) m_pos         указатель на буфер
+//   +32          буфер m_pos   три float
+//   +44 (слот 7) m_weight      float прямо в слоте
+class FakeFieldObject {
+public:
+    static constexpr std::size_t base = 16;
+    static constexpr std::size_t pos_slot_at = base + 4 * 2;
+    static constexpr std::size_t pos_data_at = pos_slot_at + sizeof(void*);
+
+    FakeFieldObject() : object_(48, 0), desc_(192, 0) {
+        make_var(0, "m_id", 0);
+        make_var(1, "m_pos", 2);
+        make_var(2, "m_weight", 7);
+        void** table = table_;
+        const std::uint32_t count = 3;
+        const std::uint32_t var_base = base;
+        std::memcpy(desc_.data() + graft::layout::class_var_table, &table, sizeof table);
+        std::memcpy(desc_.data() + graft::layout::class_var_count, &count, sizeof count);
+        std::memcpy(desc_.data() + graft::layout::class_var_base, &var_base, sizeof var_base);
+        void* desc = desc_.data();
+        std::memcpy(object_.data() + graft::layout::object_class, &desc, sizeof desc);
+        point_vector_at(object_.data() + pos_data_at);
+    }
+    FakeFieldObject(const FakeFieldObject&) = delete;
+    FakeFieldObject& operator=(const FakeFieldObject&) = delete;
+
+    void* ptr() { return object_.data(); }
+
+    // Что лежит в самом слоте — им проверяется, что запись вектора не убила указатель.
+    void* pos_slot() const {
+        void* stored = nullptr;
+        std::memcpy(&stored, object_.data() + pos_slot_at, sizeof stored);
+        return stored;
+    }
+    void point_vector_at(void* where) {
+        std::memcpy(object_.data() + pos_slot_at, &where, sizeof where);
+    }
+    // Байты буфера — читаем в обход библиотеки, чтобы тест не верил ей на слово.
+    graft::vector pos_data() const {
+        graft::vector v{};
+        std::memcpy(&v, object_.data() + pos_data_at, sizeof v);
+        return v;
+    }
+    void set_pos_data(graft::vector v) {
+        std::memcpy(object_.data() + pos_data_at, &v, sizeof v);
+    }
+    graft::i32 id_slot() const {
+        graft::i32 v = 0;
+        std::memcpy(&v, object_.data() + base, sizeof v);
+        return v;
+    }
+
+private:
+    void make_var(std::size_t index, const char* name, std::uint16_t slot) {
+        entries_[index].resize(48, 0);
+        std::memcpy(entries_[index].data() + graft::layout::var_entry_name, &name, sizeof name);
+        std::memcpy(entries_[index].data() + graft::layout::var_entry_slot, &slot, sizeof slot);
+        table_[index] = entries_[index].data();
+    }
+
+    std::vector<std::uint8_t> object_;
+    std::vector<std::uint8_t> desc_;
+    std::vector<std::uint8_t> entries_[3];
+    void* table_[3]{};
+};
+
+using graft::literals::operator""_f;
+
+// Число в слоте лежит значением — все читатели обязаны согласиться. Это опора: если
+// покраснеет здесь, дело в фикстуре, а не в разборе вектора.
+TEST(FieldSlots, IntAgreesAcrossEveryAccessor) {
+    FakeFieldObject fake;
+    const graft::ref<"SeraphNode"> node{fake.ptr()};
+    ASSERT_TRUE(node.set_field("m_id", graft::i32{42}));
+    EXPECT_EQ(fake.id_slot(), 42);
+
+    EXPECT_EQ(node.field<graft::i32>("m_id"), 42);
+    EXPECT_EQ(node.try_field<graft::i32>("m_id"), std::optional<graft::i32>{42});
+    EXPECT_EQ((node.field<graft::i32, "m_id">()), 42);
+    EXPECT_EQ((node.try_field<graft::i32, "m_id">()), std::optional<graft::i32>{42});
+    EXPECT_EQ(node["m_id"_f].get<graft::i32>(), std::optional<graft::i32>{42});
+}
+
+// Главное свойство: ОДНО поле — ОДИН ответ, каким бы читателем его ни брали. Вектор
+// лежит в слоте ссылкой, и знать об этом обязаны все пять путей, а не один.
+TEST(FieldSlots, VectorAgreesAcrossEveryAccessor) {
+    FakeFieldObject fake;
+    fake.set_pos_data({1, 2, 3});
+    const graft::ref<"SeraphNode"> node{fake.ptr()};
+    const graft::vector want{1, 2, 3};
+
+    EXPECT_EQ(node.field<graft::vector>("m_pos"), want);
+    EXPECT_EQ(node.try_field<graft::vector>("m_pos"), std::optional<graft::vector>{want});
+    EXPECT_EQ((node.field<graft::vector, "m_pos">()), want);
+    EXPECT_EQ((node.try_field<graft::vector, "m_pos">()), std::optional<graft::vector>{want});
+    EXPECT_EQ(node["m_pos"_f].get<graft::vector>(), std::optional<graft::vector>{want});
+    EXPECT_EQ(node.field<graft::vector>(graft::str{"m_pos"}), want);
+}
+
+// Запись идёт В БУФЕР, а указатель в слоте остаётся тем же. Ровно этим запись вектора
+// отличается от записи числа: двенадцать байт поверх слота убили бы указатель, и упал
+// бы не тот, кто писал, а первое же чтение поля из скрипта.
+TEST(FieldSlots, VectorWriteGoesThroughTheSlotPointer) {
+    FakeFieldObject fake;
+    const graft::ref<"SeraphNode"> node{fake.ptr()};
+    void* const before = fake.pos_slot();
+
+    ASSERT_TRUE(node.set_field("m_pos", graft::vector{4, 5, 6}));
+    EXPECT_EQ(fake.pos_data(), (graft::vector{4, 5, 6}));
+    EXPECT_EQ(fake.pos_slot(), before);
+
+    ASSERT_TRUE((node.set_field<"m_pos">(graft::vector{7, 8, 9})));
+    EXPECT_EQ(fake.pos_data(), (graft::vector{7, 8, 9}));
+
+    ASSERT_TRUE(node.set_field(graft::str{"m_pos"}, graft::vector{10, 11, 12}));
+    EXPECT_EQ(fake.pos_data(), (graft::vector{10, 11, 12}));
+
+    node["m_pos"_f] = graft::vector{13, 14, 15};
+    EXPECT_EQ(fake.pos_data(), (graft::vector{13, 14, 15}));
+    EXPECT_EQ(fake.pos_slot(), before);
+}
+
+// Пустой указатель в слоте — отказ, а не запись по нулю: поле объявлено, но данных
+// за ним нет. Читатель в том же случае отдаёт нули, а не мусор из слота.
+TEST(FieldSlots, VectorWithoutDataIsRefused) {
+    FakeFieldObject fake;
+    fake.point_vector_at(nullptr);
+    const graft::ref<"SeraphNode"> node{fake.ptr()};
+
+    EXPECT_FALSE(node.set_field("m_pos", graft::vector{1, 2, 3}));
+    EXPECT_FALSE((node.set_field<"m_pos">(graft::vector{1, 2, 3})));
+    EXPECT_EQ(node.field<graft::vector>("m_pos"), graft::vector{});
+    EXPECT_EQ(node["m_pos"_f].get<graft::vector>(), std::optional<graft::vector>{graft::vector{}});
+}
+
+// Промах по имени остаётся промахом для всех форм, и вектор тут не исключение.
+TEST(FieldSlots, MissingFieldIsAMissForEveryAccessor) {
+    FakeFieldObject fake;
+    const graft::ref<"SeraphNode"> node{fake.ptr()};
+
+    EXPECT_EQ(node.field<graft::vector>("m_nope"), graft::vector{});
+    EXPECT_FALSE(node.try_field<graft::vector>("m_nope").has_value());
+    EXPECT_FALSE((node.try_field<graft::vector, "m_nope">().has_value()));
+    EXPECT_FALSE(node["m_nope"_f].get<graft::vector>().has_value());
+    EXPECT_FALSE(node.set_field("m_nope", graft::vector{1, 2, 3}));
+    EXPECT_FALSE((node.set_field<"m_nope">(graft::i32{1})));
+}
+
+// Писать строками и ссылками по-прежнему НЕЛЬЗЯ — и это ошибка компиляции, а не
+// проверка в рантайме. Одинаково у всех трёх форм set_field.
+static_assert(!graft::writable_field<graft::str>);
+static_assert(!graft::writable_field<graft::obj>);
+static_assert(graft::writable_field<graft::vector>);
+//
+// Тип обязан быть параметром: с полностью НЕзависимым выражением requires у clang это
+// не подстановочный сбой, а обычная ошибка компиляции — проверить так ничего нельзя.
+template <class T>
+concept settable_by_name = requires(graft::ref<"X"> r, T v) { r.set_field("m", v); };
+template <class T>
+concept settable_by_template_name = requires(graft::ref<"X"> r, T v) { r.set_field<"m">(v); };
+template <class T>
+concept settable_by_str = requires(graft::ref<"X"> r, T v) { r.set_field(graft::str{"m"}, v); };
+
+static_assert(!settable_by_name<graft::str> && !settable_by_name<graft::obj>);
+static_assert(!settable_by_template_name<graft::str> && !settable_by_template_name<graft::obj>);
+static_assert(!settable_by_str<graft::str> && !settable_by_str<graft::obj>);
+// А вектор можно всеми тремя: асимметрия между формами — это баг, а не осторожность.
+static_assert(settable_by_name<graft::vector>);
+static_assert(settable_by_template_name<graft::vector>);
+static_assert(settable_by_str<graft::vector>);
+static_assert(settable_by_name<graft::i32> && settable_by_template_name<graft::f32>);
+
+}  // namespace

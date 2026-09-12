@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <format>
 #include <iterator>
 #include <ranges>
@@ -88,6 +89,13 @@ struct Node : graft::script_object<"SeraphNode"> {
 
     // Запись в поле объекта.
     int SetId(int id) { return set_field<"m_id">(id) ? Id() : -1; }
+
+    // Поле-вектор лежит в слоте ССЫЛКОЙ на три float, а не значением (см. read_field в
+    // types.hpp). Здесь это проверяется на живом объекте: скрипт кладёт значение и
+    // читает то, что записал C++. Разойдись раскладка — либо разъедутся числа, либо
+    // первое же чтение из скрипта пойдёт по убитому указателю.
+    vector Pos() const { return field<vector, "m_pos">(); }
+    vector SetPos(vector p) { return set_field<"m_pos">(p) ? Pos() : vector{}; }
 
     // Обход незнакомой структуры: сколько полей и как называется каждое.
     i32 FieldCount() const { return field_count(); }
@@ -479,6 +487,49 @@ i32 SeraphGraftDoubleArray(graft::array<i32> a) {
     for (i32 i = 0; i < a.size(); ++i) {
         a.set(i, a[i] * 2);
     }
+    return a.size();
+}
+
+// ── Шаг элемента array<vector>: ЗАМЕР, а не допущение ───────────────────────
+// operator[] и set считают адрес элемента как i * sizeof(T), то есть для вектора
+// закладываются на шаг 12. Для поля объекта раскладка ДРУГАЯ (там в слоте ссылка), и
+// одного этого довода хватает, чтобы шаг в контейнере не додумывать, а измерить: при
+// ошибке set пишет двенадцать байт мимо буфера, то есть в чужую кучу.
+//
+// Скрипт кладёт восемь известных элементов; ищем по буферу, через сколько байт от его
+// начала лежит второй — это и есть шаг. Кандидатов ровно три: 8 (ссылка на элемент),
+// 12 (три float подряд), 16 (то же с выравниванием). Восьми элементов хватает, чтобы
+// даже самый плотный из них дал буфер заведомо длиннее прощупываемых 28 байт.
+i32 SeraphGraftVectorStride(graft::array<vector> a) {
+    if (a.size() < 8) {
+        return -1;
+    }
+    const auto* bytes = reinterpret_cast<const unsigned char*>(a.data());
+    if (bytes == nullptr) {
+        return -2;
+    }
+    for (const std::size_t step : {std::size_t{8}, std::size_t{12}, std::size_t{16}}) {
+        vector second{};
+        std::memcpy(&second, bytes + step, sizeof second);
+        if (second == vector{4, 5, 6}) {
+            return static_cast<i32>(step);
+        }
+    }
+    return 0;
+}
+
+// Чтение элементов вьюхой — та же раскладка, но уже через публичный API.
+i32 SeraphGraftVecArraySum(graft::array<vector> a) {
+    vector sum{};
+    for (vector v : a) {
+        sum = sum + v;
+    }
+    return static_cast<i32>(sum.x + sum.y + sum.z);
+}
+
+// Запись элемента. Сосед проверяется в скрипте: не тот шаг — и правка уедет в него.
+i32 SeraphGraftVecArraySet(graft::array<vector> a, i32 index, vector value) {
+    a.set(index, value);
     return a.size();
 }
 
@@ -1044,6 +1095,8 @@ GRAFT_BINDINGS("1_Core") {
         .method<&Node::ChainSum>("ChainSum")
         .method<&Node::ValuesSum>("ValuesSum")
         .method<&Node::SetId>("SetId")
+        .method<&Node::Pos>("Pos")
+        .method<&Node::SetPos>("SetPos")
         .method<&Node::FieldCount>("FieldCount")
         .method<&Node::FieldName>("FieldName")
         .method<&Node::TryField>("TryField");
@@ -1084,6 +1137,9 @@ GRAFT_BINDINGS("1_Core") {
         .global<&SeraphGraftSortArray>("SeraphGraftSortArray")
         .global<&SeraphGraftRemoveAt>("SeraphGraftRemoveAt")
         .global<&SeraphGraftSetSum>("SeraphGraftSetSum")
+        .global<&SeraphGraftVectorStride>("SeraphGraftVectorStride")
+        .global<&SeraphGraftVecArraySum>("SeraphGraftVecArraySum")
+        .global<&SeraphGraftVecArraySet>("SeraphGraftVecArraySet")
         .global<&SeraphGraftTypeName>("SeraphGraftTypeName")
         .global<&SeraphGraftRefAlive>("SeraphGraftRefAlive")
         .global<&SeraphGraftFillSquares>("SeraphGraftFillSquares")
