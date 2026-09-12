@@ -67,6 +67,10 @@ add_executable(graft_tests
     plugins/ping.cpp
     ping_test.cpp
     scan_test.cpp
+    # Поиск точек дефайнов — код хоста, а не отдельная библиотека: в hid.dll он едет
+    # вместе с engine.cpp, а сюда берётся исходником, чтобы проверяться без игры.
+    "${PROJECT_SOURCE_DIR}/SRC/graft/defines.cpp"
+    defines_test.cpp
     hook_test.cpp
     # Инструмент разбора, а не часть библиотеки: watch.hpp целиком inline и в hid.dll не
     # едет. Проверяется здесь потому, что железу всё равно, чья память, — игра не нужна.

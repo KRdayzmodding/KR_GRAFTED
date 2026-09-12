@@ -1,5 +1,6 @@
 // Copyright (C) 2025-2026 6wingSerap
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "graft/defines.hpp"
 #include "graft/engine.hpp"
 #include "graft/frame.hpp"
 
@@ -222,6 +223,10 @@ void install() {
 
     // Привязка к кадру: хук на движковую точку входа скриптового OnUpdate.
     frame::install(sections);
+
+    // Дефайн на каждый загруженный плагин: врезка ДО загрузчика (плагины грузятся ниже),
+    // а сработает она позже — когда движок дойдёт до CfgMods. См. SRC/graft/defines.cpp.
+    defines::install(sections);
 
     const auto rva = [&](const void* p) {
         return reinterpret_cast<std::uintptr_t>(p) -

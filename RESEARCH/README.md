@@ -99,4 +99,5 @@ world / mission (CreateMission)`.
 | [theory/abi.md](theory/abi.md) | ABI прототипов, регистрация нативов, смерть объекта, вызов в обратную сторону |
 | [theory/crashes.md](theory/crashes.md) | чьи обработчики стоят на самом деле и почему `__except` «не работал» |
 | [theory/frame.md](theory/frame.md) | где движок зовёт скрипт каждый кадр и как туда встроиться |
+| [theory/defines.md](theory/defines.md) | откуда у препроцессора дефайны и как дописать свой |
 | [theory/watch.md](theory/watch.md) | кто пишет в эту память: аппаратная точка останова на запись |

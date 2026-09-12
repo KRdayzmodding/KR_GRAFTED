@@ -145,6 +145,7 @@ add_library(graft_proxy SHARED
     graft/engine.cpp
     graft/loader.cpp
     graft/frame.cpp
+    graft/defines.cpp
     graft/host_natives.cpp
 )
 target_link_libraries(graft_proxy PRIVATE graft_host graft_hook)
