@@ -5,7 +5,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <initializer_list>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <type_traits>
@@ -26,6 +26,248 @@
 // сверяет результат с частотным анализом natives.py (обе цели, 1.29: совпало).
 namespace graft::scan {
 
+// ── Сверка найденного: сигнатура так, как её показывает отладчик ──────────────
+// Ход по call-графу даёт КАНДИДАТА; кандидат становится ответом только когда его байты
+// совпали с сигнатурой. Так «нашлось не то» превращается в отказ, а не в прыжок в середину
+// чужого кода. Из тех же байт берутся и смещения полей движка: они запечены в инструкциях,
+// которые нас к функции и привели.
+//
+// Сигнатура пишется ОДНИМ способом — строкой, скопированной из отладчика:
+//
+//   constexpr auto prologue = scan::sig<"48 89 5C 24 ?? 57">;   // mov [rsp+?],rbx; push rdi
+//   constexpr auto field    = scan::sig<"48 8B 81 [disp32]">;   // mov rax,[rcx+disp32]
+//
+// Четыре вида токена, и больше никаких:
+//
+//   48          байт как есть
+//   ??   ?      любой байт: там регистр или смещение, которое сверять нечем
+//   05&C7       ЧАСТЬ байта: сверяются биты маски, остальные любые. Так пишется «поле reg
+//               в modrm какое угодно, а mod и rm вот такие» — целиком байт здесь сверять
+//               нельзя, а целиком отпускать нельзя тем более
+//   [disp32]    ДЫРКА: столько бит любых — и это ОТВЕТ. Слово в скобках для читателя,
+//               парсер берёт из него только число: [disp8], [imm32], [64] — то же самое
+//
+// ЗАЧЕМ ДЫРКА, А НЕ ВТОРОЙ ВЫЗОВ. Раньше ширину смещения держало имя функции — `disp8_of`
+// против `disp32_of`, — а какая нужна, было написано в комментарии рядом с опкодом. Два
+// места, которые обязаны совпасть, и расхождение не заметит ни компилятор, ни тест: код
+// прочитает четыре байта там, где лежит один, и получит начало следующей инструкции в
+// старших разрядах. Теперь ширина живёт в сигнатуре, ровно там, где отладчик её и печатает.
+//
+// Строка разбирается на КОМПИЛЯЦИИ, поэтому опечатка («4» вместо «48», `???`, дырка без
+// ширины, посторонний знак) — ошибка сборки, а не сигнатура, которая молча ничего не
+// находит и отлаживается уже на живом сервере. Лишние пробелы законны: строку копируют из
+// отладчика, а он выравнивает столбцы.
+
+// Байт сверяется ПО МАСКЕ: совпасть обязаны биты, поднятые в mask. Маска 0xFF — байт как
+// есть, 0 — любой, что-то между — часть байта (поле reg в modrm, бит R в префиксе REX).
+//
+// Третьего представления у «любого байта» нет намеренно: пока джокер был отдельным знаком
+// (-1), маскированный байт выразить было нечем, и каждое место, которому он нужен, писало
+// свой цикл по байтам.
+template <std::size_t N>
+struct pattern {
+    std::array<std::uint8_t, N> value{};
+    std::array<std::uint8_t, N> mask{};
+    std::uint8_t hole      = 0;  // смещение дырки от начала, в байтах
+    std::uint8_t hole_size = 0;  // её ширина в байтах; 0 — дырки нет
+
+    static constexpr std::size_t size() { return N; }
+    // Сверяется ли байт хоть в чём-нибудь. Нужно тестам и человеку, а не поиску.
+    constexpr bool checked(std::size_t i) const { return mask[i] != 0; }
+};
+
+// Две записи ОДНОГО И ТОГО ЖЕ сличаются целиком: строчки ассемблера (`scan::code`, см.
+// graft/asm.hpp) против золотых байт, снятых с бинаря. Разная длина — не ошибка сборки, а
+// честное «не равно»: иначе у static_assert не осталось бы текста, который можно прочесть.
+template <std::size_t A, std::size_t B>
+constexpr bool operator==(const pattern<A>& a, const pattern<B>& b) {
+    if constexpr (A != B) {
+        return false;
+    } else {
+        return a.value == b.value && a.mask == b.mask && a.hole == b.hole &&
+               a.hole_size == b.hole_size;
+    }
+}
+
+// Та же сигнатура без длины в типе — так её принимают функции ниже. Неявно: на месте
+// вызова пишется `scan::sig<"...">`, и лишнего слова там быть не должно.
+struct pattern_view {
+    std::span<const std::uint8_t> value;
+    std::span<const std::uint8_t> mask;
+    std::uint8_t                  hole      = 0;
+    std::uint8_t                  hole_size = 0;
+
+    template <std::size_t N>
+    constexpr pattern_view(const pattern<N>& p)
+        : value{p.value}, mask{p.mask}, hole{p.hole}, hole_size{p.hole_size} {}
+};
+
+namespace detail {
+
+consteval int sig_nibble(char c) {
+    if (c >= '0' && c <= '9') {
+        return c - '0';
+    }
+    if (c >= 'a' && c <= 'f') {
+        return c - 'a' + 10;
+    }
+    if (c >= 'A' && c <= 'F') {
+        return c - 'A' + 10;
+    }
+    // consteval бросать не умеет — и это ровно то, что нужно: вызов перестаёт быть
+    // константным выражением, и компилятор показывает эту строку в цепочке ошибки.
+    throw "в сигнатуре бывают только шестнадцатеричные байты, ?? и пробелы";
+}
+
+// Байт сигнатуры: значение и маска сверяемых бит.
+struct sig_cell {
+    std::uint8_t value = 0;
+    std::uint8_t mask  = 0;  // 0 — байт любой
+};
+
+consteval std::uint8_t sig_hex2(std::string_view token) {
+    if (token.size() != 2) {
+        throw "байт сигнатуры — две шестнадцатеричные цифры, ?? либо дырка [disp32]";
+    }
+    return static_cast<std::uint8_t>((sig_nibble(token[0]) * 16) + sig_nibble(token[1]));
+}
+
+consteval sig_cell sig_byte(std::string_view token) {
+    if (token == "??" || token == "?") {
+        return {};  // джокер: там смещение поля или регистр, выбранный компилятором игры
+    }
+    // `05&C7` — сверить только биты маски. Так пишется «поле reg в modrm любое».
+    if (const std::size_t amp = token.find('&'); amp != std::string_view::npos) {
+        const std::uint8_t value = sig_hex2(token.substr(0, amp));
+        const std::uint8_t mask  = sig_hex2(token.substr(amp + 1));
+        if (mask == 0) {
+            throw "маска 00 ничего не сверяет — это просто ??";
+        }
+        if ((value & ~mask) != 0) {
+            throw "в значении подняты биты вне маски: сверять их всё равно нечем";
+        }
+        return {value, mask};
+    }
+    return {sig_hex2(token), 0xFF};
+}
+
+// Границы следующего токена: пробелы пропущены, `[...]` взят целиком. Пустой — конец строки.
+struct sig_token {
+    std::string_view text;
+    std::size_t      next = 0;
+};
+
+consteval sig_token sig_next(std::string_view s, std::size_t i) {
+    while (i < s.size() && s[i] == ' ') {
+        ++i;
+    }
+    if (i >= s.size()) {
+        return {{}, i};
+    }
+    std::size_t j = i;
+    if (s[i] == '[') {
+        while (j < s.size() && s[j] != ']') {
+            ++j;
+        }
+        if (j == s.size()) {
+            throw "дырка без закрывающей скобки";
+        }
+        ++j;
+    } else {
+        while (j < s.size() && s[j] != ' ') {
+            ++j;
+        }
+    }
+    return {s.substr(i, j - i), j};
+}
+
+// Ширина дырки в байтах. Читается ЧИСЛО внутри скобок, остальное там — слово для читателя,
+// поэтому [disp32], [imm32] и [32] значат одно и то же.
+consteval std::size_t sig_hole(std::string_view token) {
+    unsigned bits = 0;
+    bool     seen = false;
+    for (const char c : token) {
+        if (c >= '0' && c <= '9') {
+            bits = (bits * 10) + static_cast<unsigned>(c - '0');
+            seen = true;
+        }
+    }
+    if (!seen) {
+        throw "в дырке нужна ширина: [disp32], [imm8], [64]";
+    }
+    if (bits != 8 && bits != 16 && bits != 32 && bits != 64) {
+        throw "ширина дырки — 8, 16, 32 или 64 бита";
+    }
+    return bits / 8;
+}
+
+consteval std::size_t sig_size(std::string_view text) {
+    std::size_t n = 0;
+    for (std::size_t i = 0;;) {
+        const sig_token t = sig_next(text, i);
+        if (t.text.empty()) {
+            return n;
+        }
+        n += t.text.front() == '[' ? sig_hole(t.text) : 1;
+        i = t.next;
+    }
+}
+
+template <name_t S>
+consteval auto parse_sig() {
+    constexpr std::string_view text{S.value};
+    constexpr std::size_t      n = sig_size(text);
+    static_assert(n > 0, "пустая сигнатура");
+    // Смещение дырки хранится байтом; сигнатуры длиннее этого не бывает, но молча обрезать
+    // его нельзя.
+    static_assert(n <= 255, "сигнатура длиннее 255 байт");
+    pattern<n>  out;
+    std::size_t k = 0;
+    for (std::size_t i = 0;;) {
+        const sig_token t = sig_next(text, i);
+        if (t.text.empty()) {
+            return out;
+        }
+        i = t.next;
+        if (t.text.front() != '[') {
+            const sig_cell cell = sig_byte(t.text);
+            out.value[k]        = cell.value;
+            out.mask[k]         = cell.mask;
+            ++k;
+            continue;
+        }
+        if (out.hole_size != 0) {
+            throw "дырка в сигнатуре бывает одна: искомое смещение в инструкции одно";
+        }
+        out.hole      = static_cast<std::uint8_t>(k);
+        out.hole_size = static_cast<std::uint8_t>(sig_hole(t.text));
+        k += out.hole_size;  // байты дырки не сверяются: маска у них и осталась нулевой
+    }
+}
+
+}  // namespace detail
+
+template <name_t S>
+inline constexpr auto sig = detail::parse_sig<S>();
+
+// На этом адресе лежит ровно это? Нечитаемый адрес — false, а не падение: кандидат мог
+// приехать из мусорного смещения, и сверка обязана это выдержать.
+bool matches(std::uintptr_t ea, pattern_view sig);
+
+// Где нашлось и что лежало в дырке.
+struct found {
+    std::uintptr_t site  = 0;  // адрес самой инструкции
+    std::int64_t   value = 0;  // содержимое дырки; 0, если дырки в сигнатуре не было
+};
+
+// `nth`-е вхождение сигнатуры в [ea, ea+span). Пусто — не нашлось, и это отказ, а не повод
+// идти дальше по догадке.
+//
+// Дырка читается СО ЗНАКОМ, как её понимает процессор: disp8 0x80 — это -128, а не +128.
+// Поля движка, которыми мы пользуемся, все положительные и короткие, но читать их
+// неправильно нельзя и в этом случае.
+std::optional<found> find(std::uintptr_t ea, std::size_t span, pattern_view sig, unsigned nth = 1);
+
 // Секция отображённого образа: байты + адрес, по которому они лежат в памяти.
 struct view {
     std::span<const std::uint8_t> bytes;        // сама секция: указатель и длина вместе
@@ -34,8 +276,19 @@ struct view {
 
     // Адрес C-строки ровно text (не подстроки), начиная с ea. 0 — нет.
     std::uintptr_t find_cstr(const char* text, std::uintptr_t from = 0) const;
-    // Адрес инструкции `lea reg,[rip+d]` (opcode — 3 байта префикса), указывающей на target.
-    std::uintptr_t find_lea(std::span<const std::uint8_t, 3> opcode, std::uintptr_t target, std::uintptr_t from = 0) const;
+    // `nth`-е вхождение сигнатуры в [ea, ea+span) ЭТОЙ секции. То же, что свободная
+    // scan::find, но по своим байтам: у секции они уже есть, и спрашивать у системы,
+    // отображена ли страница, незачем. Окно обрезается концом секции.
+    //
+    // Это не удобство: `base` у секции бывает и синтетическим (так собраны фикстуры
+    // сьюты), и тогда свободная find честно отвечает «адрес не читается».
+    std::optional<struct found> find(std::uintptr_t ea, std::size_t span, pattern_view sig, unsigned nth = 1) const;
+
+    // Адрес инструкции, которая через rip ссылается на target: `lea reg,[rip+d]`,
+    // `mov [rip+d],reg` — любая. Сигнатура берётся ЦЕЛИКОМ, вместе с дыркой под смещение:
+    // rip смотрит за конец инструкции, поэтому нужна и её длина, и само смещение.
+    // Единственная реализация этого поиска на весь проект.
+    std::uintptr_t find_rip(pattern_view insn, std::uintptr_t target, std::uintptr_t from = 0) const;
     // Цели всех rel32-переходов с таким опкодом после/до ea в пределах span байт, по
     // порядку адресов: 0xE8 — call, 0xE9 — хвостовой jmp. Их несколько, потому что байт
     // опкода может встретиться и внутри чужого смещения — отсеивает уже вызывающий код
@@ -53,8 +306,12 @@ struct view {
     bool contains(std::uintptr_t ea) const { return ea >= base && ea - base < bytes.size(); }
 };
 
-inline constexpr std::uint8_t lea_rdx[3] = {0x48, 0x8D, 0x15}; // 2-й аргумент fastcall
-inline constexpr std::uint8_t lea_r8[3]  = {0x4C, 0x8D, 0x05}; // 3-й аргумент fastcall
+// Чем движок передаёт имя в регистрацию: 2-й аргумент fastcall — rdx, 3-й — r8. Записаны
+// байтами, а не строчками ассемблера, только из-за слоёв: кодировщик (graft/asm.hpp) стоит
+// НАД этим заголовком и включить его здесь нельзя. Что мнемоника в комментарии не разошлась
+// с байтами, сторожит static_assert в tests/asm_test.cpp.
+inline constexpr auto lea_rdx = sig<"48 8D 15 [disp32]">;  // lea rdx,[rip+disp32]
+inline constexpr auto lea_r8  = sig<"4C 8D 05 [disp32]">;  // lea r8,[rip+disp32]
 
 // Точки движка. Сигнатуры выведены из декомпиляции (re/out/server/reg_*.c):
 // последний числовой аргумент — размер буфера возврата, для `proto native` он 0.
@@ -72,7 +329,7 @@ struct api {
 
 // Голосование нескольких якорей: случайный байт 0xE8 в чужом смещении может дать
 // ложный call, но совпасть у трёх разных якорей он не может.
-std::uintptr_t vote(const std::vector<view>& sections, std::span<const std::uint8_t, 3> opcode, const char* const* anchors, bool before = false, const std::uintptr_t* reject = nullptr, std::size_t reject_n = 0);
+std::uintptr_t vote(const std::vector<view>& sections, pattern_view insn, const char* const* anchors, bool before = false, const std::uintptr_t* reject = nullptr, std::size_t reject_n = 0);
 
 api discover(const std::vector<view>& sections);
 
@@ -124,109 +381,6 @@ std::uintptr_t first_call(const std::vector<view>& sections, std::uintptr_t fn, 
 // Секции загруженного образа. Одна на всех: и хосту для поиска регистрации, и
 // плагину для поиска внутренностей движка.
 std::vector<view> sections_of(void* module);
-
-// ── Сверка найденного ────────────────────────────────────────────────────────
-// Ход по call-графу даёт КАНДИДАТА; кандидат становится ответом только когда его
-// первые байты совпали с сигнатурой. Так «нашлось не то» превращается в отказ, а не
-// в прыжок в середину чужого кода.
-bool begins_with(std::uintptr_t ea, std::span<const std::uint8_t> sig);
-
-// Смещение из инструкции с таким опкодом в [ea, ea+span): `nth`-й по счёту.
-// Возвращает false, если такой инструкции там нет. Этим достаются и поля структур
-// (`mov rax,[rcx+disp]`), и адреса глобалей (`mov [rip+disp],rax`).
-bool disp32_of(std::uintptr_t ea, std::size_t span, std::span<const std::uint8_t> opcode, std::int32_t& out, std::uintptr_t* site = nullptr, unsigned nth = 1);
-bool disp8_of(std::uintptr_t ea, std::size_t span, std::span<const std::uint8_t> opcode, unsigned& out, unsigned nth = 1);
-
-// Сигнатура с ДЖОКЕРАМИ: элемент < 0 — «любой байт». Сверять можно не всё: там, где в
-// инструкцию запечено смещение поля или регистр, выбранный компилятором игры, сверять
-// нечего — а всё остальное сверить обязаны. Пишется ровно так, как читается в отладчике:
-//
-//   scan::matches(fn, {0x48, 0x89, 0x5C, 0x24, -1, 0x57})
-//
-// begins_with — тот же приём без джокеров; он остаётся отдельным, потому что сверка
-// готового блока байт не должна проходить через int-массив.
-bool matches(std::uintptr_t ea, std::span<const int> sig);
-
-inline bool matches(std::uintptr_t ea, std::initializer_list<int> sig) {
-    return matches(ea, std::span<const int>{sig.begin(), sig.size()});
-}
-
-// Та же сигнатура, но так, как она читается в отладчике — строкой:
-//
-//   scan::matches(fn, scan::sig<"48 89 5C 24 ?? 57">)
-//
-// Разбирается на КОМПИЛЯЦИИ, поэтому опечатка («4» вместо «48», лишняя буква, `??` из
-// трёх знаков) — ошибка сборки, а не сигнатура, которая молча ничего не находит и
-// отлаживается уже на живом сервере. Лишние пробелы законны: строку копируют из
-// отладчика, а он выравнивает столбцы.
-namespace detail {
-
-consteval int sig_nibble(char c) {
-    if (c >= '0' && c <= '9') {
-        return c - '0';
-    }
-    if (c >= 'a' && c <= 'f') {
-        return c - 'a' + 10;
-    }
-    if (c >= 'A' && c <= 'F') {
-        return c - 'A' + 10;
-    }
-    // consteval бросать не умеет — и это ровно то, что нужно: вызов перестаёт быть
-    // константным выражением, и компилятор показывает эту строку в цепочке ошибки.
-    throw "в сигнатуре бывают только шестнадцатеричные байты, ?? и пробелы";
-}
-
-consteval int sig_byte(std::string_view token) {
-    if (token == "??" || token == "?") {
-        return -1;  // джокер: там смещение поля или регистр, выбранный компилятором игры
-    }
-    if (token.size() != 2) {
-        throw "байт сигнатуры — ровно две шестнадцатеричные цифры либо ??";
-    }
-    return (sig_nibble(token[0]) * 16) + sig_nibble(token[1]);
-}
-
-consteval std::size_t sig_size(std::string_view text) {
-    std::size_t n = 0;
-    for (std::size_t i = 0; i < text.size();) {
-        if (text[i] == ' ') {
-            ++i;
-            continue;
-        }
-        ++n;
-        while (i < text.size() && text[i] != ' ') {
-            ++i;
-        }
-    }
-    return n;
-}
-
-template <name_t S>
-consteval auto parse_sig() {
-    constexpr std::string_view text{S.value};
-    constexpr std::size_t      n = sig_size(text);
-    static_assert(n > 0, "пустая сигнатура");
-    std::array<int, n> out{};
-    std::size_t        k = 0;
-    for (std::size_t i = 0; i < text.size();) {
-        if (text[i] == ' ') {
-            ++i;
-            continue;
-        }
-        std::size_t j = i;
-        while (j < text.size() && text[j] != ' ') {
-            ++j;
-        }
-        out[k++] = sig_byte(text.substr(i, j - i));
-        i        = j;
-    }
-    return out;
-}
-
-}  // namespace detail
-
-template <name_t S>
-inline constexpr auto sig = detail::parse_sig<S>();
 
 // Цели всех rel32-переходов с этим опкодом в [ea, ea+span). Мусорные отброшены: 0xE8/0xE9
 // встречается и внутри чужого смещения, а настоящая цель обязана лежать в исполняемой

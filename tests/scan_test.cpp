@@ -31,11 +31,22 @@ struct fake_image {
         return kStrBase + off;
     }
 
-    // lea reg,[rip+d] -> target
-    void put_lea(std::size_t off, const std::uint8_t (&opcode)[3], std::uintptr_t target) {
-        std::memcpy(code.data() + off, opcode, 3);
-        const std::int32_t disp = static_cast<std::int32_t>(target - (kCodeBase + off + 7));
-        std::memcpy(code.data() + off + 3, &disp, 4);
+    // Инструкция пишется ПО ЕЁ ЖЕ СИГНАТУРЕ: сверяемые байты как есть, дырка — посчитанным
+    // смещением от конца инструкции. Так фикстура не может разойтись с тем, что ищет сканер.
+    template <std::size_t N>
+    void put_insn(std::size_t off, const graft::scan::pattern<N>& insn, std::uintptr_t target) {
+        std::memcpy(code.data() + off, insn.value.data(), N);
+        const std::int32_t disp = static_cast<std::int32_t>(target - (kCodeBase + off + N));
+        std::memcpy(code.data() + off + insn.hole, &disp, 4);
+    }
+
+    // Сырые байты: ими кладутся инструкции, которых кодировщик не знает намеренно
+    // (векторные), — в сигнатуре они тоже записаны байтами.
+    void put_bytes(std::size_t off, std::initializer_list<std::uint8_t> raw) {
+        std::size_t i = 0;
+        for (const std::uint8_t b : raw) {
+            code[off + i++] = b;
+        }
     }
 
     void put_call(std::size_t off, std::uintptr_t target) { put_rel32(off, 0xE8, target); }
@@ -66,9 +77,9 @@ fake_image make_image() {
     const std::uintptr_t s_method = img.put_str(0x40, "GetNumberOfSetBits");
 
     img.put_call(0x00, kFindClass);
-    img.put_lea(0x05, graft::scan::lea_r8, s_method);
+    img.put_insn(0x05, graft::scan::lea_r8, s_method);
     img.put_call(0x0C, kRegMethod);
-    img.put_lea(0x11, graft::scan::lea_rdx, s_global);
+    img.put_insn(0x11, graft::scan::lea_rdx, s_global);
     img.put_call(0x18, kRegGlobal);
     return img;
 }
@@ -105,6 +116,62 @@ TEST(Scan, IgnoresFalseCallBytes) {
     EXPECT_EQ(reinterpret_cast<std::uintptr_t>(api.register_global), kRegGlobal);
 }
 
+// ── Точка входа кадра ────────────────────────────────────────────────────────
+// Раз в кадр движок зовёт скриптовый OnUpdate, и graft вешается на ПОДГОТОВКУ этого вызова
+// (хук на саму функцию смертелен — она общая, и детур затирает xmm чужим вызовам).
+//
+// Место опознаётся четырьмя приметами подряд, и до этих кейсов вся функция проверялась
+// только выездом на живую игру: строки-маяка у неё нет, поэтому промах выглядел как
+// «кадровый тик просто не работает».
+constexpr std::uintptr_t kFindIndex = kCodeBase + 0x1000;
+constexpr std::uintptr_t kPrepare   = kCodeBase + 0x2000;
+constexpr std::uintptr_t kIndexVar  = kStrBase + 0x80;
+
+// Раскладка как в CGame::Update: имя -> поиск индекса -> float-аргумент -> кэш индекса ->
+// сборка вызова. Маркер float кладётся, только если его просят.
+fake_image make_frame_image(bool with_float) {
+    fake_image           img;
+    const std::uintptr_t name = img.put_str(0x00, "OnUpdate");
+    constexpr std::size_t site = 0x100;
+    img.put_insn(site, graft::scan::lea_rdx, name);              // lea rdx,"OnUpdate"
+    img.put_call(site + 7, kFindIndex);                          // найти индекс по имени
+    if (with_float) {
+        img.put_bytes(site + 12, {0xF3, 0x0F, 0x5A, 0xC6});      // cvtss2sd xmm0,xmm6
+    }
+    img.put_insn(site + 16, graft::scan::sig<"89 05 [disp32]">,  // mov [rip+d],eax
+                 kIndexVar);
+    img.put_call(site + 22, kPrepare);                           // собрать вызов <- цель
+    return img;
+}
+
+TEST(Scan, FindsFrameEntryByItsFourMarks) {
+    fake_image img = make_frame_image(true);
+
+    const graft::scan::frame_entry e = graft::scan::find_frame_entry(img.sections());
+    ASSERT_TRUE(static_cast<bool>(e));
+    // Перехватывается ВТОРОЙ вызов — сборка кадра, а не поиск индекса.
+    EXPECT_EQ(e.site, kCodeBase + 0x100 + 22);
+    EXPECT_EQ(reinterpret_cast<std::uintptr_t>(e.prepare), kPrepare);
+    // Кэш индекса берётся из дырки: адрес считается от КОНЦА инструкции.
+    EXPECT_EQ(reinterpret_cast<std::uintptr_t>(e.index), kIndexVar);
+}
+
+// Строка "OnUpdate" в образе одна на всех, а ссылок на неё несколько: виджеты, техника,
+// игра. Нужную отличает ровно float-аргумент — без него это не кадр, и ответ обязан быть
+// отказом, а не ближайшим похожим местом.
+TEST(Scan, FrameEntryNeedsTheFloatMark) {
+    fake_image img = make_frame_image(false);
+    EXPECT_FALSE(static_cast<bool>(graft::scan::find_frame_entry(img.sections())));
+}
+
+// Цель `call` обязана лежать в исполняемой секции: байт 0xE8 встречается и внутри чужого
+// смещения, и такой «вызов» ведёт куда попало.
+TEST(Scan, FrameEntryRefusesCallOutsideCode) {
+    fake_image img = make_frame_image(true);
+    img.put_call(0x100 + 22, 0x99999999);
+    EXPECT_FALSE(static_cast<bool>(graft::scan::find_frame_entry(img.sections())));
+}
+
 TEST(Scan, EmptyImageIsHarmless) {
     const std::vector<graft::scan::view> none;
     EXPECT_FALSE(static_cast<bool>(graft::scan::discover(none)));
@@ -117,18 +184,53 @@ TEST(Scan, MatchesSignatureWithWildcards) {
     static const std::uint8_t body[] = {0x48, 0x89, 0x5C, 0x24, 0x10, 0x57, 0x48, 0x83};
     const auto ea = reinterpret_cast<std::uintptr_t>(body);
 
-    EXPECT_TRUE(graft::scan::matches(ea, {0x48, 0x89, 0x5C, 0x24, -1, 0x57}));
-    EXPECT_TRUE(graft::scan::matches(ea, {0x48, 0x89}));
-    EXPECT_TRUE(graft::scan::matches(ea, {-1, -1, -1}));
-    EXPECT_FALSE(graft::scan::matches(ea, {0x48, 0x89, 0x5C, 0x24, 0x11, 0x57}));
-    EXPECT_FALSE(graft::scan::matches(ea, {0x49}));
+    EXPECT_TRUE(graft::scan::matches(ea, graft::scan::sig<"48 89 5C 24 ?? 57">));
+    EXPECT_TRUE(graft::scan::matches(ea, graft::scan::sig<"48 89">));
+    EXPECT_TRUE(graft::scan::matches(ea, graft::scan::sig<"?? ?? ??">));
+    EXPECT_FALSE(graft::scan::matches(ea, graft::scan::sig<"48 89 5C 24 11 57">));
+    EXPECT_FALSE(graft::scan::matches(ea, graft::scan::sig<"49">));
+}
+
+// Маскированный байт: совпасть обязаны только биты маски.
+TEST(Scan, MasksCompareOnlyTheBitsThatMatter) {
+    static const std::uint8_t rax[] = {0x48, 0x8D, 0x05, 0x11, 0x22, 0x33, 0x44};
+    static const std::uint8_t rdx[] = {0x48, 0x8D, 0x15, 0x11, 0x22, 0x33, 0x44};
+    static const std::uint8_t other[] = {0x48, 0x8D, 0x41, 0x08, 0x00, 0x00, 0x00};
+    constexpr auto any_reg = graft::scan::sig<"48 8D 05&C7">;
+
+    EXPECT_TRUE(graft::scan::matches(reinterpret_cast<std::uintptr_t>(rax), any_reg));
+    EXPECT_TRUE(graft::scan::matches(reinterpret_cast<std::uintptr_t>(rdx), any_reg));
+    // mod и rm в маске остались, поэтому другая форма адресации не совпадает — в отличие
+    // от `??`, под который подошла бы любая.
+    EXPECT_FALSE(graft::scan::matches(reinterpret_cast<std::uintptr_t>(other), any_reg));
+    EXPECT_TRUE(graft::scan::matches(reinterpret_cast<std::uintptr_t>(other),
+                                     graft::scan::sig<"48 8D ??">));
+}
+
+// Секция ищет по своим байтам: `base` у неё бывает и синтетическим (так собраны фикстуры
+// сьюты), и спрашивать у системы, отображена ли такая страница, бессмысленно.
+TEST(Scan, ViewFindsInsideItsOwnBytesWithSyntheticBase) {
+    std::vector<std::uint8_t> body(0x100, 0);
+    body[0x20] = 0x8B;
+    body[0x21] = 0x41;
+    body[0x22] = 0x38;
+    const graft::scan::view v{body, kCodeBase, true};
+
+    const auto at = v.find(kCodeBase, 0x100, graft::scan::sig<"8B 41 [disp8]">);
+    ASSERT_TRUE(at.has_value());
+    EXPECT_EQ(at->site, kCodeBase + 0x20);
+    EXPECT_EQ(at->value, 0x38);
+    // Окно обрезается концом секции, а не уезжает за неё.
+    EXPECT_TRUE(v.find(kCodeBase, 0x10000, graft::scan::sig<"8B 41 [disp8]">).has_value());
+    EXPECT_FALSE(v.find(kCodeBase, 0x20, graft::scan::sig<"8B 41 [disp8]">).has_value());
 }
 
 // Кандидат мог приехать из мусорного смещения — сверка обязана ответить «не совпало», а
 // не уронить процесс на чтении по нулю.
 TEST(Scan, MatchesRefusesUnreadableAddress) {
-    EXPECT_FALSE(graft::scan::matches(0, {0x48}));
-    EXPECT_FALSE(graft::scan::matches(0xDEADBEEF, {0x48}));
+    EXPECT_FALSE(graft::scan::matches(0, graft::scan::sig<"48">));
+    EXPECT_FALSE(graft::scan::matches(0xDEADBEEF, graft::scan::sig<"48">));
+    EXPECT_FALSE(graft::scan::find(0, 0x20, graft::scan::sig<"48">).has_value());
 }
 
 // Адрес внутри функции ничем не выровнен: сверка сигнатуры со смещения 1 обязана
@@ -137,30 +239,100 @@ TEST(Scan, MatchesRefusesUnreadableAddress) {
 TEST(Scan, MatchesWorksAtUnalignedAddress) {
     static const std::uint8_t body[] = {0x00, 0x48, 0x89, 0x5C, 0x24, 0x10};
     const auto ea = reinterpret_cast<std::uintptr_t>(body) + 1;
-    EXPECT_TRUE(graft::scan::matches(ea, {0x48, 0x89, 0x5C}));
+    EXPECT_TRUE(graft::scan::matches(ea, graft::scan::sig<"48 89 5C">));
 }
 
-// ── Сигнатура компайл-тайм строкой ───────────────────────────────────────────
-// Та же сигнатура, но копируется из отладчика как есть. Длину и вид байтов проверяет
+// ── Разбор сигнатуры на компиляции ───────────────────────────────────────────
+// Строка копируется из отладчика как есть. Длину, вид байтов и ширину дырки проверяет
 // компилятор, а не отладка на живом сервере.
-TEST(Scan, SignatureFromLiteralIsTheSameAsTheByteList) {
-    static const std::uint8_t body[] = {0x48, 0x89, 0x5C, 0x24, 0x10, 0x57};
-    const auto ea = reinterpret_cast<std::uintptr_t>(body);
-
-    EXPECT_TRUE(graft::scan::matches(ea, graft::scan::sig<"48 89 5C 24 ?? 57">));
-    EXPECT_FALSE(graft::scan::matches(ea, graft::scan::sig<"48 89 5C 24 11 57">));
-    EXPECT_TRUE(graft::scan::matches(ea, graft::scan::sig<"48 89">));
-}
-
 TEST(Scan, SignatureLiteralIsParsedAtCompileTime) {
     static_assert(graft::scan::sig<"48 89 5C">.size() == 3);
-    static_assert(graft::scan::sig<"48 ?? 57">[1] < 0, "?? — это любой байт");
-    static_assert(graft::scan::sig<"4a">[0] == 0x4A, "регистр цифр значения не имеет");
+    static_assert(!graft::scan::sig<"48 ?? 57">.checked(1), "?? — это любой байт");
+    static_assert(graft::scan::sig<"4a">.value[0] == 0x4A, "регистр цифр значения не имеет");
     // Лишние пробелы — не ошибка: строку копируют из отладчика, а он выравнивает столбцы.
     static_assert(graft::scan::sig<"  48   89  ">.size() == 2);
-    static_assert(graft::scan::sig<"48 ? 57">[1] < 0, "одиночный ? — тот же джокер");
-    // Мусор в строке — ошибка КОМПИЛЯЦИИ (consteval не может бросить), поэтому кейса на
-    // него здесь нет и быть не может: он не собрался бы.
+    static_assert(!graft::scan::sig<"48 ? 57">.checked(1), "одиночный ? — тот же джокер");
+
+    // Дырка занимает в сигнатуре свою ширину и сверке не мешает — внутри неё любые байты.
+    static_assert(graft::scan::sig<"8B 41 [disp8]">.size() == 3);
+    static_assert(graft::scan::sig<"48 8B 81 [disp32]">.size() == 7);
+    static_assert(graft::scan::sig<"48 8B 81 [disp32]">.hole == 3);
+    static_assert(graft::scan::sig<"48 8B 81 [disp32]">.hole_size == 4);
+    static_assert(!graft::scan::sig<"48 8B 81 [disp32]">.checked(4));
+    // Слово в скобках — для читателя; парсер берёт из него только число.
+    static_assert(graft::scan::sig<"3D [imm32]">.hole_size == graft::scan::sig<"3D [32]">.hole_size);
+    // Сигнатура без дырки так и говорит: ширина ноль.
+    static_assert(graft::scan::sig<"48 89">.hole_size == 0);
+
+    // Часть байта: сверяются только биты маски. Так пишется «поле reg в modrm любое, а
+    // форма адресации вот такая» — целиком байт здесь сверять нельзя, а целиком отпускать
+    // нельзя тем более.
+    static_assert(graft::scan::sig<"48 8D 05&C7">.mask[2] == 0xC7);
+    static_assert(graft::scan::sig<"48 8D 05&C7">.value[2] == 0x05);
+    static_assert(graft::scan::sig<"48 8D 05&C7">.checked(2), "маска не ноль — байт сверяется");
+
+    // Мусор в строке — ошибка КОМПИЛЯЦИИ (consteval не может бросить), поэтому кейсов на
+    // «4» вместо «48», на `[disp]` без ширины и на две дырки здесь нет и быть не может:
+    // они не собрались бы.
+}
+
+// ── Поиск в окне и смещение из дырки ─────────────────────────────────────────
+// Так берутся смещения полей движка: инструкция ищется в теле функции, а ответ лежит
+// внутри неё. Раньше ширину ответа держало ИМЯ функции (disp8_of против disp32_of), и
+// промах мимо нужной читал четыре байта там, где лежит один.
+TEST(Scan, FindReadsTheHoleAtItsOwnWidth) {
+    // mov eax,[rcx+38h] ; mov rax,[rcx+2C8h] ; mov eax,[rcx+40h]
+    static const std::uint8_t body[] = {0x8B, 0x41, 0x38,
+                                        0x48, 0x8B, 0x81, 0xC8, 0x02, 0x00, 0x00,
+                                        0x8B, 0x41, 0x40};
+    const auto ea = reinterpret_cast<std::uintptr_t>(body);
+
+    const auto first = graft::scan::find(ea, sizeof body, graft::scan::sig<"8B 41 [disp8]">);
+    ASSERT_TRUE(first.has_value());
+    EXPECT_EQ(first->site, ea);
+    EXPECT_EQ(first->value, 0x38);
+
+    // nth: второе такое же чтение — другое поле, и брать молча первое нельзя.
+    const auto second = graft::scan::find(ea, sizeof body, graft::scan::sig<"8B 41 [disp8]">, 2);
+    ASSERT_TRUE(second.has_value());
+    EXPECT_EQ(second->site, ea + 10);
+    EXPECT_EQ(second->value, 0x40);
+    EXPECT_FALSE(graft::scan::find(ea, sizeof body, graft::scan::sig<"8B 41 [disp8]">, 3));
+
+    // disp32 читается целиком, а не первым байтом.
+    const auto wide = graft::scan::find(ea, sizeof body, graft::scan::sig<"48 8B 81 [disp32]">);
+    ASSERT_TRUE(wide.has_value());
+    EXPECT_EQ(wide->site, ea + 3);
+    EXPECT_EQ(wide->value, 0x2C8);
+}
+
+// Смещение x86 знаковое, и это не формальность: disp8 0x80 — это -128. Раньше disp8_of
+// расширял его нулями и молча превращал в +128.
+TEST(Scan, HoleIsSignExtended) {
+    static const std::uint8_t body[] = {0x8B, 0x41, 0x80};
+    const auto ea = reinterpret_cast<std::uintptr_t>(body);
+    const auto at = graft::scan::find(ea, sizeof body, graft::scan::sig<"8B 41 [disp8]">);
+    ASSERT_TRUE(at.has_value());
+    EXPECT_EQ(at->value, -128);
+}
+
+// Окно кончается там, где сказано: инструкция, начинающаяся за его краем, не считается,
+// иначе разбор одной функции цепляет соседнюю.
+TEST(Scan, FindStaysInsideTheWindow) {
+    static const std::uint8_t body[] = {0x90, 0x90, 0x90, 0x8B, 0x41, 0x38};
+    const auto ea = reinterpret_cast<std::uintptr_t>(body);
+    EXPECT_TRUE(graft::scan::find(ea, 6, graft::scan::sig<"8B 41 [disp8]">).has_value());
+    EXPECT_FALSE(graft::scan::find(ea, 5, graft::scan::sig<"8B 41 [disp8]">).has_value());
+}
+
+// Сигнатура без дырки ищется так же, просто отвечать нечем, кроме адреса.
+TEST(Scan, FindWithoutAHoleReturnsOnlyTheSite) {
+    static const std::uint8_t body[] = {0x90, 0x48, 0x8B, 0xC4};
+    const auto ea = reinterpret_cast<std::uintptr_t>(body);
+    const auto at = graft::scan::find(ea, sizeof body, graft::scan::sig<"48 8B C4">);
+    ASSERT_TRUE(at.has_value());
+    EXPECT_EQ(at->site, ea + 1);
+    EXPECT_EQ(at->value, 0);
 }
 
 // ── Цели переходов в окне ────────────────────────────────────────────────────

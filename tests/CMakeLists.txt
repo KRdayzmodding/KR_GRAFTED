@@ -68,6 +68,13 @@ add_executable(graft_tests
     ping_test.cpp
     scan_test.cpp
     hook_test.cpp
+    # Инструмент разбора, а не часть библиотеки: watch.hpp целиком inline и в hid.dll не
+    # едет. Проверяется здесь потому, что железу всё равно, чья память, — игра не нужна.
+    watch_test.cpp
+    # Механика кодировщика строчек ассемблера: REX, направление операндов, SIB, ширина
+    # смещения. Сверка идёт на компиляции, поэтому промах — красная сборка, а не выезд
+    # на стенд.
+    asm_test.cpp
     proto_test.cpp
     types_test.cpp
     plugins_test.cpp

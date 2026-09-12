@@ -47,21 +47,36 @@ std::uintptr_t view::find_cstr(const char* text, std::uintptr_t from) const {
     return 0;
 }
 
-std::uintptr_t view::find_lea(std::span<const std::uint8_t, 3> opcode, std::uintptr_t target, std::uintptr_t from) const {
-    constexpr std::size_t kLen = 7; // 3 байта опкода + rel32
-    if (bytes.size() < kLen) {
-        return 0;
+std::uintptr_t view::find_rip(pattern_view insn, std::uintptr_t target, std::uintptr_t from) const {
+    const std::size_t len = insn.value.size();
+    if (insn.hole_size != 4 || bytes.size() < len) {
+        return 0; // без дырки под disp32 ссылку на target не посчитать
+    }
+    // Перебирать побайтово всю секцию дорого (в образе игры это десятки мегабайт, а зовут
+    // отсюда в цикле по якорям), поэтому сначала memchr по первому ПОЛНОСТЬЮ сверяемому
+    // байту. У маскированного первого байта (`48&FB` у «любого регистра») его нет, зато
+    // опкод следом всегда точный.
+    std::size_t pivot = 0;
+    while (pivot < len && insn.mask[pivot] != 0xFF) {
+        ++pivot;
     }
     std::size_t i = (from > base) ? static_cast<std::size_t>(from - base) : 0;
-    while (i + kLen <= bytes.size()) {
-        const auto* hit = static_cast<const std::uint8_t*>(
-            std::memchr(bytes.data() + i, opcode[0], bytes.size() - kLen - i + 1));
-        if (!hit) {
-            return 0;
+    while (i + len <= bytes.size()) {
+        if (pivot < len) {
+            const auto* hit = static_cast<const std::uint8_t*>(
+                std::memchr(bytes.data() + i + pivot, insn.value[pivot],
+                            bytes.size() - len - i + 1));
+            if (!hit) {
+                return 0;
+            }
+            i = static_cast<std::size_t>(hit - bytes.data()) - pivot;
         }
-        i = static_cast<std::size_t>(hit - bytes.data());
-        if (bytes[i + 1] == opcode[1] && bytes[i + 2] == opcode[2] &&
-            rip_target(base + i + kLen, rel32(bytes.data() + i + 3)) == target) {
+        bool same = true;
+        for (std::size_t k = 0; k < len && same; ++k) {
+            same = (bytes[i + k] & insn.mask[k]) == insn.value[k];
+        }
+        if (same &&
+            rip_target(base + i + len, rel32(bytes.data() + i + insn.hole)) == target) {
             return base + i;
         }
         ++i;
@@ -99,7 +114,7 @@ std::vector<std::uintptr_t> view::rel32_before(std::uintptr_t ea, std::size_t sp
     return out;
 }
 
-std::uintptr_t vote(const std::vector<view>& sections, std::span<const std::uint8_t, 3> opcode, const char* const* anchors, bool before, const std::uintptr_t* reject, std::size_t reject_n) {
+std::uintptr_t vote(const std::vector<view>& sections, pattern_view insn, const char* const* anchors, bool before, const std::uintptr_t* reject, std::size_t reject_n) {
     struct tally {
         std::uintptr_t ea;
         int            votes;
@@ -132,8 +147,8 @@ std::uintptr_t vote(const std::vector<view>& sections, std::span<const std::uint
                     if (!code.exec) {
                         continue;
                     }
-                    for (std::uintptr_t site = code.find_lea(opcode, str_ea); site;
-                         site                = code.find_lea(opcode, str_ea, site + 1)) {
+                    for (std::uintptr_t site = code.find_rip(insn, str_ea); site;
+                         site                = code.find_rip(insn, str_ea, site + 1)) {
                         // из всех call'ов рядом берём ближайший настоящий: 0xE8 внутри
                         // чужого смещения даст цель вне кода и будет отброшен
                         std::vector<std::uintptr_t> cands =
@@ -224,6 +239,10 @@ frame_entry find_frame_entry(const std::vector<view>& sections) {
     // места вызовов — между ними и лежат приметы (маркер float, запись кэша).
     constexpr std::size_t  kWindow = 0x60;
     constexpr std::uint8_t kCall   = 0xE8;
+    // Две приметы кадрового OnUpdate. `cvtss2sd` записан байтами: векторных инструкций
+    // кодировщик не знает намеренно, а modrm здесь и так отпущен.
+    constexpr auto kCvtss2sd   = sig<"F3 0F 5A ??">;          // cvtss2sd xmm,xmm
+    constexpr auto kIndexCache = sig<"89 05 [disp32]">;       // mov [rip+disp32],eax
 
     for (const view& data : sections) {
         const std::uintptr_t text = data.find_cstr("OnUpdate");
@@ -235,7 +254,7 @@ frame_entry find_frame_entry(const std::vector<view>& sections) {
                 continue;
             }
             std::uintptr_t at = 0;
-            while ((at = code.find_lea(lea_rdx, text, at)) != 0) {
+            while ((at = code.find_rip(lea_rdx, text, at)) != 0) {
                 const std::size_t site = static_cast<std::size_t>(at - code.base);
                 at += 1;
                 if (site + kWindow > code.bytes.size()) {
@@ -251,17 +270,15 @@ frame_entry find_frame_entry(const std::vector<view>& sections) {
                 if (call1 >= kWindow) {
                     continue;
                 }
-                // 2) float-аргумент: cvtss2sd. Байт modrm не проверяем — какой регистр
-                //    выберет компилятор игры, нас не касается. Без него это одноимённое
-                //    событие виджета или техники, а не кадр.
-                std::size_t mark = call1 + 5;
-                while (mark + 3 <= kWindow &&
-                       !(w[mark] == 0xF3 && w[mark + 1] == 0x0F && w[mark + 2] == 0x5A)) {
-                    ++mark;
-                }
-                if (mark + 3 > kWindow) {
+                // 2) float-аргумент: cvtss2sd. Байт modrm не сверяем — какой регистр
+                //    выберет компилятор игры, нас не касается. Без этой приметы перед нами
+                //    одноимённое событие виджета или техники, а не кадр.
+                const std::optional<found> float_arg =
+                    code.find(code.base + site + call1 + 5, kWindow - call1 - 5, kCvtss2sd);
+                if (!float_arg) {
                     continue;
                 }
+                const std::size_t mark = static_cast<std::size_t>(float_arg->site - code.base) - site;
                 // 3) сборка вызова — следующий call после маркера
                 std::size_t call2 = mark;
                 while (call2 < kWindow && w[call2] != kCall) {
@@ -270,19 +287,17 @@ frame_entry find_frame_entry(const std::vector<view>& sections) {
                 if (call2 + 5 > kWindow) {
                     continue;
                 }
-                // 4) кэш индекса: `mov cs:disp32, eax` между двумя вызовами. Смещение
-                //    rip-относительное, считается от конца инструкции.
-                const std::int32_t* cached = nullptr;
-                for (std::size_t k = call1 + 5; k + 6 <= call2; ++k) {
-                    if (w[k] == 0x89 && w[k + 1] == 0x05) {
-                        cached = reinterpret_cast<const std::int32_t*>(
-                            rip_target(code.base + site + k + 6, rel32(w + k + 2)));
-                        break;
-                    }
-                }
-                if (!cached) {
+                // 4) кэш индекса: `mov [rip+disp32],eax` между двумя вызовами. Адрес
+                //    считается от КОНЦА инструкции, а её конец — это длина сигнатуры:
+                //    дырка под смещение входит в неё, поэтому руками складывать нечего.
+                const std::optional<found> cache =
+                    code.find(code.base + site + call1 + 5, call2 - call1 - 5, kIndexCache);
+                if (!cache) {
                     continue;
                 }
+                const auto* const cached = reinterpret_cast<const std::int32_t*>(
+                    cache->site + kIndexCache.size() +
+                    static_cast<std::uintptr_t>(static_cast<std::intptr_t>(cache->value)));
                 const std::uintptr_t prepare =
                     rip_target(code.base + site + call2 + 5, rel32(w + call2 + 1));
                 // Цель обязана лежать в исполняемой секции: 0xE8 встречается и в чужих
@@ -369,29 +384,93 @@ bool readable(std::uintptr_t ea, std::size_t n) {
     return scan::readable(reinterpret_cast<const void*>(ea), n);
 }
 
-} // namespace
+// Байты по адресу против сигнатуры. Сверяются только биты маски: у джокера и у байтов
+// дырки она нулевая, у обычного байта — 0xFF, у части байта — что-то между.
+bool same(const std::uint8_t* body, pattern_view sig) {
+    for (std::size_t i = 0; i < sig.value.size(); ++i) {
+        if ((body[i] & sig.mask[i]) != sig.value[i]) {
+            return false;
+        }
+    }
+    return true;
+}
 
-bool begins_with(std::uintptr_t ea, std::span<const std::uint8_t> sig) {
-    return readable(ea, sig.size()) &&
-           std::memcmp(reinterpret_cast<const void*>(ea), sig.data(), sig.size()) == 0;
+// Содержимое дырки со знаком: x86 смещения и короткие константы знаковые, и 0x80 в disp8
+// значит -128. Через промежуточный знаковый тип, а не сдвигами: знак расширяет компилятор.
+std::int64_t hole_value(const std::uint8_t* at, unsigned bytes) {
+    switch (bytes) {
+        case 1: {
+            std::int8_t v = 0;
+            std::memcpy(&v, at, sizeof v);
+            return v;
+        }
+        case 2: {
+            std::int16_t v = 0;
+            std::memcpy(&v, at, sizeof v);
+            return v;
+        }
+        case 4: {
+            std::int32_t v = 0;
+            std::memcpy(&v, at, sizeof v);
+            return v;
+        }
+        default: {
+            std::int64_t v = 0;
+            std::memcpy(&v, at, sizeof v);
+            return v;
+        }
+    }
+}
+
+// Общий ход поиска: по буферу, адреса считаются от base_ea. Через него идут и свободная
+// find (буфер — чужая память, её читаемость спрошена заранее), и view::find (буфер — байты
+// самой секции, спрашивать нечего).
+std::optional<found> find_in(const std::uint8_t* body,
+                             std::size_t         span,
+                             std::uintptr_t      base_ea,
+                             pattern_view        sig,
+                             unsigned            nth) {
+    const std::size_t n = sig.value.size();
+    if (n == 0 || nth == 0 || n > span) {
+        return std::nullopt;
+    }
+    for (std::size_t i = 0; i + n <= span; ++i) {
+        if (!same(body + i, sig) || --nth != 0) {
+            continue;
+        }
+        return found{base_ea + i, sig.hole_size != 0
+                                      ? hole_value(body + i + sig.hole, sig.hole_size)
+                                      : 0};
+    }
+    return std::nullopt;
+}
+
+}  // namespace
+
+bool matches(std::uintptr_t ea, pattern_view sig) {
+    return !sig.value.empty() && readable(ea, sig.value.size()) &&
+           same(reinterpret_cast<const std::uint8_t*>(ea), sig);
+}
+
+std::optional<found> find(std::uintptr_t ea, std::size_t span, pattern_view sig, unsigned nth) {
+    if (!readable(ea, span)) {
+        return std::nullopt;
+    }
+    return find_in(reinterpret_cast<const std::uint8_t*>(ea), span, ea, sig, nth);
+}
+
+std::optional<found> view::find(std::uintptr_t ea, std::size_t span, pattern_view sig,
+                                unsigned nth) const {
+    if (!contains(ea)) {
+        return std::nullopt;
+    }
+    // Без std::min: windows.h в этой TU приносит макрос min, и вызов через него не собрать.
+    const std::size_t off  = static_cast<std::size_t>(ea - base);
+    const std::size_t left = bytes.size() - off;
+    return find_in(bytes.data() + off, span < left ? span : left, ea, sig, nth);
 }
 
 namespace {
-
-// Позиция `nth`-го вхождения опкода в теле. npos-подобный ответ — span.
-std::size_t nth_at(std::uintptr_t ea, std::size_t span, std::span<const std::uint8_t> opcode, std::size_t tail, unsigned nth) {
-    if (!readable(ea, span) || nth == 0) {
-        return span;
-    }
-    const std::size_t n    = opcode.size();
-    const auto*       body = reinterpret_cast<const std::uint8_t*>(ea);
-    for (std::size_t i = 0; i + n + tail <= span; ++i) {
-        if (std::memcmp(body + i, opcode.data(), n) == 0 && --nth == 0) {
-            return i;
-        }
-    }
-    return span;
-}
 
 // Таблица, перед которой лежит указатель на locator: линковщик кладёт его последним
 // элементом перед первым слотом, поэтому сам слот — это `место указателя + 8`.
@@ -414,39 +493,6 @@ std::uintptr_t table_after(const std::vector<view>& sections, std::uintptr_t loc
 
 } // namespace
 
-bool disp32_of(std::uintptr_t ea, std::size_t span, std::span<const std::uint8_t> opcode, std::int32_t& out, std::uintptr_t* site, unsigned nth) {
-    const std::size_t at = nth_at(ea, span, opcode, 4, nth);
-    if (at == span) {
-        return false;
-    }
-    std::memcpy(&out, reinterpret_cast<const std::uint8_t*>(ea) + at + opcode.size(), sizeof out);
-    if (site != nullptr) {
-        *site = ea + at;
-    }
-    return true;
-}
-
-bool disp8_of(std::uintptr_t ea, std::size_t span, std::span<const std::uint8_t> opcode, unsigned& out, unsigned nth) {
-    const std::size_t at = nth_at(ea, span, opcode, 1, nth);
-    if (at == span) {
-        return false;
-    }
-    out = reinterpret_cast<const std::uint8_t*>(ea)[at + opcode.size()];
-    return true;
-}
-
-bool matches(std::uintptr_t ea, std::span<const int> sig) {
-    if (sig.empty() || !readable(ea, sig.size())) {
-        return false;
-    }
-    const auto* body = reinterpret_cast<const std::uint8_t*>(ea);
-    for (std::size_t i = 0; i < sig.size(); ++i) {
-        if (sig[i] >= 0 && body[i] != static_cast<std::uint8_t>(sig[i])) {
-            return false;
-        }
-    }
-    return true;
-}
 
 // ── Таблицы классов ──────────────────────────────────────────────────────────
 
