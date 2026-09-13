@@ -48,6 +48,11 @@ std::wstring widen(const std::string& text) {
     return out;
 }
 
+std::string file_name(const std::string& path) {
+    const std::size_t at = path.find_last_of("\\/");
+    return at == std::string::npos ? path : path.substr(at + 1);
+}
+
 // ── Сервисы хоста ────────────────────────────────────────────────────────────
 // Тонкие обёртки: сама работа в script_host.cpp. Здесь только перевод в C-типы.
 
@@ -236,9 +241,12 @@ void load(const std::wstring& game_dir) {
         r.path = narrow(path);
         HMODULE mod = LoadLibraryW(path.c_str());
         if (!mod) {
-            r.name = "?";
+            const DWORD err = GetLastError();
+            r.name = file_name(r.path);
             r.status = GRAFT_ERR_INTERNAL;
-            graft::log("! не загрузилась " + r.path);
+            r.why = std::format("LoadLibrary отказал, код {} (нет зависимостей или не x64)",
+                                err);
+            graft::log("! не загрузилась " + r.path + ": " + r.why);
             detail::rows_ref().push_back(r);
             continue;
         }
@@ -252,12 +260,14 @@ void load(const std::wstring& game_dir) {
         graft_plugin_info info{};
         const std::uint32_t code = entry(&host_api(), &info);
         r.status = code == GRAFT_OK ? plugins::check(info) : code;
-        r.name = info.name ? info.name : "?";
+        // Отказавший старый плагин имени не сообщает — тогда он хотя бы узнаваем по файлу.
+        r.name = info.name ? info.name : file_name(r.path);
         r.version = info.version;
         r.count = info.count;
         if (r.status != GRAFT_OK) {
-            graft::log("! плагин " + r.name + " отклонён: " +
-                       plugins::explain(r.status) + " (" + r.path + ")");
+            r.why = plugins::reason(info, r.status);
+            graft::log(std::format("! плагин {} v{} отклонён: {} ({})", r.name, r.version, r.why,
+                                   r.path));
             detail::rows_ref().push_back(r);
             continue;
         }
@@ -278,7 +288,7 @@ void load(const std::wstring& game_dir) {
              .c_str());
     for (const row& r : rows()) {
         graft::log(std::format("  {:<20} v{:<4} {:>4} нативов  {}", r.name, r.version, r.count,
-                               r.status == GRAFT_OK ? "" : plugins::explain(r.status)));
+                               r.why));
     }
 }
 

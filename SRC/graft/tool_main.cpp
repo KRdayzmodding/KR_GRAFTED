@@ -90,7 +90,7 @@ opened open_plugin(const fs::path& path) {
     }
     const std::uint32_t code = entry(nullptr, &out.info);
     out.status = code == GRAFT_OK ? graft::plugins::check(out.info) : code;
-    out.why = graft::plugins::explain(out.status);
+    out.why = graft::plugins::reason(out.info, out.status);
     return out;
 }
 

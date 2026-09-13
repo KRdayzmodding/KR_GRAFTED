@@ -54,6 +54,8 @@ typedef struct graft_method_info {
 
 // Сервисы хоста. Всё это требует состояния движка (script-контексты, найденные сканом
 // адреса) и потому не может жить в плагине.
+// Первые три поля заморожены так же, как заголовок graft_plugin_info: по ним плагин любой
+// версии сверяется с хостом, не читая больше ничего.
 typedef struct graft_host_api {
     uint32_t size;    // sizeof(graft_host_api) — задел на расширение
     uint32_t abi;     // GRAFT_ABI_VERSION хоста
@@ -120,12 +122,17 @@ typedef struct graft_native_desc {
     const char* doc;
 } graft_native_desc;
 
+// ЗАГОЛОВОК (size, abi, layout, name, version) ЗАМОРОЖЕН: его раскладка не меняется ни
+// при каком бампе ABI. Плагин заполняет его ВСЕГДА, в том числе когда отказывает хосту, —
+// так хост любой версии может сказать в журнале, кто отказал, под какие числа собран и
+// кому из двоих обновляться. Новые поля — только после заголовка.
 typedef struct graft_plugin_info {
     uint32_t size;
     uint32_t abi;
     uint32_t layout;
     const char* name;     // имя плагина: им он представляется в журнале и коллизиях
     uint32_t version;     // версия плагина, произвольная
+    // ── конец заголовка ──
     uint32_t count;
     const graft_native_desc* natives;
 } graft_plugin_info;

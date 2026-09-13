@@ -82,12 +82,15 @@ add_executable(graft_tests
     proto_test.cpp
     types_test.cpp
     plugins_test.cpp
+    plugin_entry_test.cpp
     callout_test.cpp
     enfparse_test.cpp
     runtime_test.cpp
 )
 # graft::hook — ради hook_test: врезка проверяется на своей же функции, без игры.
 target_link_libraries(graft_tests PRIVATE graft::host graft::gen graft::hook GTest::gtest_main)
+# plugin_entry_test грузит настоящую DLL-фикстуру из той же выходной папки.
+add_dependencies(graft_tests sixw_hashmap)
 target_include_directories(graft_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
 include(GoogleTest)

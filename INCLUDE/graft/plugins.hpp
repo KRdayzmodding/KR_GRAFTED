@@ -43,6 +43,9 @@ std::uint32_t check(const graft_plugin_info& info);
 std::vector<entry> merge(const std::vector<entry>& all, std::vector<collision>& out);
 
 std::string describe(const collision& c);
-const char* explain(std::uint32_t code);
+
+// Почему плагин не загружен — строка для журнала: какие числа разошлись (свои и хоста),
+// у кого они старее и что с этим делать. code — итог entry либо check.
+std::string reason(const graft_plugin_info& info, std::uint32_t code);
 
 }  // namespace graft::plugins

@@ -116,6 +116,88 @@ TEST(Check, RejectsTruncatedStruct) {
     EXPECT_EQ(graft::plugins::check(info), GRAFT_ERR_ABI);
 }
 
+// ── Причина отказа ───────────────────────────────────────────────────────────
+// Строка уходит в журнал человеку, у которого мод не завёлся. Из неё обязано быть видно,
+// какие числа разошлись, у кого они старее и что именно пересобирать или обновлять.
+
+bool has(const std::string& text, const std::string& part) {
+    return text.find(part) != std::string::npos;
+}
+
+std::string num(std::uint32_t v) {
+    return std::to_string(v);
+}
+
+TEST(Reason, OkSaysOk) {
+    EXPECT_EQ(graft::plugins::reason(make_info(GRAFT_ABI_VERSION, GRAFT_LAYOUT_VERSION), GRAFT_OK),
+              "ok");
+}
+
+// Плагин старее хоста: чинится пересборкой плагина, хост трогать незачем.
+TEST(Reason, OlderPluginAbiNamesBothNumbersAndAsksToRebuildPlugin) {
+    const auto text = graft::plugins::reason(
+        make_info(GRAFT_ABI_VERSION - 1, GRAFT_LAYOUT_VERSION), GRAFT_ERR_ABI);
+    EXPECT_TRUE(has(text, "ABI " + num(GRAFT_ABI_VERSION - 1))) << text;
+    EXPECT_TRUE(has(text, "ABI " + num(GRAFT_ABI_VERSION))) << text;
+    EXPECT_TRUE(has(text, "пересобрать плагин")) << text;
+    EXPECT_FALSE(has(text, "обновить хост")) << text;
+}
+
+// Плагин новее хоста: пересборка плагина не поможет, отстал хост.
+TEST(Reason, NewerPluginAbiAsksToUpdateHost) {
+    const auto text = graft::plugins::reason(
+        make_info(GRAFT_ABI_VERSION + 1, GRAFT_LAYOUT_VERSION), GRAFT_ERR_ABI);
+    EXPECT_TRUE(has(text, "ABI " + num(GRAFT_ABI_VERSION + 1))) << text;
+    EXPECT_TRUE(has(text, "обновить хост")) << text;
+    EXPECT_FALSE(has(text, "пересобрать плагин")) << text;
+}
+
+TEST(Reason, OlderPluginLayoutNamesBothNumbers) {
+    const auto text = graft::plugins::reason(
+        make_info(GRAFT_ABI_VERSION, GRAFT_LAYOUT_VERSION - 1), GRAFT_ERR_LAYOUT);
+    EXPECT_TRUE(has(text, "LAYOUT " + num(GRAFT_LAYOUT_VERSION - 1))) << text;
+    EXPECT_TRUE(has(text, "LAYOUT " + num(GRAFT_LAYOUT_VERSION))) << text;
+    EXPECT_TRUE(has(text, "пересобрать плагин")) << text;
+}
+
+TEST(Reason, NewerPluginLayoutAsksToUpdateHost) {
+    const auto text = graft::plugins::reason(
+        make_info(GRAFT_ABI_VERSION, GRAFT_LAYOUT_VERSION + 1), GRAFT_ERR_LAYOUT);
+    EXPECT_TRUE(has(text, "обновить хост")) << text;
+}
+
+// Разошлось оба числа — показать оба, а не только первое попавшееся.
+TEST(Reason, BothMismatchesAreReported) {
+    const auto text = graft::plugins::reason(
+        make_info(GRAFT_ABI_VERSION - 1, GRAFT_LAYOUT_VERSION + 1), GRAFT_ERR_ABI);
+    EXPECT_TRUE(has(text, "ABI " + num(GRAFT_ABI_VERSION - 1))) << text;
+    EXPECT_TRUE(has(text, "LAYOUT " + num(GRAFT_LAYOUT_VERSION + 1))) << text;
+}
+
+// Плагин отказал сам и своих чисел не сообщил (собран до того, как отказ стал их
+// сообщать). Гадать нельзя — но версии хоста и что делать назвать обязаны.
+TEST(Reason, SilentRefusalStillNamesHostNumbers) {
+    graft_plugin_info info{};
+    const auto text = graft::plugins::reason(info, GRAFT_ERR_ABI);
+    EXPECT_TRUE(has(text, "ABI " + num(GRAFT_ABI_VERSION))) << text;
+    EXPECT_TRUE(has(text, "LAYOUT " + num(GRAFT_LAYOUT_VERSION))) << text;
+    EXPECT_TRUE(has(text, "не сообщил")) << text;
+    EXPECT_TRUE(has(text, "пересобрать плагин")) << text;
+}
+
+TEST(Reason, TruncatedStructNamesSizes) {
+    auto info = make_info(GRAFT_ABI_VERSION, GRAFT_LAYOUT_VERSION);
+    info.size = 8;
+    const auto text = graft::plugins::reason(info, GRAFT_ERR_ABI);
+    EXPECT_TRUE(has(text, "8")) << text;
+    EXPECT_TRUE(has(text, num(sizeof(graft_plugin_info)))) << text;
+}
+
+TEST(Reason, UnknownCodeIsShown) {
+    const auto text = graft::plugins::reason(make_info(GRAFT_ABI_VERSION, GRAFT_LAYOUT_VERSION), 42);
+    EXPECT_TRUE(has(text, "42")) << text;
+}
+
 // ── Слияние реестров ─────────────────────────────────────────────────────────
 
 TEST(Merge, KeepsEverythingWhenNamesDiffer) {
