@@ -109,7 +109,7 @@ int generate(const std::string& plugin, const std::vector<const graft_native_des
              const fs::path& scripts) {
     for (const std::string& module : graft::proto_modules(all)) {
         if (!write_if_changed(scripts / module / decl_file(plugin),
-                              graft::proto_file(all, module.c_str()))) {
+                              graft::proto_file(all, module.c_str(), plugin))) {
             return 1;
         }
     }

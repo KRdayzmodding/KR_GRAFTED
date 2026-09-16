@@ -2,7 +2,9 @@
 // объявление, которое компилятор Enforce ждёт увидеть в PBO.
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <string>
+#include <vector>
 
 #include "graft/native.hpp"
 
@@ -195,6 +197,81 @@ TEST(Proto, ClassWithStateDeclaresOnlyItsMethods) {
     EXPECT_NE(file.find("    proto native void Bump();"), std::string::npos);
     EXPECT_EQ(file.find("NativeDispose"), std::string::npos);
     EXPECT_EQ(file.find("~DemoState"), std::string::npos);
+}
+
+// ── Обёртка #ifdef ───────────────────────────────────────────────────────────
+// Файл плагина целиком под `#ifdef GRAFTED_<ИМЯ>`: не загрузился плагин — дефайна нет,
+// объявления исчезают, и мод компилируется без его нативов, а не падает на `proto native`.
+// Исключение — 1_Core: проверено на живом сервере, этот модуль компилируется БЕЗ дефайнов
+// (не видны даже DIAG и имя самого мода), и обёртка там прятала бы объявления всегда.
+//
+// Реестр тестов весь в 1_Core; копии переносятся в тот модуль, который нужен кейсу.
+std::vector<const graft_native_desc*> own_descs(std::vector<graft_native_desc>& keep,
+                                                const char* module) {
+    for (const graft::native* n = graft::natives(); n; n = n->next) {
+        if (n->module && std::string{n->module} == "1_Core") {
+            keep.push_back({n->class_name, n->name, n->impl, n->ret, n->args, module,
+                            n->declare_as, static_cast<std::uint8_t>(n->is_static),
+                            static_cast<std::uint8_t>(n->marshalled),
+                            static_cast<std::uint8_t>(n->generate), n->param_names, n->doc});
+        }
+    }
+    std::vector<const graft_native_desc*> out;
+    for (const graft_native_desc& d : keep) {
+        out.push_back(&d);
+    }
+    return out;
+}
+
+// Всё объявленное — между #ifdef и #endif, и #endif — последняя строка файла.
+void expect_wrapped(const std::string& file, const std::string& define) {
+    const std::size_t open = file.find("#ifdef " + define + "\n");
+    ASSERT_NE(open, std::string::npos) << file;
+    EXPECT_EQ(file.find("#ifdef", open + 1), std::string::npos) << "обёртка одна";
+    const std::size_t first = file.find("\nproto");  // не «protogen» из шапки
+    ASSERT_NE(first, std::string::npos);
+    EXPECT_LT(open, first) << "объявление до #ifdef";
+    const std::string tail = "#endif\n";
+    ASSERT_GE(file.size(), tail.size());
+    EXPECT_EQ(file.substr(file.size() - tail.size()), tail) << file;
+}
+
+TEST(ProtoGuard, PluginFileIsWrappedInItsDefine) {
+    std::vector<graft_native_desc> keep;
+    const std::string file = graft::proto_file(own_descs(keep, "3_Game"), "3_Game", "MYMOD");
+    expect_wrapped(file, "GRAFTED_MYMOD");
+    // Сдвиг не должен задеть сами объявления.
+    EXPECT_NE(file.find("modded class DemoClass\n{\n"), std::string::npos);
+    EXPECT_NE(file.find("proto native int DemoPing(int p0);"), std::string::npos);
+}
+
+// Имя — по тому же правилу, по которому хост кладёт дефайн в движок, иначе #ifdef
+// никогда не сработает.
+TEST(ProtoGuard, DefineNameMatchesHostRule) {
+    std::vector<graft_native_desc> keep;
+    const std::string file = graft::proto_file(own_descs(keep, "4_World"), "4_World", "my-mod 2");
+    expect_wrapped(file, "GRAFTED_my_mod_2");
+}
+
+// Объявления самого хоста (класс Graft) — под GRAFTED: хост кладёт ровно его, а
+// GRAFTED_graft не кладёт никогда.
+TEST(ProtoGuard, HostFileIsWrappedInGrafted) {
+    std::vector<graft_native_desc> keep;
+    const std::string file = graft::proto_file(own_descs(keep, "2_GameLib"), "2_GameLib", "graft");
+    expect_wrapped(file, "GRAFTED");
+}
+
+// 1_Core дефайнов не видит: обёрнутый файл там — это мод, который не компилируется
+// НИКОГДА, в том числе с загруженным плагином.
+TEST(ProtoGuard, CoreModuleIsNeverWrapped) {
+    std::vector<graft_native_desc> keep;
+    const std::string file = graft::proto_file(own_descs(keep, "1_Core"), "1_Core", "MYMOD");
+    EXPECT_EQ(file.find("#if"), std::string::npos) << file;
+    EXPECT_NE(file.find("proto native int DemoPing(int p0);"), std::string::npos);
+}
+
+TEST(ProtoGuard, NoPluginNameNoGuard) {
+    EXPECT_EQ(graft::proto_file().find("#if"), std::string::npos);
 }
 
 }  // namespace

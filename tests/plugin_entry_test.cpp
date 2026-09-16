@@ -6,6 +6,9 @@
 #include <windows.h>
 
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <string>
 #include <string_view>
 
 #include "graft/abi.h"
@@ -71,6 +74,34 @@ TEST(PluginEntry, RefusingTruncatedHostReportsOwnHeader) {
     graft_plugin_info info{};
     EXPECT_EQ(entry(&host, &info), GRAFT_ERR_ABI);
     expect_header_filled(info);
+}
+
+// Объявления, которые сборка напечатала рядом с фикстурами (graft.exe protogen, POST_BUILD).
+std::string generated(const wchar_t* plugin, const wchar_t* module) {
+    wchar_t exe[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    const auto file = std::filesystem::path{exe}.parent_path() /
+                      (std::wstring{plugin} + L".scripts") / module /
+                      (L"grafted_natives_" + std::wstring{plugin} + L".c");
+    std::ifstream in(file, std::ios::binary);
+    EXPECT_TRUE(in) << "нет " << file.string();
+    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+// Сквозь инструмент: файл вне 1_Core обёрнут в дефайн ИМЕННО этого плагина.
+TEST(PluginProtogen, GameModuleFileIsWrappedInPluginDefine) {
+    const std::string text = generated(L"SIXW_GRAFT", L"3_Game");
+    const std::size_t open = text.find("#ifdef GRAFTED_SIXW_GRAFT\n");
+    ASSERT_NE(open, std::string::npos) << text;
+    EXPECT_LT(open, text.find("\nproto")) << text;
+    EXPECT_TRUE(text.ends_with("#endif\n")) << text;
+}
+
+// 1_Core компилируется без дефайнов (проверено на сервере) — там обёртки нет.
+TEST(PluginProtogen, CoreModuleFileIsNotWrapped) {
+    const std::string text = generated(L"SIXW_HASHMAP", L"1_Core");
+    ASSERT_NE(text.find("class SeraphHashMap"), std::string::npos) << text;
+    EXPECT_EQ(text.find("#if"), std::string::npos) << text;
 }
 
 }  // namespace

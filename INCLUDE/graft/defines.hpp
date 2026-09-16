@@ -30,7 +30,17 @@ api find(const std::vector<scan::view>& sections);
 const char* engine_string(std::string_view text);
 
 // Имя дефайна для плагина: `GRAFTED_<ИМЯ>`, всё неидентификаторное — в подчёркивание.
-std::string define_name(std::string_view plugin);
+// Inline: тем же правилом генератор (graft.exe) оборачивает объявления плагина в #ifdef,
+// а defines.cpp в инструмент не линкуется.
+inline std::string define_name(std::string_view plugin) {
+    std::string out = "GRAFTED_";
+    for (char c : plugin) {
+        const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                        (c >= '0' && c <= '9') || c == '_';
+        out += ok ? c : '_';
+    }
+    return out;
+}
 
 void install(const std::vector<scan::view>& sections);
 

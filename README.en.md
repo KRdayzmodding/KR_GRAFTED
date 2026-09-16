@@ -46,7 +46,9 @@ GRAFT_BINDINGS("3_Game") {                      // registration: script name and
 **Declaration — `mod/MYMOD/scripts/3_Game/grafted_natives_MYMOD.c`, printed by the build:**
 
 ```c
+#ifdef GRAFTED_MYMOD
 proto native bool IsValidNick(string p0);
+#endif
 ```
 
 **Script — `mod/MYMOD/scripts/5_Mission/mymod.c`, an ordinary DayZ mod:**

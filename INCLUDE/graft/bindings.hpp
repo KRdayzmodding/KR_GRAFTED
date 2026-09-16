@@ -4,6 +4,7 @@
 #pragma once
 #include <cstring>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "graft/abi.h"
@@ -264,7 +265,11 @@ struct binder {
 std::string proto_decl(const native& n);
 std::string proto_decl(const graft_native_desc& n);
 std::string proto_file(const char* module = "1_Core");
-std::string proto_file(const std::vector<const graft_native_desc*>& source, const char* module);
+// plugin — имя плагина: файл целиком оборачивается в `#ifdef GRAFTED_<ИМЯ>` (у хоста,
+// "graft", — в `#ifdef GRAFTED`). Пусто или module == "1_Core" — без обёртки: этот модуль
+// движок компилирует без дефайнов.
+std::string proto_file(const std::vector<const graft_native_desc*>& source, const char* module,
+                       std::string_view plugin = {});
 // Модули, в которых есть хоть одно объявление (для генератора).
 std::vector<std::string> proto_modules();
 std::vector<std::string> proto_modules(const std::vector<const graft_native_desc*>& source);

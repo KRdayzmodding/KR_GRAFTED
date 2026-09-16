@@ -211,16 +211,6 @@ const char* engine_string(std::string_view text) {
     return reinterpret_cast<const char*>(raw + 6);
 }
 
-std::string define_name(std::string_view plugin) {
-    std::string out = "GRAFTED_";
-    for (char c : plugin) {
-        const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-                        (c >= '0' && c <= '9') || c == '_';
-        out += ok ? c : '_';
-    }
-    return out;
-}
-
 api find(const std::vector<scan::view>& sections) {
     std::uintptr_t anchor = 0;
     for (const scan::view& s : sections) {

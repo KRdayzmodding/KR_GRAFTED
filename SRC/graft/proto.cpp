@@ -8,6 +8,7 @@
 #include <string_view>
 #include <vector>
 
+#include "graft/defines.hpp"
 #include "graft/native.hpp"
 
 // Генерация скриптовой стороны из реестра нативов: тот же источник истины, что и адреса
@@ -142,7 +143,8 @@ std::string proto_decl(const native& n) {
     return proto_decl(to_desc(n));
 }
 
-std::string proto_file(const std::vector<const graft_native_desc*>& source, const char* module) {
+std::string proto_file(const std::vector<const graft_native_desc*>& source, const char* module,
+                       std::string_view plugin) {
     std::vector<const graft_native_desc*> all;
     for (const graft_native_desc* n : source) {
         if (n->generate && n->module && std::strcmp(n->module, module) == 0) {
@@ -157,6 +159,17 @@ std::string proto_file(const std::vector<const graft_native_desc*>& source, cons
         "// Модуль: ";
     out += module;
     out += "\n\n";
+
+    // Весь файл — под дефайном плагина: хост кладёт его, только если плагин РЕАЛЬНО
+    // загрузился (defines.cpp). Нет плагина — нет и объявлений, и мод компилируется
+    // дальше, а не падает на `proto native` без импла. Хост представлен дефайном GRAFTED.
+    // Кроме 1_Core: проверено на сервере, этот модуль компилируется БЕЗ дефайнов (не видны
+    // даже DIAG и имя мода) — обёрнутые объявления там пропадали бы всегда.
+    std::string guard;
+    if (!plugin.empty() && std::strcmp(module, "1_Core") != 0) {
+        guard = plugin == "graft" ? "GRAFTED" : defines::define_name(plugin);
+        out += "#ifdef " + guard + "\n";
+    }
 
     for (const graft_native_desc* n : all) {
         if (!n->class_name) {
@@ -200,6 +213,9 @@ std::string proto_file(const std::vector<const graft_native_desc*>& source, cons
             out += proto_decl(*n) + "\n";
         }
         out += "}\n";
+    }
+    if (!guard.empty()) {
+        out += "#endif\n";
     }
     return out;
 }
