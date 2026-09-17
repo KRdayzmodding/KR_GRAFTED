@@ -378,6 +378,19 @@ frame_entry find_frame_entry(const std::vector<view>& sections);
 // движка, у которых нет своих строк-маяков (линковщик, поиск функции по имени).
 std::uintptr_t first_call(const std::vector<view>& sections, std::uintptr_t fn, std::size_t span = 0x60);
 
+// Все места, где инструкция вида insn ссылается через rip на C-строку ровно text.
+std::vector<std::uintptr_t> rip_refs(const std::vector<view>& sections, const char* text, pattern_view insn);
+
+// Начало функции, в которой лежит ea, — по таблицам раскрутки загруженного образа (.pdata),
+// через сцепленные записи: у куска, вынесенного компилятором, запись своя. Ноль — у адреса
+// записи нет (не код или лист без кадра).
+std::uintptr_t function_start(std::uintptr_t ea);
+
+// Начало функции, которая берёт адрес C-строки ровно text (`lea reg,[rip+d]`). Для
+// движковых функций, у которых есть строка, но нет натива. Ноль — не нашлось или
+// ссылаются РАЗНЫЕ функции: угадывать из двух нельзя.
+std::uintptr_t function_referencing(const std::vector<view>& sections, const char* text);
+
 // Секции загруженного образа. Одна на всех: и хосту для поиска регистрации, и
 // плагину для поиска внутренностей движка.
 std::vector<view> sections_of(void* module);

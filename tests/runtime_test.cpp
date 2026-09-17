@@ -121,6 +121,45 @@ TEST(Stages, LayerBoundariesFollowTheContext) {
                                                        "+2 Object", "-2 Object..Object"}));
 }
 
+// Подписчик события сам регистрирует методы (отложенные нативы плагинов) — через ту же
+// врезку и в СВОЁМ контексте. Это не граница модуля: иначе поздняя регистрация открывала
+// фальшивый слой, а настоящий закрывался раньше, чем движок его дорегистрировал.
+TEST(Stages, RegistrationFromSubscriberIsNotABoundary) {
+    // Подписки живут до конца процесса, а номер слоя растёт от кейса к кейсу: метки свои,
+    // без номера — кейс не зависит от того, гоняют его отдельно или всем exe сразу.
+    static std::vector<std::string> marks;
+    static int ours = 0;
+    graft::stage::on_layer_begin([](const graft::stage::layer& one) {
+        marks.push_back(std::format("+{}", one.first_class));
+        graft::stage::note_registration(&ours, "CreatureAI");
+    });
+    graft::stage::on_layer_end([](const graft::stage::layer& one) {
+        marks.push_back(std::format("-{}..{}", one.first_class, one.last_class));
+    });
+    graft::stage::on_link([] { graft::stage::note_registration(&ours, "CreatureAIDriver"); });
+
+    int core = 0;
+    int game = 0;
+    graft::stage::note_registration(&core, "string");
+    graft::stage::note_registration(&game, "Object");
+    graft::stage::note_link();
+    graft::stage::note_registration(&game, "EntityAI");
+    graft::stage::note_frame();
+
+    EXPECT_EQ(marks, (std::vector<std::string>{"+string", "-string..string", "+Object",
+                                               "-Object..EntityAI"}));
+}
+
+// Проверка линковки модуля — событие: будит подписчиков каждый раз, по модулю на раз.
+TEST(Stages, LinkCheckWakesSubscribersEveryTime) {
+    stage_marks().clear();
+    graft::stage::on_link([] { stage_marks().push_back(1); });
+    graft::stage::on_link([] { stage_marks().push_back(2); });
+    graft::stage::note_link();
+    graft::stage::note_link();
+    EXPECT_EQ(stage_marks(), (std::vector<int>{1, 2, 1, 2}));
+}
+
 // ── Журналы ─────────────────────────────────────────────────────────────────
 // Каналов два: системный — наш файл в профиле сервера, пользовательский — журналы самой
 // игры. Без игры проверяется первый целиком и ОТКАЗ второго: он обязан не терять строку.

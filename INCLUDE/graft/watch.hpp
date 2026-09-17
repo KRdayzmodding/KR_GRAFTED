@@ -58,6 +58,7 @@
 #include <thread>
 
 #include "graft/engine.hpp"
+#include "graft/scan.hpp"
 
 namespace graft::watch {
 
@@ -252,21 +253,13 @@ inline std::string where(std::uintptr_t rip) {
         return "-";
     }
     const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
-    DWORD64 image = 0;
-    const RUNTIME_FUNCTION* fe = RtlLookupFunctionEntry(rip, &image, nullptr);
-    // Начало функции — через сцепленную запись раскрутки (UNW_FLAG_CHAININFO): у куска,
-    // вынесенного компилятором, своя запись, и без этого шага «функцией» оказался бы он.
-    while (fe) {
-        const auto* ui = reinterpret_cast<const std::uint8_t*>(image + fe->UnwindData);
-        if (!(ui[0] >> 3 & 0x4)) {
-            break;
-        }
-        fe = reinterpret_cast<const RUNTIME_FUNCTION*>(ui + 4 + ((ui[2] + 1) & ~1) * 2);
-    }
-    if (image != base) {
+    PVOID image = nullptr;
+    RtlPcToFileHeader(reinterpret_cast<PVOID>(rip), &image);
+    if (reinterpret_cast<std::uintptr_t>(image) != base) {
         return std::format("{:#x}(не игра)", rip);
     }
-    return std::format("{:#x}/f{:#x}", rip - base, fe ? fe->BeginAddress : 0);
+    const std::uintptr_t start = scan::function_start(rip);
+    return std::format("{:#x}/f{:#x}", rip - base, start ? start - base : 0);
 }
 
 // Правило 5: по строке на ЦЕПОЧКУ, остальное — счётчиком к ней.

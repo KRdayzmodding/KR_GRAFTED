@@ -463,6 +463,48 @@ TEST(Scan, RttiVtableMatchesTheRealBinary) {
     EXPECT_EQ(graft::scan::rtti_vtable(self, ".?AUderived@graft_rtti_probe@@"), 0u);
 }
 
+// ── От строки-маяка к функции ───────────────────────────────────────────────
+// У движковых функций без натива (проверка линковки модуля) другой зацепки нет: строка
+// есть, имени нет. Проверяется на образе самого теста — там настоящие .pdata.
+//
+// Фикстура собрана так, чтобы компилятор не выбросил то, что ищем:
+//   - строка уходит через volatile-указатель — иначе её свернут в константу даже сквозь
+//     noinline, и `lea [rip+...]` в коде не останется;
+//   - вызов не хвостовой — лист без кадра (`lea; jmp rax`) записи раскрутки не имеет.
+std::size_t graft_anchor_sink(const char* text, std::size_t salt) {
+    return std::strlen(text) + salt;
+}
+std::size_t (*volatile g_anchor_sink)(const char*, std::size_t) = &graft_anchor_sink;
+
+__declspec(noinline) std::size_t graft_anchor_probe(std::size_t salt) {
+    const std::size_t n = g_anchor_sink("graft-scan-probe: function referencing this line", salt);
+    return n * 2 + g_anchor_sink("", salt);
+}
+
+// Искомое собирается в рантайме: литерал целиком в теле кейса сам стал бы «функцией,
+// которая ссылается на строку».
+std::string probe_text(const char* tail) {
+    return std::string{"graft-scan-probe:"} + tail;
+}
+
+TEST(Scan, FunctionStartFromAnyAddressInside) {
+    ASSERT_GT(graft_anchor_probe(1), 0u);
+    const auto start = reinterpret_cast<std::uintptr_t>(&graft_anchor_probe);
+    EXPECT_EQ(graft::scan::function_start(start), start);
+    EXPECT_EQ(graft::scan::function_start(start + 4), start);
+    EXPECT_EQ(graft::scan::function_start(0), 0u);  // не код — не функция
+}
+
+TEST(Scan, FunctionReferencingFindsItsStart) {
+    ASSERT_GT(graft_anchor_probe(1), 0u);
+    const auto sections = graft::scan::sections_of(GetModuleHandleW(nullptr));
+    EXPECT_EQ(graft::scan::function_referencing(
+                  sections, probe_text(" function referencing this line").c_str()),
+              reinterpret_cast<std::uintptr_t>(&graft_anchor_probe));
+    EXPECT_EQ(graft::scan::function_referencing(sections, probe_text(" nobody says this").c_str()),
+              0u);
+}
+
 // Цена. Поиск линейный по секциям данных, и от их размера зависит, сколько он стоит на
 // настоящем образе игры (у DayZDiag .rdata ~3.4 МБ, .data ~57 МБ). Замер печатает
 // пропускную способность — по ней видно, во что обойдётся тот образ.

@@ -187,6 +187,18 @@ void* __fastcall hook_register_global(void* ctx, const char* name, void* impl,
     return result;
 }
 
+// Проверка линковки модуля: скрипты разобраны, движок сверяет native-методы с импл. Что
+// это за окно и кому оно нужно — в stages.hpp (on_link). Имени у функции нет, есть строка
+// предупреждения — одна на образ.
+constexpr const char* kLinkCheck = "Method not linked '%s.%s'";
+using link_check_fn = std::uint64_t(__fastcall*)(void* compiler, void* errors);
+link_check_fn g_orig_link_check = nullptr;
+
+std::uint64_t __fastcall hook_link_check(void* compiler, void* errors) {
+    stage::note_link();
+    return g_orig_link_check(compiler, errors);
+}
+
 }  // namespace
 
 void install() {
@@ -224,6 +236,13 @@ void install() {
     // Привязка к кадру: хук на движковую точку входа скриптового OnUpdate.
     frame::install(sections);
 
+    const std::uintptr_t link_check = scan::function_referencing(sections, kLinkCheck);
+    if (!link_check ||
+        !hook(reinterpret_cast<link_check_fn>(link_check), &hook_link_check, &g_orig_link_check)) {
+        log("! проверка линковки не найдена: методы классов мода встанут позже неё, "
+            "в script-логе будет «Method not linked» (работать они будут)");
+    }
+
     // Дефайн на каждый загруженный плагин: врезка ДО загрузчика (плагины грузятся ниже),
     // а сработает она позже — когда движок дойдёт до CfgMods. См. SRC/graft/defines.cpp.
     defines::install(sections);
@@ -242,8 +261,10 @@ void install() {
 
     // Кто чего ждёт — записано здесь, одним списком, а не размазано по врезкам.
     //
-    // Отложенные нативы ждут КЛАССА: игровые классы появляются не в первом слое, а в
-    // третьем-четвёртом, и раньше конца слоя их искать бессмысленно.
+    // Отложенные нативы ждут КЛАССА: игровые классы и классы мода появляются не в первом
+    // слое. Окно — проверка линковки модуля: модуль разобран, импл ещё можно положить.
+    // Конец слоя — запасной путь, если проверку не нашли.
+    stage::on_link([] { retry_pending(); });
     stage::on_layer_end([](const stage::layer&) { retry_pending(); });
     // Шапка ждёт, когда движку станет чем печатать: кадр вызова Print собирается по
     // шаблонам скриптовых переменных, а их приносит линковка модуля.

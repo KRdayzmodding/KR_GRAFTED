@@ -9,6 +9,10 @@
 #include <algorithm>
 #include <cstring>
 #include <iterator>
+#include <ranges>
+#include <span>
+
+#include "graft/asm.hpp"
 
 namespace graft::scan {
 namespace {
@@ -22,6 +26,30 @@ std::int32_t rel32(const std::uint8_t* at) {
 std::uintptr_t rip_target(std::uintptr_t insn_end, std::int32_t disp) {
     return insn_end + static_cast<std::uintptr_t>(static_cast<std::intptr_t>(disp));
 }
+
+// Все вхождения там, где поиск по образу отдаёт по одному: `step(from)` — «следующее
+// начиная с from», ноль — больше нет.
+std::vector<std::uintptr_t> find_all(auto step) {
+    std::vector<std::uintptr_t> all;
+    for (std::uintptr_t at = step(0); at != 0; at = step(at + 1)) {
+        all.push_back(at);
+    }
+    return all;
+}
+
+// Исполняемые секции: в них ищутся инструкции.
+auto code_of(const std::vector<view>& sections) {
+    return sections | std::views::filter(&view::exec);
+}
+
+// x64 UNWIND_INFO, начало записи: версия и флаги делят первый байт, число кодов раскрутки
+// нужно, чтобы шагнуть за них — к сцепленной записи основной функции.
+struct unwind_info {
+    std::uint8_t version_flags;
+    std::uint8_t prolog;
+    std::uint8_t codes;
+    std::uint8_t frame;
+};
 
 } // namespace
 
@@ -123,75 +151,40 @@ std::uintptr_t vote(const std::vector<view>& sections, pattern_view insn, const 
     std::vector<tally> tallies;
 
     auto is_code = [&](std::uintptr_t ea) {
-        for (const view& s : sections) {
-            if (s.exec && s.contains(ea)) {
-                return true;
-            }
-        }
-        return false;
+        return std::ranges::any_of(code_of(sections), [&](const view& s) { return s.contains(ea); });
     };
-    auto rejected = [&](std::uintptr_t ea) {
-        for (std::size_t i = 0; i < reject_n; ++i) {
-            if (reject[i] == ea) {
-                return true;
-            }
-        }
-        return false;
-    };
+    auto rejected = [&](std::uintptr_t ea) { return std::ranges::contains(std::span{reject, reject_n}, ea); };
 
+    auto code_sections = code_of(sections);
     for (const char* const* a = anchors; *a; ++a) {
-        for (const view& str_sec : sections) {
-            for (std::uintptr_t str_ea = str_sec.find_cstr(*a); str_ea;
-                 str_ea                = str_sec.find_cstr(*a, str_ea + 1)) {
-                for (const view& code : sections) {
-                    if (!code.exec) {
-                        continue;
-                    }
-                    for (std::uintptr_t site = code.find_rip(insn, str_ea); site;
-                         site                = code.find_rip(insn, str_ea, site + 1)) {
-                        // из всех call'ов рядом берём ближайший настоящий: 0xE8 внутри
-                        // чужого смещения даст цель вне кода и будет отброшен
-                        std::vector<std::uintptr_t> cands =
-                            before ? code.calls_before(site) : code.calls_after(site);
-                        if (before) {
-                            std::reverse(cands.begin(), cands.end());
-                        }
-                        std::uintptr_t hit = 0;
-                        for (std::uintptr_t c : cands) {
-                            if (is_code(c) && !rejected(c)) {
-                                hit = c;
-                                break;
-                            }
-                        }
-                        if (!hit) {
-                            continue;
-                        }
-                        bool known = false;
-                        for (tally& t : tallies) {
-                            if (t.ea == hit) {
-                                ++t.votes;
-                                known = true;
-                                break;
-                            }
-                        }
-                        if (!known) {
-                            tallies.push_back({hit, 1});
-                        }
-                    }
+        for (std::uintptr_t site : rip_refs(sections, *a, insn)) {
+            auto code = std::ranges::find_if(code_sections, [&](const view& s) { return s.contains(site); });
+            // из всех call'ов рядом берём ближайший настоящий: 0xE8 внутри
+            // чужого смещения даст цель вне кода и будет отброшен
+            std::vector<std::uintptr_t> cands = before ? code->calls_before(site) : code->calls_after(site);
+            if (before) {
+                std::reverse(cands.begin(), cands.end());
+            }
+            std::uintptr_t hit = 0;
+            for (std::uintptr_t c : cands) {
+                if (is_code(c) && !rejected(c)) {
+                    hit = c;
+                    break;
                 }
             }
+            if (!hit) {
+                continue;
+            }
+            if (auto t = std::ranges::find(tallies, hit, &tally::ea); t != tallies.end()) {
+                ++t->votes;
+            } else {
+                tallies.push_back({hit, 1});
+            }
         }
     }
 
-    std::uintptr_t best       = 0;
-    int            best_votes = 0;
-    for (const tally& t : tallies) {
-        if (t.votes > best_votes) {
-            best       = t.ea;
-            best_votes = t.votes;
-        }
-    }
-    return best;
+    const auto best = std::ranges::max_element(tallies, {}, &tally::votes);
+    return best == tallies.end() ? 0 : best->ea;
 }
 
 std::uintptr_t first_call(const std::vector<view>& sections, std::uintptr_t fn, std::size_t span) {
@@ -208,6 +201,52 @@ std::uintptr_t first_call(const std::vector<view>& sections, std::uintptr_t fn, 
         }
     }
     return 0;
+}
+
+std::vector<std::uintptr_t> rip_refs(const std::vector<view>& sections, const char* text, pattern_view insn) {
+    std::vector<std::uintptr_t> out;
+    for (const view& data : sections) {
+        for (const std::uintptr_t str : find_all([&](std::uintptr_t from) { return data.find_cstr(text, from); })) {
+            for (const view& code : code_of(sections)) {
+                std::ranges::copy(find_all([&](std::uintptr_t from) { return code.find_rip(insn, str, from); }),
+                                  std::back_inserter(out));
+            }
+        }
+    }
+    return out;
+}
+
+std::uintptr_t function_start(std::uintptr_t ea) {
+    // Флаги записи лежат в старших битах первого байта — туда же сдвигаем и константу.
+    constexpr std::uint8_t  kChained = UNW_FLAG_CHAININFO << 3;
+    DWORD64                 image    = 0;
+    const RUNTIME_FUNCTION* fe       = RtlLookupFunctionEntry(ea, &image, nullptr);
+    while (fe != nullptr) {
+        const auto* info = reinterpret_cast<const unwind_info*>(image + fe->UnwindData);
+        if ((info->version_flags & kChained) == 0) {
+            return static_cast<std::uintptr_t>(image) + fe->BeginAddress;
+        }
+        // За заголовком — коды раскрутки по слову, числом до чётного; дальше запись
+        // основной функции: у куска, вынесенного компилятором, своей она и является.
+        const std::span codes{reinterpret_cast<const std::uint16_t*>(info + 1), (info->codes + 1u) & ~1u};
+        fe = reinterpret_cast<const RUNTIME_FUNCTION*>(codes.data() + codes.size());
+    }
+    return 0;
+}
+
+std::uintptr_t function_referencing(const std::vector<view>& sections, const char* text) {
+    auto starts = rip_refs(sections, text, code<"lea reg64,[rip+disp32]">) |
+                  std::views::transform(function_start) |
+                  std::views::filter([](std::uintptr_t start) { return start != 0; });
+
+    std::uintptr_t found = 0;
+    for (const std::uintptr_t start : starts) {
+        if (found != 0 && found != start) {
+            return 0;  // две разные функции — угадывать не будем
+        }
+        found = start;
+    }
+    return found;
 }
 
 std::vector<std::uintptr_t> rel32_targets(const std::vector<view>& sections, std::uintptr_t ea, std::size_t span, std::uint8_t opcode) {
