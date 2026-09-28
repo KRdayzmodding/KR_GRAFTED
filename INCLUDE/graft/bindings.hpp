@@ -4,6 +4,7 @@
 #pragma once
 #include <cstring>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "graft/abi.h"
@@ -50,6 +51,12 @@ using script_object = ref<N>;
 inline constexpr struct declared_t {
 } declared{};
 
+// Тег: класса в движке НЕТ, его вводит сам мод. Объявление печатается целиком
+// (`class Имя`), а не правкой существующего (`modded class Имя`). Так уже объявляются
+// шаблонные классы — тег даёт то же самое обычным.
+inline constexpr struct fresh_t {
+} fresh{};
+
 class bindings {
 public:
     explicit bindings(const char* script_module) : module_(script_module) {}
@@ -60,11 +67,13 @@ public:
     public:
         // Имя может нести параметры шаблона: "CppHashMap<Class K, Class V>". Регистрация
         // идёт по имени до '<' (сам шаблонный класс), а объявление печатается целиком.
-        class_scope(const char* class_name, const char* module, bool generate)
+        class_scope(const char* class_name, const char* module, bool generate, bool fresh = false)
             : class_name_(class_name), module_(module), generate_(generate) {
             if (const char* angle = std::strchr(class_name, '<')) {
-                declare_ = class_name;
+                declare_    = class_name;
                 class_name_ = detail::intern(std::string(class_name, static_cast<std::size_t>(angle - class_name)));
+            } else if (fresh) {
+                declare_ = class_name;
             }
         }
 
@@ -75,39 +84,53 @@ public:
         // класс: одна привязка на общий класс работает для всех инстанциаций, а типы
         // приезжают в рантайме. Библиотека переключается на этот путь сама.
         template <auto F>
-        class_scope& method(const char* name) {
+        class_scope& method(const char* name, const char* params = nullptr, const char* doc = nullptr) {
             if constexpr (detail::marshalled_member<F>) {
                 using T = detail::marshal_thunk<C, F>;
-                return put(name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args, true);
+                return put(name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args, true, params, doc);
             } else {
                 using T = detail::method_thunk<C, F>;
-                return put(name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args);
+                return put(name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args, false, params, doc);
             }
         }
+
         // Статический метод: объекта нет, подойдёт любая свободная функция.
+        // graft::value в сигнатуре переключает на маршалируемый путь — у статического
+        // вызова приёмника нет, форма та же, что у глобального.
         template <auto F>
-        class_scope& static_method(const char* name) {
-            using T = detail::free_thunk<F>;
-            return put(name, reinterpret_cast<void*>(&T::call), true, T::ret, T::args);
+        class_scope& static_method(const char* name, const char* params = nullptr, const char* doc = nullptr) {
+            if constexpr (detail::marshalled_free<F>) {
+                using T = detail::marshal_free_thunk<F>;
+                return put(name, reinterpret_cast<void*>(&T::call), true, T::ret, T::args, true, params, doc);
+            } else {
+                using T = detail::free_thunk<F>;
+                return put(name, reinterpret_cast<void*>(&T::call), true, T::ret, T::args, false, params, doc);
+            }
         }
 
     private:
-        class_scope& put(const char* name, void* impl, bool is_static, const char* ret,
-                         const char* const* args, bool marshalled = false) {
-            detail::add({class_name_, name, impl, is_static, ret, args, nullptr, marshalled, module_,
-                         generate_, declare_});
+        class_scope& put(const char* name, void* impl, bool is_static, const char* ret, const char* const* args, bool marshalled = false, const char* params = nullptr, const char* doc = nullptr) {
+            detail::add({class_name_, name, impl, is_static, ret, args, nullptr, params, doc, marshalled, module_, generate_, declare_});
             return *this;
         }
+
         const char* class_name_;
         const char* module_;
-        bool generate_;
+        bool        generate_;
         const char* declare_ = nullptr;
     };
 
+    // params — имена аргументов через запятую ("player, uid"), doc — однострочное
+    // описание. Оба попадают в сгенерированное объявление: пользователь читает не
+    // типы, а имена и назначение.
+    //
+    //   bind.global<&KRT_Attach>("KRT_Attach", "player, player_uid, char_uid",
+    //                            "Подключить игрока: слот актора и конверт.");
     template <auto Fn>
-    bindings& global(const char* name) {
-        return put_global<Fn>(name, true);
+    bindings& global(const char* name, const char* params = nullptr, const char* doc = nullptr) {
+        return put_global<Fn>(name, true, params, doc);
     }
+
     template <auto Fn>
     bindings& global(const char* name, declared_t) {
         return put_global<Fn>(name, false);
@@ -126,7 +149,7 @@ public:
         // для регистрации (до '<'), и имена параметров для объявлений методов.
         template_scope(const char* class_name, const char* module) : class_name_(class_name), module_(module) {
             if (const char* angle = std::strchr(class_name, '<')) {
-                declare_ = class_name;
+                declare_    = class_name;
                 class_name_ = detail::intern(std::string(class_name, static_cast<std::size_t>(angle - class_name)));
                 detail::split_params(class_name, params_, kMaxParams, param_count_);
                 for (std::size_t i = 0; i < param_count_; ++i) {
@@ -141,24 +164,24 @@ public:
 
         template <class Pick>
         template_scope& method(Pick, const char* name) {
-            using D = detail::dispatch2<C, Pick, detail::script_param_types,
-                                        detail::script_param_types>;
-            using MA = decltype(Pick{}.template operator()<C<i32, f32>>());
-            using MB = decltype(Pick{}.template operator()<C<f32, i32>>());
+            using D   = detail::dispatch2<C, Pick, detail::script_param_types, detail::script_param_types>;
+            using MA  = decltype(Pick{}.template operator()<C<i32, f32>>());
+            using MB  = decltype(Pick{}.template operator()<C<f32, i32>>());
             using Sig = detail::template_sig<MA, MB>;
-            detail::add({class_name_, name, reinterpret_cast<void*>(&D::call), false,
-                         Sig::ret(params_, param_count_), Sig::args(params_, param_count_),
-                         nullptr, true, module_, true, declare_});
+            // Порядок полей — как в graft::native (registry.hpp): next, имена аргументов,
+            // описание, marshalled, модуль, печатать ли, заголовок класса. У шаблонного
+            // метода имён и описания нет: генератор печатает их по параметрам класса.
+            detail::add({class_name_, name, reinterpret_cast<void*>(&D::call), false, Sig::ret(params_, param_count_), Sig::args(params_, param_count_), nullptr, nullptr, nullptr, true, module_, true, declare_});
             return *this;
         }
 
     private:
         static constexpr std::size_t kMaxParams = 4;
-        const char* class_name_;
-        const char* module_;
-        const char* declare_ = nullptr;
-        std::string_view params_[kMaxParams]{};
-        std::size_t param_count_ = 0;
+        const char*                  class_name_;
+        const char*                  module_;
+        const char*                  declare_ = nullptr;
+        std::string_view             params_[kMaxParams]{};
+        std::size_t                  param_count_ = 0;
     };
 
     template <template <class...> class C>
@@ -171,28 +194,45 @@ public:
     class_scope<C> class_(const char* name) {
         return {name, module_, true};
     }
+
     template <class C>
     class_scope<C> class_(const char* name, declared_t) {
         return {name, module_, false};
     }
+
+    // Класс, которого в движке нет: объявляется целиком, а не правкой существующего.
+    template <class C>
+    class_scope<C> class_(const char* name, fresh_t) {
+        return {name, module_, true, /*fresh=*/true};
+    }
+
     // ...или из самого типа, если он наследует script_object<"Имя">.
     template <class C>
     class_scope<C> class_() {
         return {C::script_class.value, module_, true};
     }
+
     template <class C>
     class_scope<C> class_(declared_t) {
         return {C::script_class.value, module_, false};
     }
 
 private:
+    // graft::value в сигнатуре глобального натива делает его маршалируемым: в
+    // объявлении такой аргумент печатается как `void` — «любой», ровно как у
+    // ванильных proto void Print(void var) и Serializer.Write(void).
     template <auto Fn>
-    bindings& put_global(const char* name, bool generate) {
-        using T = detail::free_thunk<Fn>;
-        detail::add({nullptr, name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args,
-                     nullptr, false, module_, generate});
+    bindings& put_global(const char* name, bool generate, const char* params = nullptr, const char* doc = nullptr) {
+        if constexpr (detail::marshalled_free<Fn>) {
+            using T = detail::marshal_free_thunk<Fn>;
+            detail::add({nullptr, name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args, nullptr, params, doc, true, module_, generate});
+        } else {
+            using T = detail::free_thunk<Fn>;
+            detail::add({nullptr, name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args, nullptr, params, doc, false, module_, generate});
+        }
         return *this;
     }
+
     const char* module_;
 };
 
@@ -203,7 +243,7 @@ struct binder {
         fn(block);
     }
 };
-}  // namespace detail
+} // namespace detail
 
 // Текст объявления для скрипта: одна строка / целый файл модуля.
 // Формы с явным списком дескрипторов нужны генератору: он достаёт их из чужой DLL
@@ -211,16 +251,18 @@ struct binder {
 std::string proto_decl(const native& n);
 std::string proto_decl(const graft_native_desc& n);
 std::string proto_file(const char* module = "1_Core");
-std::string proto_file(const std::vector<const graft_native_desc*>& source, const char* module);
+// plugin — имя плагина: файл целиком оборачивается в `#ifdef GRAFTED_<ИМЯ>` (у хоста,
+// "graft", — в `#ifdef GRAFTED`). Пусто или module == "1_Core" — без обёртки: этот модуль
+// движок компилирует без дефайнов.
+std::string proto_file(const std::vector<const graft_native_desc*>& source, const char* module, std::string_view plugin = {});
 // Модули, в которых есть хоть одно объявление (для генератора).
 std::vector<std::string> proto_modules();
 std::vector<std::string> proto_modules(const std::vector<const graft_native_desc*>& source);
 
-}  // namespace graft
-
+} // namespace graft
 
 #define GRAFT_CAT_(a, b) a##b
-#define GRAFT_CAT(a, b) GRAFT_CAT_(a, b)
+#define GRAFT_CAT(a, b)  GRAFT_CAT_(a, b)
 
 // Блок привязки: все нативы одного модуля описываются в одном месте. Модуль — тот, в
 // который генератор напечатает объявления: игровые типы (Object, EntityAI) в 1_Core ещё
@@ -233,7 +275,7 @@ std::vector<std::string> proto_modules(const std::vector<const graft_native_desc
 // Выбор метода шаблонного класса: имя метода одно и то же у всех инстанциаций, но
 // указатель на член у каждой свой — поэтому передаём «как его взять», а не сам указатель.
 //   bind.template_class<Table>("CppHashMap<Class K, Class V>").method(GRAFT_METHOD(Set));
-#define GRAFT_M(name) ([]<class T>() { return &T::name; })
+#define GRAFT_M(name)      ([]<class T>() { return &T::name; })
 #define GRAFT_METHOD(name) GRAFT_M(name), #name
 
 // Паспорт плагина: имя, под которым он представляется хосту, и своя версия. Ровно один
@@ -242,8 +284,8 @@ std::vector<std::string> proto_modules(const std::vector<const graft_native_desc
 //
 //   GRAFT_PLUGIN("SIXW_GRAFT", 1);
 #define GRAFT_PLUGIN(plugin_name, plugin_version)                     \
-    extern "C" const char* const graft_plugin_name_ = plugin_name;    \
-    extern "C" const unsigned graft_plugin_version_ = plugin_version
+    extern "C" const char* const graft_plugin_name_    = plugin_name; \
+    extern "C" const unsigned    graft_plugin_version_ = plugin_version
 
 // Тик: место, где C++ просыпается сам. Тело — обычная функция от dt; внутри уже можно
 // звать движок, потому что зовут нас со скриптового потока.
@@ -254,18 +296,18 @@ std::vector<std::string> proto_modules(const std::vector<const graft_native_desc
 //
 // Со стороны мода это одна строка (её печатает `graft protogen`):
 //   modded class MissionServer { void OnUpdate(float t) { super.OnUpdate(t); GraftTick(t); } }
-#define GRAFT_ON_TICK(dt) GRAFT_ON_TICK_(dt, __COUNTER__)
+#define GRAFT_ON_TICK(dt)      GRAFT_ON_TICK_(dt, __COUNTER__)
 #define GRAFT_ON_TICK_(dt, id) GRAFT_ON_TICK__(dt, id)
-#define GRAFT_ON_TICK__(dt, id)                                                    \
-    static void GRAFT_CAT(graft_tick_, id)(float);                                 \
-    static const ::graft::detail::tick_binder GRAFT_CAT(graft_tick_bind_, id){     \
-        &GRAFT_CAT(graft_tick_, id)};                                              \
+#define GRAFT_ON_TICK__(dt, id)                                                  \
+    static void                               GRAFT_CAT(graft_tick_, id)(float); \
+    static const ::graft::detail::tick_binder GRAFT_CAT(graft_tick_bind_, id){   \
+        &GRAFT_CAT(graft_tick_, id)};                                            \
     static void GRAFT_CAT(graft_tick_, id)(float dt)
 
-#define GRAFT_BINDINGS(script_module) GRAFT_BINDINGS_(script_module, __COUNTER__)
+#define GRAFT_BINDINGS(script_module)      GRAFT_BINDINGS_(script_module, __COUNTER__)
 #define GRAFT_BINDINGS_(script_module, id) GRAFT_BINDINGS__(script_module, id)
-#define GRAFT_BINDINGS__(script_module, id)                                    \
-    static void GRAFT_CAT(graft_bind_, id)(::graft::bindings&);                \
-    static const ::graft::detail::binder GRAFT_CAT(graft_binder_, id){         \
-        script_module, &GRAFT_CAT(graft_bind_, id)};                           \
+#define GRAFT_BINDINGS__(script_module, id)                                              \
+    static void                          GRAFT_CAT(graft_bind_, id)(::graft::bindings&); \
+    static const ::graft::detail::binder GRAFT_CAT(graft_binder_, id){                   \
+        script_module, &GRAFT_CAT(graft_bind_, id)};                                     \
     static void GRAFT_CAT(graft_bind_, id)(::graft::bindings & bind)

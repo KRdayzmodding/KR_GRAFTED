@@ -20,6 +20,7 @@ struct row {
     std::string path;
     std::uint32_t status = 0;  // GRAFT_OK либо код отказа
     std::uint32_t count = 0;   // сколько нативов принёс
+    std::string   why;          // причина отказа (plugins::reason); пусто у загруженных
 };
 
 // Найти и загрузить всё. Звать ПОСЛЕ установки хуков: см. комментарий в loader.cpp.

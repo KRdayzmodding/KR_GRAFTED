@@ -110,6 +110,14 @@ std::size_t churn_arena(std::size_t bytes);
 void enter_call();
 void leave_call();
 
+// Глубина на входе в защищённый вызов и возврат к ней. Нужны падению: деструкторы при
+// раскрутке SEH не бегут, call_scope сам не закроется, и глубину надо чинить руками.
+// Именно ВОССТАНОВИТЬ, а не обнулить: если упал ВЛОЖЕННЫЙ вызов, ноль означал бы, что
+// началась новая внешняя цепочка, и арена затёрла бы строки внешнего вызова, пока он ещё
+// жив и собирается их вернуть.
+std::size_t call_depth();
+void        restore_call_depth(std::size_t was);
+
 struct call_scope {
     call_scope() { enter_call(); }
     ~call_scope() { leave_call(); }
@@ -162,10 +170,69 @@ using owned = text;  // прежнее имя типа возврата
 template <class T>
 T load_slot(const void* slot);
 
+// ── Поле объекта: что лежит в слоте ─────────────────────────────────────────
+// Почти всё лежит в самом слоте: int/float/bool значением, строка и ссылка —
+// указателем, который разворачивает load_slot.
+//
+// ВЕКТОР ЛЕЖИТ ИНАЧЕ: в слоте УКАЗАТЕЛЬ на три float, а не сами двенадцать байт
+// (замерено на живом объекте: слот …F9C0 содержал …F9C8 — буфер сразу за ним; см.
+// RESEARCH/theory/abi.md). Значит и читать, и писать вектор надо ЧЕРЕЗ этот указатель:
+// двенадцать байт поверх слота убивают его, и падает не тот, кто писал, а первое же
+// чтение поля из скрипта. Буфер принадлежит объекту и живёт столько же — считать на нём
+// нечего, поэтому запись в него так же безопасна, как в float.
+//
+// Элемент КОНТЕЙНЕРА — не то же самое: там вектор лежит значением (см. is_element в
+// enf_type.hpp). Одна и та же «вьюха на память» с двумя раскладками — причина, по
+// которой у поля свои read_field/write_field, а не общий load_slot.
+
 // Что можно писать в поле объекта напрямую. Строками и ссылками владеет движок: он
 // считает ссылки и освобождает память, поэтому запись мимо него их ломает.
 template <class T>
 concept owned_by_script = std::same_as<T, i32> || std::same_as<T, f32> || std::same_as<T, bool>;
+
+// vector тоже наш — но лежит ссылкой, поэтому у него своя перегрузка write_field.
+template <class T>
+concept writable_field = owned_by_script<T> || std::same_as<T, vector>;
+
+template <owned_by_script T>
+inline bool write_field(void* at, T value) {
+    if (!at) {
+        return false;
+    }
+    std::memcpy(at, &value, sizeof value);
+    return true;
+}
+
+inline bool write_field(void* at, vector value) {
+    if (!at) {
+        return false;
+    }
+    void* data = nullptr;
+    std::memcpy(&data, at, sizeof data);
+    if (!data) { // поле объявлено, а данных за ним нет — писать некуда
+        return false;
+    }
+    std::memcpy(data, &value, sizeof value);
+    return true;
+}
+
+// Единственная дорога к значению поля: сюда обязаны ходить ВСЕ читатели. Разойдись
+// они — одно и то же поле давало бы разные ответы в зависимости от формы обращения
+// (ровно это и случилось, когда про ссылку в слоте узнал один читатель из пяти).
+template <class T>
+inline T read_field(const void* at) {
+    if constexpr (std::same_as<T, vector>) {
+        void* data = nullptr;
+        std::memcpy(&data, at, sizeof data);
+        vector value{};
+        if (data) {
+            std::memcpy(&value, data, sizeof value);
+        }
+        return value;
+    } else {
+        return load_slot<T>(at);
+    }
+}
 
 // Значение любого скриптового типа — определение ниже, но упомянуть его надо раньше:
 // маршалируемый вызов принимает аргументы именно им.
@@ -276,7 +343,7 @@ public:
         if (!at) {
             return std::nullopt;
         }
-        return load_slot<T>(at);
+        return read_field<T>(at);
     }
 
     template <class T>
@@ -290,13 +357,11 @@ public:
     // порча кучи — прокси её не ослабляет, а делает нарушение ошибкой КОМПИЛЯЦИИ.
     template <class T>
     const field_proxy& operator=(T value) const {
-        static_assert(owned_by_script<T>,
-                      "прямо писать можно только int/float/bool: строками и ссылками "
+        static_assert(writable_field<T>,
+                      "прямо писать можно int/float/bool/vector: строками и ссылками "
                       "владеет движок, их отдают возвратом натива или пишут в скрипте");
-        void* at = script::variable_address(instance_, detail::slot_of<Name, Owner>(instance_));
-        if (at) {
-            std::memcpy(at, &value, sizeof value);
-        }
+        write_field(script::variable_address(instance_, detail::slot_of<Name, Owner>(instance_)),
+                    value);
         return *this;
     }
 
@@ -502,7 +567,7 @@ struct ref {
         if (!addr) {
             return T{};
         }
-        return load_slot<T>(addr);
+        return read_field<T>(addr);
     }
     // Промах виден в типе: поля нет — пусто, а не тихий ноль.
     template <class T>
@@ -511,16 +576,12 @@ struct ref {
         if (!addr) {
             return std::nullopt;
         }
-        return load_slot<T>(addr);
+        return read_field<T>(addr);
     }
-    template <owned_by_script T>
+
+    template <writable_field T>
     bool set_field(const char* name, T value) const {
-        void* addr = script::variable_address(ptr, script::find_variable(ptr, name));
-        if (!addr) {
-            return false;
-        }
-        std::memcpy(addr, &value, sizeof value);
-        return true;
+        return write_field(script::variable_address(ptr, script::find_variable(ptr, name)), value);
     }
     // ── Поле, имя которого известно на компиляции ────────────────────────────
     //   graft::i32 id = node.field<graft::i32, "m_id">();
@@ -535,7 +596,7 @@ struct ref {
         if (!addr) {
             return T{};
         }
-        return load_slot<T>(addr);
+        return read_field<T>(addr);
     }
     template <class T, name_t Name>
     std::optional<T> try_field() const {
@@ -543,16 +604,12 @@ struct ref {
         if (!addr) {
             return std::nullopt;
         }
-        return load_slot<T>(addr);
+        return read_field<T>(addr);
     }
-    template <name_t Name, owned_by_script T>
+
+    template <name_t Name, writable_field T>
     bool set_field(T value) const {
-        void* addr = script::variable_address(ptr, slot_of<Name>());
-        if (!addr) {
-            return false;
-        }
-        std::memcpy(addr, &value, sizeof value);
-        return true;
+        return write_field(script::variable_address(ptr, slot_of<Name>()), value);
     }
 
     // ── То же в стиле sol2: поле как lvalue ──────────────────────────────────
@@ -592,7 +649,8 @@ struct ref {
     std::optional<T> try_field(str name) const {
         return try_field<T>(name.c_str());
     }
-    template <owned_by_script T>
+
+    template <writable_field T>
     bool set_field(str name, T value) const {
         return set_field<T>(name.c_str(), value);
     }

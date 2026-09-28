@@ -3,4 +3,6 @@
 // Импл живёт в graft-модуле (proxy-DLL рядом с exe); без неё скрипт не слинкуется.
 // Модуль: 3_Game
 
+#ifdef GRAFTED_HELLO_GRAFT
 proto native owned string HelloGraft(string p0);
+#endif

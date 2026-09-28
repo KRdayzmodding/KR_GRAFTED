@@ -9,11 +9,13 @@
 #include <vector>
 
 #include "graft/engine.hpp"
+#include "graft/guard.hpp"
+#include "graft/scan.hpp"
 #include "graft/script.hpp"
 
 // Смерть скриптового объекта — без единой строчки в скрипте.
 //
-// Как это делает сам движок (разобрано по дизассемблеру, RESEARCH/README.md): у
+// Как это делает сам движок (разобрано по дизассемблеру, RESEARCH/theory/abi.md): у
 // дескриптора класса есть своя C++ таблица, её слот 8 ведёт освобождение объекта, а то
 // зовёт ВИРТУАЛЬНЫЙ НУЛЕВОЙ СЛОТ самого объекта — обычный `scalar deleting destructor`
 // MSVC (`call [rax]`, rdx = 0). Именно им чистят себя array/map/set: скриптового
@@ -57,39 +59,15 @@ std::vector<void (*)(void*)>& forgetters() {
     return *all;
 }
 
-bool is_code(const void* p) {
-    if (!p) {
-        return false;
-    }
-    MEMORY_BASIC_INFORMATION mbi{};
-    if (VirtualQuery(p, &mbi, sizeof mbi) == 0 || mbi.State != MEM_COMMIT) {
-        return false;
-    }
-    constexpr DWORD kExec = PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE |
-                            PAGE_EXECUTE_WRITECOPY;
-    return (mbi.Protect & kExec) != 0 && (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) == 0;
-}
-
-// Длину таблицы никто не хранит — считаем её сами: подряд идущие адреса машинного кода.
-// Потолок нужен не от жадности, а чтобы не уехать в соседние данные, если .rdata
-// продолжается такими же указателями.
-constexpr std::size_t kMaxSlots = 256;
-
-std::size_t slot_count(void* const* vt) {
-    std::size_t n = 0;
-    // Спрашиваем систему и про сам слот: у последней таблицы в секции следующая страница
-    // может быть не отображена, и чтение за край — падение на ровном месте.
-    while (n < kMaxSlots && detail::readable(&vt[n], sizeof(void*)) && is_code(vt[n])) {
-        ++n;
-    }
-    return n;
-}
-
 void* __fastcall on_destroy(void* self, unsigned flags) {
     auto** vt = *reinterpret_cast<void***>(self);
     auto* record = *reinterpret_cast<patched**>(vt - 1);
     for (void (*forget)(void*) : forgetters()) {
-        forget(self);
+        // Это код плагина, и зовут его ИЗ ДВИЖКОВОГО пути разрушения объекта: упасть тут
+        // значит уронить игру на её собственном коде, не добравшись даже до оригинального
+        // деструктора ниже. Обёртка та же, что у нативов, и по той же причине.
+        ::graft::detail::guarded<void>(reinterpret_cast<void*>(forget),
+                                       [&] { forget(self); });
     }
     return record->original ? record->original(self, flags) : nullptr;
 }
@@ -99,7 +77,9 @@ patched* copy_of(void** vt) {
     if (it != by_original().end()) {
         return it->second;
     }
-    const std::size_t count = slot_count(vt);
+    // Длину таблицы никто не хранит — её считает scan::vtable_slots: подряд идущие
+    // адреса машинного кода, с потолком, чтобы не уехать в соседние данные.
+    const std::size_t count = scan::vtable_slots(vt);
     if (count == 0) {
         return nullptr;
     }

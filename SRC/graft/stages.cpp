@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "graft/stages.hpp"
 
+#include <concepts>
 #include <format>
+#include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "graft/callout.hpp"
@@ -39,6 +42,27 @@ std::vector<void (*)(const layer&)>& on_end() {
     return all;
 }
 
+std::vector<void (*)()>& on_links() {
+    static std::vector<void (*)()> all;
+    return all;
+}
+
+// Идёт раздача события подписчикам. Их регистрации (отложенные нативы плагинов) приходят
+// через ту же врезку, но это не движок, а мы, — границей слоя они не являются.
+bool g_dispatching = false;
+
+template <class Fn, class... Args>
+    requires std::invocable<const Fn&, const Args&...>
+void dispatch(const std::vector<Fn>& subscribers, const Args&... args) {
+    // Вложенная раздача законна (подписчик сам двигает лестницу), поэтому флаг
+    // возвращается к прежнему значению, а не гасится.
+    const bool outer = std::exchange(g_dispatching, true);
+    for (const Fn& fn : subscribers) {
+        std::invoke(fn, args...);
+    }
+    g_dispatching = outer;
+}
+
 const char* name_of(step at) {
     switch (at) {
         case step::armed:
@@ -65,9 +89,7 @@ void close_layer() {
     log(std::format("слой {}: конец ({} -> {})", g_layer.index,
                     g_layer.first_class ? g_layer.first_class : "?",
                     g_layer.last_class ? g_layer.last_class : "?"));
-    for (void (*fn)(const layer&) : on_end()) {
-        fn(g_layer);
-    }
+    dispatch(on_end(), g_layer);
 }
 
 void open_layer(void* context, const char* class_name) {
@@ -75,9 +97,7 @@ void open_layer(void* context, const char* class_name) {
     g_layer = layer{g_layer.index + 1, class_name, class_name};
     g_open = true;
     log(std::format("слой {}: начало ({})", g_layer.index, class_name ? class_name : "?"));
-    for (void (*fn)(const layer&) : on_begin()) {
-        fn(g_layer);
-    }
+    dispatch(on_begin(), g_layer);
 }
 
 // Условие этапа linked — «движок зовётся», и это три разные вещи, каждая нужна:
@@ -135,6 +155,12 @@ void on_layer_end(void (*fn)(const layer&)) {
     }
 }
 
+void on_link(void (*fn)()) {
+    if (fn) {
+        on_links().push_back(fn);
+    }
+}
+
 namespace detail {
 
 void reach(step at) {
@@ -159,7 +185,7 @@ void reach(step at) {
 }  // namespace detail
 
 void note_registration(void* context, const char* class_name) {
-    if (!context) {
+    if (!context || g_dispatching) {
         return;
     }
     if (context != g_context) {
@@ -168,6 +194,10 @@ void note_registration(void* context, const char* class_name) {
     } else if (class_name) {
         g_layer.last_class = class_name;
     }
+}
+
+void note_link() {
+    dispatch(on_links());
 }
 
 void note_frame() {

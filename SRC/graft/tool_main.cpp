@@ -90,7 +90,7 @@ opened open_plugin(const fs::path& path) {
     }
     const std::uint32_t code = entry(nullptr, &out.info);
     out.status = code == GRAFT_OK ? graft::plugins::check(out.info) : code;
-    out.why = graft::plugins::explain(out.status);
+    out.why                  = graft::plugins::reason(out.info, out.status);
     return out;
 }
 
@@ -109,7 +109,7 @@ int generate(const std::string& plugin, const std::vector<const graft_native_des
              const fs::path& scripts) {
     for (const std::string& module : graft::proto_modules(all)) {
         if (!write_if_changed(scripts / module / decl_file(plugin),
-                              graft::proto_file(all, module.c_str()))) {
+                              graft::proto_file(all, module.c_str(), plugin))) {
             return 1;
         }
     }
@@ -128,10 +128,7 @@ std::vector<graft_native_desc> host_descs() {
     out.reserve(ordered.size());
     for (auto it = ordered.rbegin(); it != ordered.rend(); ++it) {
         const graft::native& n = **it;
-        out.push_back({n.class_name, n.name, n.impl, n.ret, n.args, n.module, n.declare_as,
-                       static_cast<std::uint8_t>(n.is_static),
-                       static_cast<std::uint8_t>(n.marshalled),
-                       static_cast<std::uint8_t>(n.generate)});
+        out.push_back({n.class_name, n.name, n.impl, n.ret, n.args, n.module, n.declare_as, static_cast<std::uint8_t>(n.is_static), static_cast<std::uint8_t>(n.marshalled), static_cast<std::uint8_t>(n.generate), n.param_names, n.doc});
     }
     return out;
 }

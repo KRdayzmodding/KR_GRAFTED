@@ -15,6 +15,7 @@ class SeraphNode
     string m_label;
     ref SeraphNode m_child;
     ref array<int> m_values;
+    vector m_pos;   // поле-вектор: в слоте ссылка на три float, а не значение
 
     void SeraphNode(int id, float weight, string label)
     {

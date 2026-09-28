@@ -192,4 +192,61 @@ struct method_thunk<C, F> : abi_check<R, A...> {
     }
 };
 
+// ── Детур под защитой ────────────────────────────────────────────────────────
+// Натив плагина обёрнут защитой всегда — трамплины выше это и делают. С детуром так не
+// было: graft::hook принимает голый указатель, и детур исполняется внутри движкового кода
+// без всякой обёртки. Асимметрия неочевидная и дорогая — код тот же самый, плагинный, а
+// последствия у падения разные: в нативе вызов отменяется, в детуре умирает сервер.
+//
+// Детур приходит ШАБЛОННЫМ параметром, а не значением: обёртка обязана быть отдельной
+// функцией с ровно той же сигнатурой, а сгенерировать такую можно, только зная детур на
+// этапе компиляции.
+//
+// В отчёте такой сбой будет без имени: реестр ищет владельца по адресу трамплина натива,
+// а детур в нём не значится. Зато он посчитан, записан адресом и не унёс сервер.
+template <auto Detour>
+struct guarded_detour;
+
+template <class R, class... A, R (*Detour)(A...)>
+struct guarded_detour<Detour> {
+    static_assert(std::is_same_v<ret_abi<R>, R>,
+                  "детур обязан возвращать ровно то, что движок ждёт в rax");
+
+    static R call(A... args) {
+        return guarded<R>(reinterpret_cast<void*>(Detour), [&] { return Detour(args...); });
+    }
+};
+
 }  // namespace graft::detail
+
+namespace graft {
+
+// Врезка с защищённым детуром: падение внутри него отменяет ВЫЗОВ, а не игру.
+//
+//   graft::hook<&my_foo>(&Engine_Foo, &g_orig);      // детур защищён
+//   graft::hook(&Engine_Foo, &my_foo, &g_orig);      // как было, под свою ответственность
+//
+// Голая форма оставлена намеренно: детур, который обязан досылать управление оригиналу
+// при любом исходе, раскрутку пережить не может, и решать это вправе только его автор.
+template <auto Detour, class F>
+    requires std::is_pointer_v<F>
+bool hook(F target, F* original) {
+    static_assert(std::is_same_v<F, decltype(&detail::guarded_detour<Detour>::call)>,
+                  "типы цели и детура обязаны совпадать — иначе кадр вызова разъедется");
+    return hook(reinterpret_cast<void*>(target),
+                reinterpret_cast<void*>(&detail::guarded_detour<Detour>::call),
+                reinterpret_cast<void**>(original));
+}
+
+// Она же для пачки.
+template <auto Detour, class F>
+    requires std::is_pointer_v<F>
+hook_request hooked(F target, F* original) {
+    static_assert(std::is_same_v<F, decltype(&detail::guarded_detour<Detour>::call)>,
+                  "типы цели и детура обязаны совпадать — иначе кадр вызова разъедется");
+    return {reinterpret_cast<void*>(target),
+            reinterpret_cast<void*>(&detail::guarded_detour<Detour>::call),
+            reinterpret_cast<void**>(original)};
+}
+
+} // namespace graft

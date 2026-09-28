@@ -71,6 +71,9 @@ function(graft_plugin target)
     if(NOT GRAFT_TOOL)
         add_dependencies(${target} graft_tool)
     endif()
+    # POST_BUILD идёт только при перелинковке DLL. Без этого новый graft.exe (другой вид
+    # объявлений) оставлял старые .scripts, пока не тронешь исходник плагина.
+    set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS "${tool}")
 
     # Где лежат объявления — свойство таргета: его читают и сборка мода, и IDE, и
     # чужие скрипты, которым надо забрать сгенерированное.

@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH LicenseRef-GRAFT-plugin-exception-1.0
 // Этот файл линкуется в КАЖДЫЙ плагин, поэтому едет с исключением: мод на GRAFT ничего
 // не обязан — даже закрытый и платный. См. LICENSE-EXCEPTION.
-#include <windows.h>
-
+#include "graft/scan.hpp"
 #include "graft/script.hpp"
 
 // Единственная функция, которую inline-часть script.hpp зовёт наружу. Живёт отдельной
@@ -14,22 +13,12 @@
 // в таблицу сервисов она не идёт и на горячем пути остаётся обычным локальным вызовом.
 namespace graft::script::detail {
 
+// Сама страница спрашивается у системы один раз на всю библиотеку — scan::readable.
+// Здесь к ней добавлено то, чего там быть не должно: сверка «похоже ли это вообще на
+// указатель». Разница не косметическая — plausible требует кратности восьми, и для
+// ЗНАЧЕНИЯ ПОЛЯ это правильно, а для адреса внутри функции (сверка сигнатуры) нет.
 bool readable(const void* p, std::size_t n) {
-    if (!plausible(p)) {
-        return false;
-    }
-    // Пробовать чтение под SEH нельзя: движок ставит свой фильтр исключений и рапортует
-    // о падении раньше, чем сработал бы наш __except (проверено — вылет 0xC0000005 с
-    // адресом внутри hid.dll). Поэтому спрашиваем у системы, а не у процессора.
-    MEMORY_BASIC_INFORMATION mbi{};
-    if (VirtualQuery(p, &mbi, sizeof mbi) == 0 || mbi.State != MEM_COMMIT) {
-        return false;
-    }
-    if (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) {
-        return false;
-    }
-    const auto* start = static_cast<const std::uint8_t*>(mbi.BaseAddress);
-    return static_cast<const std::uint8_t*>(p) + n <= start + mbi.RegionSize;
+    return plausible(p) && scan::readable(p, n);
 }
 
 }  // namespace graft::script::detail

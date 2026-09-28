@@ -2,7 +2,9 @@
 // объявление, которое компилятор Enforce ждёт увидеть в PBO.
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <string>
+#include <vector>
 
 #include "graft/native.hpp"
 
@@ -34,7 +36,49 @@ struct DemoState : graft::script_object<"DemoState"> {
     void Bump() { ++hits; }
 };
 
+// graft::value в сигнатуре означает «любой тип» и печатается как void — так же, как
+// у ванильных proto void Print(void var) и Serializer.Write(void value_in).
+// Смешивать с обычными типами можно: маршалируемый вызов везёт ВСЕ аргументы блоком
+// с тегами, поэтому объявленный тип на форму вызова не влияет.
+bool DemoAny(graft::value v) {
+    return !v.empty();
+}
+
+// Строка рядом с value: маршалируемый путь обязан принимать graft::str, иначе
+// «любой тип» нельзя смешать с обычной строкой.
+bool DemoText2(graft::str name, graft::value payload) {
+    return !name.empty() && !payload.empty();
+}
+
+bool DemoMixed(graft::i32 n, graft::obj o, graft::vec3 v, graft::value payload) {
+    return n > 0 && static_cast<bool>(o) && v.x == 0 && !payload.empty();
+}
+
+struct DemoStatics : graft::script_object<"DemoStatics"> {
+    static bool Any(graft::value v) { return !v.empty(); }
+};
+
+// Имена аргументов и описание: объявление читает человек, а не компилятор.
+bool DemoNamed(graft::i32 slot, graft::str zone, graft::obj player) {
+    return slot >= 0 && !zone.empty() && static_cast<bool>(player);
+}
+
+struct DemoDocs : graft::script_object<"DemoDocs"> {
+    void Move(graft::f32 speed) const { (void)speed; }
+};
+
+// Описание в несколько строк: объяснение натива в одну строку не влезает, а перенос
+// обязан остаться комментарием — иначе сгенерированный файл не компилируется.
+bool DemoWrapped(graft::i32 slot) {
+    return slot >= 0;
+}
+
 GRAFT_BINDINGS("1_Core") {
+    bind.global<&DemoNamed>("DemoNamed", "slot, zone, player", "Переселить игрока в зону.");
+    bind.class_<DemoDocs>().method<&DemoDocs::Move>("Move", "speed_cms", "Задать скорость в см/с.");
+    bind.global<&DemoWrapped>("DemoWrapped", "slot", "Занять слот.\n\nВозврат — влез ли.");
+    bind.global<&DemoAny>("DemoAny").global<&DemoMixed>("DemoMixed").global<&DemoText2>("DemoText2");
+    bind.class_<DemoStatics>().static_method<&DemoStatics::Any>("Any");
     bind.global<&DemoPing>("DemoPing")
         .global<&DemoAll>("DemoEverything")
         .global<&DemoText>("DemoText");
@@ -55,6 +99,35 @@ const graft::native& find(const char* name) {
     return missing;
 }
 
+// Без имён объявление обязано остаться валидным: p0, p1, ...
+TEST(Proto, UnnamedArgsFallBackToPositional) {
+    EXPECT_EQ(graft::proto_decl(find("DemoPing")), "proto native int DemoPing(int p0);");
+}
+
+TEST(Proto, ArgsAreNamedWhenGiven) {
+    EXPECT_EQ(graft::proto_decl(find("DemoNamed")),
+              "proto native bool DemoNamed(int slot, string zone, Class player);");
+}
+
+TEST(Proto, DocGoesAboveDeclaration) {
+    const std::string file = graft::proto_file();
+    EXPECT_NE(file.find("// Переселить игрока в зону.\nproto native bool DemoNamed("),
+              std::string::npos);
+}
+
+TEST(Proto, MultilineDocStaysComment) {
+    const std::string file = graft::proto_file();
+    EXPECT_NE(file.find("// Занять слот.\n//\n// Возврат — влез ли.\nproto native bool DemoWrapped("),
+              std::string::npos);
+}
+
+TEST(Proto, MethodArgsAreNamedAndDocumented) {
+    EXPECT_EQ(graft::proto_decl(find("Move")), "proto native void Move(float speed_cms);");
+    const std::string file = graft::proto_file();
+    EXPECT_NE(file.find("    // Задать скорость в см/с.\n    proto native void Move("),
+              std::string::npos);
+}
+
 TEST(Proto, MapsScalarTypes) {
     EXPECT_EQ(graft::proto_decl(find("DemoPing")), "proto native int DemoPing(int p0);");
 }
@@ -66,6 +139,31 @@ TEST(Proto, MapsEverySupportedType) {
 
 TEST(Proto, OwnedStringReturn) {
     EXPECT_EQ(graft::proto_decl(find("DemoText")), "proto native owned string DemoText();");
+}
+
+// Глобальный натив с graft::value обязан объявляться маршалируемым (`proto`, не
+// `proto native`) — форма вызова у него другая, и перепутать их значит упасть.
+TEST(Proto, GlobalWithValueIsMarshalled) {
+    EXPECT_EQ(graft::proto_decl(find("DemoAny")), "proto bool DemoAny(void p0);");
+    EXPECT_TRUE(find("DemoAny").marshalled);
+    EXPECT_FALSE(find("DemoPing").marshalled);
+}
+
+// Точная типизация там, где она есть, и «любой» только там, где нужен.
+TEST(Proto, MarshalledArgsCanBeMixed) {
+    EXPECT_EQ(graft::proto_decl(find("DemoMixed")),
+              "proto bool DemoMixed(int p0, Class p1, vector p2, void p3);");
+    EXPECT_TRUE(find("DemoMixed").marshalled);
+}
+
+TEST(Proto, MarshalledAcceptsEngineString) {
+    EXPECT_EQ(graft::proto_decl(find("DemoText2")), "proto bool DemoText2(string p0, void p1);");
+    EXPECT_TRUE(find("DemoText2").marshalled);
+}
+
+TEST(Proto, StaticMethodWithValueIsMarshalled) {
+    EXPECT_EQ(graft::proto_decl(find("Any")), "static proto bool Any(void p0);");
+    EXPECT_TRUE(find("Any").marshalled);
 }
 
 TEST(Proto, StaticMethodKeepsAllArgs) {
@@ -96,6 +194,78 @@ TEST(Proto, ClassWithStateDeclaresOnlyItsMethods) {
     EXPECT_NE(file.find("    proto native void Bump();"), std::string::npos);
     EXPECT_EQ(file.find("NativeDispose"), std::string::npos);
     EXPECT_EQ(file.find("~DemoState"), std::string::npos);
+}
+
+// ── Обёртка #ifdef ───────────────────────────────────────────────────────────
+// Файл плагина целиком под `#ifdef GRAFTED_<ИМЯ>`: не загрузился плагин — дефайна нет,
+// объявления исчезают, и мод компилируется без его нативов, а не падает на `proto native`.
+// Исключение — 1_Core: проверено на живом сервере, этот модуль компилируется БЕЗ дефайнов
+// (не видны даже DIAG и имя самого мода), и обёртка там прятала бы объявления всегда.
+//
+// Реестр тестов весь в 1_Core; копии переносятся в тот модуль, который нужен кейсу.
+std::vector<const graft_native_desc*> own_descs(std::vector<graft_native_desc>& keep,
+                                                const char*                     module) {
+    for (const graft::native* n = graft::natives(); n; n = n->next) {
+        if (n->module && std::string{n->module} == "1_Core") {
+            keep.push_back({n->class_name, n->name, n->impl, n->ret, n->args, module, n->declare_as, static_cast<std::uint8_t>(n->is_static), static_cast<std::uint8_t>(n->marshalled), static_cast<std::uint8_t>(n->generate), n->param_names, n->doc});
+        }
+    }
+    std::vector<const graft_native_desc*> out;
+    for (const graft_native_desc& d : keep) {
+        out.push_back(&d);
+    }
+    return out;
+}
+
+// Всё объявленное — между #ifdef и #endif, и #endif — последняя строка файла.
+void expect_wrapped(const std::string& file, const std::string& define) {
+    const std::size_t open = file.find("#ifdef " + define + "\n");
+    ASSERT_NE(open, std::string::npos) << file;
+    EXPECT_EQ(file.find("#ifdef", open + 1), std::string::npos) << "обёртка одна";
+    const std::size_t first = file.find("\nproto"); // не «protogen» из шапки
+    ASSERT_NE(first, std::string::npos);
+    EXPECT_LT(open, first) << "объявление до #ifdef";
+    const std::string tail = "#endif\n";
+    ASSERT_GE(file.size(), tail.size());
+    EXPECT_EQ(file.substr(file.size() - tail.size()), tail) << file;
+}
+
+TEST(ProtoGuard, PluginFileIsWrappedInItsDefine) {
+    std::vector<graft_native_desc> keep;
+    const std::string              file = graft::proto_file(own_descs(keep, "3_Game"), "3_Game", "MYMOD");
+    expect_wrapped(file, "GRAFTED_MYMOD");
+    // Сдвиг не должен задеть сами объявления.
+    EXPECT_NE(file.find("modded class DemoClass\n{\n"), std::string::npos);
+    EXPECT_NE(file.find("proto native int DemoPing(int p0);"), std::string::npos);
+}
+
+// Имя — по тому же правилу, по которому хост кладёт дефайн в движок, иначе #ifdef
+// никогда не сработает.
+TEST(ProtoGuard, DefineNameMatchesHostRule) {
+    std::vector<graft_native_desc> keep;
+    const std::string              file = graft::proto_file(own_descs(keep, "4_World"), "4_World", "my-mod 2");
+    expect_wrapped(file, "GRAFTED_my_mod_2");
+}
+
+// Объявления самого хоста (класс Graft) — под GRAFTED: хост кладёт ровно его, а
+// GRAFTED_graft не кладёт никогда.
+TEST(ProtoGuard, HostFileIsWrappedInGrafted) {
+    std::vector<graft_native_desc> keep;
+    const std::string              file = graft::proto_file(own_descs(keep, "2_GameLib"), "2_GameLib", "graft");
+    expect_wrapped(file, "GRAFTED");
+}
+
+// 1_Core дефайнов не видит: обёрнутый файл там — это мод, который не компилируется
+// НИКОГДА, в том числе с загруженным плагином.
+TEST(ProtoGuard, CoreModuleIsNeverWrapped) {
+    std::vector<graft_native_desc> keep;
+    const std::string              file = graft::proto_file(own_descs(keep, "1_Core"), "1_Core", "MYMOD");
+    EXPECT_EQ(file.find("#if"), std::string::npos) << file;
+    EXPECT_NE(file.find("proto native int DemoPing(int p0);"), std::string::npos);
+}
+
+TEST(ProtoGuard, NoPluginNameNoGuard) {
+    EXPECT_EQ(graft::proto_file().find("#if"), std::string::npos);
 }
 
 }  // namespace

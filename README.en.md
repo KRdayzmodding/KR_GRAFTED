@@ -46,7 +46,9 @@ GRAFT_BINDINGS("3_Game") {                      // registration: script name and
 **Declaration — `mod/MYMOD/scripts/3_Game/grafted_natives_MYMOD.c`, printed by the build:**
 
 ```c
+#ifdef GRAFTED_MYMOD
 proto native bool IsValidNick(string p0);
+#endif
 ```
 
 **Script — `mod/MYMOD/scripts/5_Mission/mymod.c`, an ordinary DayZ mod:**
@@ -131,8 +133,8 @@ itself is not. Note that the name is not licensed (GPLv3 §7e), and Bohemia's ow
 DayZ mod monetization apply on top of all this — GRAFT's license neither grants nor
 overrides them.
 
-Third-party code (MinHook and HDE, both BSD-2, linked into `hid.dll`):
-[THIRD_PARTY.md](THIRD_PARTY.md).
+Third-party code (safetyhook under BSL-1.0; Zydis and Zycore, both MIT; all linked into
+`hid.dll`): [THIRD_PARTY.md](THIRD_PARTY.md).
 
 ## Contributing
 

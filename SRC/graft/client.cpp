@@ -61,6 +61,25 @@ void log(std::string_view line) {
 
 // Имя подставляется само — то самое, которым плагин представился в GRAFT_PLUGIN.
 // Дальше обе строки идут общим путём (log_script.cpp) — в журналы самой игры.
+// Врезка — сервис хоста: механика в процессе одна, и она не наша. Своей плагину и не
+// нужно: см. graft::hook в engine.hpp, там записано, чем кончаются две. Тем более что
+// отказ от повторной врезки держит список целей хоста, а не библиотека под ним.
+bool hook(void* target, void* detour, void** original) {
+    return g_host && g_host->install_hook && g_host->install_hook(target, detour, original) != 0;
+}
+
+bool unhook(void* target) {
+    return g_host && g_host->remove_hook && g_host->remove_hook(target) != 0;
+}
+
+bool hook_all(std::span<const hook_request> all) {
+    if (all.empty()) {
+        return true;
+    }
+    return g_host && g_host->install_hooks &&
+           g_host->install_hooks(all.data(), static_cast<uint32_t>(all.size())) != 0;
+}
+
 bool print(std::string_view line) {
     return detail::say(false, graft_plugin_name_ ? graft_plugin_name_ : "plugin", line);
 }
@@ -208,6 +227,8 @@ const std::vector<graft_native_desc>& flatten() {
             d.is_static = static_cast<uint8_t>(n.is_static);
             d.marshalled = static_cast<uint8_t>(n.marshalled);
             d.generate = static_cast<uint8_t>(n.generate);
+            d.param_names = n.param_names;
+            d.doc         = n.doc;
             out.push_back(d);
         }
         return out;
@@ -222,6 +243,14 @@ extern "C" __declspec(dllexport) uint32_t __cdecl graft_plugin_entry(const graft
     if (!out) {
         return GRAFT_ERR_INTERNAL;
     }
+    // Заголовок — ДО сверки: отказывая, плагин обязан назвать себя и свои числа, иначе
+    // хосту нечего написать в журнал, кроме «?». Писать его безопасно при любом хосте:
+    // раскладка заголовка заморожена (см. abi.h), а нативы отдаются только при согласии.
+    out->size    = sizeof(graft_plugin_info);
+    out->abi     = GRAFT_ABI_VERSION;
+    out->layout  = GRAFT_LAYOUT_VERSION;
+    out->name    = graft_plugin_name_;
+    out->version = graft_plugin_version_;
     // host == nullptr — это генератор объявлений в обычном процессе: движка нет,
     // сервисы не понадобятся, заполняем только описание.
     if (host) {
@@ -243,11 +272,6 @@ extern "C" __declspec(dllexport) uint32_t __cdecl graft_plugin_entry(const graft
     }
 
     const std::vector<graft_native_desc>& all = flatten();
-    out->size = sizeof(graft_plugin_info);
-    out->abi = GRAFT_ABI_VERSION;
-    out->layout = GRAFT_LAYOUT_VERSION;
-    out->name = graft_plugin_name_;
-    out->version = graft_plugin_version_;
     out->count = static_cast<uint32_t>(all.size());
     out->natives = all.data();
     return GRAFT_OK;

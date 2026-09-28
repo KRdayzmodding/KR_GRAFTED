@@ -19,7 +19,7 @@ extern "C" {
 #endif
 
 // Версия интерфейса: меняется при любой правке структур ниже.
-#define GRAFT_ABI_VERSION 5u
+#define GRAFT_ABI_VERSION 7u
 
 // Версия РАСКЛАДКИ движковых структур (graft::layout::version). Отдельная от ABI, потому
 // что ломается по другой причине: смещения запекаются в машинный код плагина, поэтому
@@ -36,6 +36,13 @@ extern "C" {
 #define GRAFT_ERR_LAYOUT 2u     // плагин собран под другую раскладку движка
 #define GRAFT_ERR_INTERNAL 3u
 
+// Одна заявка на врезку: куда, чем и куда положить адрес трамплина.
+typedef struct graft_hook_request {
+    void*  target;
+    void*  detour;
+    void** original;
+} graft_hook_request;
+
 typedef struct graft_method_info {
     void* impl;
     // Сам дескриптор функции. Нужен только обратному направлению (звать движковый
@@ -47,6 +54,8 @@ typedef struct graft_method_info {
 
 // Сервисы хоста. Всё это требует состояния движка (script-контексты, найденные сканом
 // адреса) и потому не может жить в плагине.
+// Первые три поля заморожены так же, как заголовок graft_plugin_info: по ним плагин любой
+// версии сверяется с хостом, не читая больше ничего.
 typedef struct graft_host_api {
     uint32_t size;    // sizeof(graft_host_api) — задел на расширение
     uint32_t abi;     // GRAFT_ABI_VERSION хоста
@@ -79,6 +88,17 @@ typedef struct graft_host_api {
     // find_method. Хост знает их все — врезка стоит на регистрации. Через них ходят
     // журналы самой игры: Print в script-лог, ErrorEx в crash-лог.
     void* (*find_global)(const char* name);
+    // Врезка в чужой код: механика хоста, отданная наружу. В процессе она обязана быть
+    // ОДНА — две не знают друг о друге, и вторая перепишет пролог, в котором уже стоит
+    // чужой переход: трамплин первой после этого ведёт в середину инструкции. Список
+    // целей, на котором держится отказ от повторной врезки, ведёт хост.
+    // original получает адрес трамплина; оригинал зовут через него, а не по target.
+    uint8_t (*install_hook)(void* target, void* detour, void** original);
+    uint8_t (*remove_hook)(void* target);
+    // Пачкой. Не быстрее поштучной установки и не для этого: ставится ЦЕЛИКОМ либо не
+    // ставится вовсе. Половина врезок — это состояние, в котором мод уже сломан, но ещё
+    // считает себя живым.
+    uint8_t (*install_hooks)(const graft_hook_request* items, uint32_t count);
 } graft_host_api;
 
 // Один натив. POD-зеркало graft::native без указателя на следующий: строки живут в
@@ -94,14 +114,25 @@ typedef struct graft_native_desc {
     uint8_t is_static;
     uint8_t marshalled;        // объявлять как `proto`, а не `proto native`
     uint8_t generate;          // печатать объявление генератором
+    // Имена аргументов через запятую ("player, uid") и однострочное описание.
+    // Оба необязательны: без них генератор печатает p0, p1 и обходится без
+    // комментария. Пользователь объявления читает не типы, а имена, поэтому
+    // задавать их стоит везде, где натив зовут не только свои.
+    const char* param_names;
+    const char* doc;
 } graft_native_desc;
 
+// ЗАГОЛОВОК (size, abi, layout, name, version) ЗАМОРОЖЕН: его раскладка не меняется ни
+// при каком бампе ABI. Плагин заполняет его ВСЕГДА, в том числе когда отказывает хосту, —
+// так хост любой версии может сказать в журнале, кто отказал, под какие числа собран и
+// кому из двоих обновляться. Новые поля — только после заголовка.
 typedef struct graft_plugin_info {
     uint32_t size;
     uint32_t abi;
     uint32_t layout;
     const char* name;     // имя плагина: им он представляется в журнале и коллизиях
     uint32_t version;     // версия плагина, произвольная
+    // ── конец заголовка ──
     uint32_t count;
     const graft_native_desc* natives;
 } graft_plugin_info;

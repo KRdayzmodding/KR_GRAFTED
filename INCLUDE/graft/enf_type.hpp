@@ -90,13 +90,23 @@ template <>
 inline constexpr bool is_element<f32> = true;
 template <>
 inline constexpr bool is_element<str> = true;
+// vector — три float ЗНАЧЕНИЕМ: в буфере массива они лежат подряд, как int и float, и
+// движку на них смотреть незачем. Это про ЭЛЕМЕНТ контейнера; поле объекта устроено
+// иначе — там в слоте ссылка (см. read_field в types.hpp).
+//
+// ponytail: шаг элемента взят как sizeof(vector) == 12 по аналогии с int/float, а не
+// замерен. Замер — кейс Array_VectorElementStride игровой сьюты: он ищет второй элемент
+// по сырому буферу и отличает 12 от 8 (ссылка на элемент) и 16 (выравнивание). Пока он
+// не зелёный, array<vector> держать за допущение: при неверном шаге set пишет мимо
+// буфера. Окажется не 12 — правится здесь же, отдельным element_stride<T>.
+template <>
+inline constexpr bool is_element<vector> = true;
 template <class T>
     requires script_class<T> && (sizeof(T) == sizeof(void*))
 inline constexpr bool is_element<T> = true;
 
 // Элементы, за временем жизни которых движок не следит: их можно писать напрямую.
 template <class T>
-concept plain_element = std::same_as<T, i32> || std::same_as<T, f32>;
-
+concept plain_element = std::same_as<T, i32> || std::same_as<T, f32> || std::same_as<T, vector>;
 
 }  // namespace graft

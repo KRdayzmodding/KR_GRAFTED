@@ -750,6 +750,31 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "C++ пишет в поле объекта, скрипт видит изменение");
     }
 
+    [KRU_TEST_CASE("Fields_VectorThroughPointer").IN(SERAPH_GRAFT_TEST)];
+    void Fields_VectorThroughPointer()
+    {
+        // Поле-вектор лежит в слоте ССЫЛКОЙ на три float, а не значением. Кейс держит
+        // обе стороны: C++ читает положенное скриптом, и скрипт читает записанное C++.
+        // Ошибись раскладкой — либо разъедутся числа, либо последняя проверка пойдёт по
+        // убитому указателю и уронит сервер, а не покраснеет.
+        SeraphNode node = new SeraphNode(1, 0, "n");
+        node.m_pos = Vector(1, 2, 3);
+        vector seen = node.Pos();
+        vector back = node.SetPos(Vector(4, 5, 6));
+        bool ok = false;
+        if (vector.Distance(seen, Vector(1, 2, 3)) < 0.01)
+        {
+            if (vector.Distance(back, Vector(4, 5, 6)) < 0.01)
+            {
+                if (vector.Distance(node.m_pos, Vector(4, 5, 6)) < 0.01)
+                    ok = true;
+            }
+        }
+        assert(ok, "<1,2,3> / <4,5,6> / <4,5,6>",
+            seen.ToString() + " / " + back.ToString() + " / " + node.m_pos.ToString(),
+            "поле-вектор читается и пишется через ссылку в слоте");
+    }
+
     [KRU_TEST_CASE("Fields_NestedChain").IN(SERAPH_GRAFT_TEST)];
     void Fields_NestedChain()
     {
@@ -782,12 +807,12 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         int count = node.FieldCount();
         string first = node.FieldName(0);
         bool ok = false;
-        if (count == 5)
+        if (count == 6)
         {
             if (first == "m_id")
                 ok = true;
         }
-        assert(ok, "5 / m_id", count.ToString() + " / " + first,
+        assert(ok, "6 / m_id", count.ToString() + " / " + first,
             "C++ обходит незнакомую структуру: имена и число полей");
     }
 
@@ -908,6 +933,52 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         }
         assert(ok, "3 / 2 / 6", n.ToString() + " / " + a.Get(0).ToString() + " / " + a.Get(2).ToString(),
             "C++ пишет в существующие элементы массива");
+    }
+
+    [KRU_TEST_CASE("Array_VectorElementStride").IN(SERAPH_GRAFT_TEST)];
+    void Array_VectorElementStride()
+    {
+        // ЗАМЕР, а не допущение: operator[] и set в C++ считают адрес элемента как
+        // i * 12, и если движок кладёт вектор в буфер иначе, запись уедет в чужую кучу.
+        // Восемь элементов — чтобы буфер заведомо покрыл прощупываемые байты.
+        array<vector> a = new array<vector>;
+        for (int i = 0; i < 8; i++)
+        {
+            a.Insert(Vector(1 + i * 3, 2 + i * 3, 3 + i * 3));
+        }
+        int step = SeraphGraftVectorStride(a);
+        assert(step == 12, "12", step.ToString(),
+            "элемент array<vector> лежит значением: шаг 12 байт");
+    }
+
+    [KRU_TEST_CASE("Array_VectorWriteBack").IN(SERAPH_GRAFT_TEST)];
+    void Array_VectorWriteBack()
+    {
+        array<vector> a = new array<vector>;
+        a.Insert(Vector(1, 2, 3));
+        a.Insert(Vector(4, 5, 6));
+        a.Insert(Vector(7, 8, 9));
+        int sum = SeraphGraftVecArraySum(a);            // 1+2+...+9
+        int n = SeraphGraftVecArraySet(a, 1, Vector(0, 0, 100));
+        bool ok = false;
+        if (sum == 45)
+        {
+            if (n == 3)
+            {
+                if (vector.Distance(a.Get(1), Vector(0, 0, 100)) < 0.01)
+                {
+                    // Соседей не задело — ровно это краснеет при неверном шаге.
+                    if (vector.Distance(a.Get(0), Vector(1, 2, 3)) < 0.01)
+                    {
+                        if (vector.Distance(a.Get(2), Vector(7, 8, 9)) < 0.01)
+                            ok = true;
+                    }
+                }
+            }
+        }
+        assert(ok, "45 / <0,0,100> / соседи целы",
+            sum.ToString() + " / " + a.Get(1).ToString() + " / " + a.Get(0).ToString() + " " + a.Get(2).ToString(),
+            "C++ читает и пишет элементы array<vector>");
     }
 
     [KRU_TEST_CASE("Array_SortAndRemove").IN(SERAPH_GRAFT_TEST)];

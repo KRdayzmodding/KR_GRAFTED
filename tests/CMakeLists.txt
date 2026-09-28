@@ -67,14 +67,30 @@ add_executable(graft_tests
     plugins/ping.cpp
     ping_test.cpp
     scan_test.cpp
+    # Поиск точек дефайнов — код хоста, а не отдельная библиотека: в hid.dll он едет
+    # вместе с engine.cpp, а сюда берётся исходником, чтобы проверяться без игры.
+    "${PROJECT_SOURCE_DIR}/SRC/graft/defines.cpp"
+    defines_test.cpp
+    hook_test.cpp
+    # Инструмент разбора, а не часть библиотеки: watch.hpp целиком inline и в hid.dll не
+    # едет. Проверяется здесь потому, что железу всё равно, чья память, — игра не нужна.
+    watch_test.cpp
+    # Механика кодировщика строчек ассемблера: REX, направление операндов, SIB, ширина
+    # смещения. Сверка идёт на компиляции, поэтому промах — красная сборка, а не выезд
+    # на стенд.
+    asm_test.cpp
     proto_test.cpp
     types_test.cpp
     plugins_test.cpp
+    plugin_entry_test.cpp
     callout_test.cpp
     enfparse_test.cpp
     runtime_test.cpp
 )
-target_link_libraries(graft_tests PRIVATE graft::host graft::gen GTest::gtest_main)
+# graft::hook — ради hook_test: врезка проверяется на своей же функции, без игры.
+target_link_libraries(graft_tests PRIVATE graft::host graft::gen graft::hook GTest::gtest_main)
+# plugin_entry_test грузит настоящую DLL-фикстуру из той же выходной папки.
+add_dependencies(graft_tests sixw_hashmap)
 target_include_directories(graft_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
 include(GoogleTest)

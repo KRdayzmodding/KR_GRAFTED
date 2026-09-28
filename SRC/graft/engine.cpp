@@ -1,6 +1,7 @@
 // Copyright (C) 2025-2026 6wingSerap
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "graft/engine.hpp"
+#include "graft/defines.hpp"
 #include "graft/frame.hpp"
 
 #include <windows.h>
@@ -10,8 +11,6 @@
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include <MinHook.h>
 
 #include "graft/loader.hpp"
 #include "graft/native.hpp"
@@ -65,29 +64,6 @@ bool serving() {
 }
 
 namespace {
-
-std::vector<scan::view> sections_of(HMODULE mod) {
-    auto* base = reinterpret_cast<std::uint8_t*>(mod);
-    auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
-    if (dos->e_magic != IMAGE_DOS_SIGNATURE) {
-        return {};
-    }
-    auto* nt = reinterpret_cast<IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
-    if (nt->Signature != IMAGE_NT_SIGNATURE) {
-        return {};
-    }
-    std::vector<scan::view> out;
-    IMAGE_SECTION_HEADER* sec = IMAGE_FIRST_SECTION(nt);
-    for (unsigned i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++sec) {
-        if (!(sec->Characteristics & IMAGE_SCN_MEM_READ) || sec->Misc.VirtualSize == 0) {
-            continue;
-        }
-        std::uint8_t* at = base + sec->VirtualAddress;
-        out.push_back({at, sec->Misc.VirtualSize, reinterpret_cast<std::uintptr_t>(at),
-                       (sec->Characteristics & IMAGE_SCN_MEM_EXECUTE) != 0});
-    }
-    return out;
-}
 
 // Общая часть: зарегистрировать метод на уже найденном классе и привести флаги к
 // member-виду (движок, создавая функцию раньше разбора мода, метит её static|external).
@@ -211,6 +187,18 @@ void* __fastcall hook_register_global(void* ctx, const char* name, void* impl,
     return result;
 }
 
+// Проверка линковки модуля: скрипты разобраны, движок сверяет native-методы с импл. Что
+// это за окно и кому оно нужно — в stages.hpp (on_link). Имени у функции нет, есть строка
+// предупреждения — одна на образ.
+constexpr const char* kLinkCheck = "Method not linked '%s.%s'";
+using link_check_fn              = std::uint64_t(__fastcall*)(void* compiler, void* errors);
+link_check_fn g_orig_link_check  = nullptr;
+
+std::uint64_t __fastcall hook_link_check(void* compiler, void* errors) {
+    stage::note_link();
+    return g_orig_link_check(compiler, errors);
+}
+
 }  // namespace
 
 void install() {
@@ -227,7 +215,7 @@ void install() {
     set_log_dir(profile.empty() ? exe_dir : profile);
     say_banner();
 
-    const std::vector<scan::view> sections = sections_of(GetModuleHandleW(nullptr));
+    const std::vector<scan::view> sections = scan::sections_of(GetModuleHandleW(nullptr));
     g_api = scan::discover(sections);
     if (!g_api) {
         return;  // в процессе нет движка Enforce — просто уходим
@@ -236,27 +224,28 @@ void install() {
         scan::first_call(sections, reinterpret_cast<std::uintptr_t>(g_api.register_method));
     g_find_index = linker ? scan::first_call(sections, linker) : 0;
 
-    if (MH_Initialize() != MH_OK) {
-        log("! MinHook init failed");
-        return;
-    }
+    // Через тот же сервис, что отдаётся плагинам: механика врезки в процессе одна, и хост
+    // не исключение — иначе «одна копия» держалась бы на честном слове.
+    hook(g_api.register_method, &hook_register_method, &g_orig_method);
 
-    if (MH_CreateHook(reinterpret_cast<void*>(g_api.register_method),
-                      reinterpret_cast<void*>(&hook_register_method),
-                      reinterpret_cast<void**>(&g_orig_method)) == MH_OK) {
-        MH_EnableHook(reinterpret_cast<void*>(g_api.register_method));
-    }
-
-    if (MH_CreateHook(reinterpret_cast<void*>(g_api.register_global),
-                      reinterpret_cast<void*>(&hook_register_global),
-                      reinterpret_cast<void**>(&g_orig)) != MH_OK ||
-        MH_EnableHook(reinterpret_cast<void*>(g_api.register_global)) != MH_OK) {
+    if (!hook(g_api.register_global, &hook_register_global, &g_orig)) {
         log("! hook failed");
         return;
     }
 
     // Привязка к кадру: хук на движковую точку входа скриптового OnUpdate.
     frame::install(sections);
+
+    const std::uintptr_t link_check = scan::function_referencing(sections, kLinkCheck);
+    if (!link_check ||
+        !hook(reinterpret_cast<link_check_fn>(link_check), &hook_link_check, &g_orig_link_check)) {
+        log("! проверка линковки не найдена: методы классов мода встанут позже неё, "
+            "в script-логе будет «Method not linked» (работать они будут)");
+    }
+
+    // Дефайн на каждый загруженный плагин: врезка ДО загрузчика (плагины грузятся ниже),
+    // а сработает она позже — когда движок дойдёт до CfgMods. См. SRC/graft/defines.cpp.
+    defines::install(sections);
 
     const auto rva = [&](const void* p) {
         return reinterpret_cast<std::uintptr_t>(p) -
@@ -272,8 +261,10 @@ void install() {
 
     // Кто чего ждёт — записано здесь, одним списком, а не размазано по врезкам.
     //
-    // Отложенные нативы ждут КЛАССА: игровые классы появляются не в первом слое, а в
-    // третьем-четвёртом, и раньше конца слоя их искать бессмысленно.
+    // Отложенные нативы ждут КЛАССА: игровые классы и классы мода появляются не в первом
+    // слое. Окно — проверка линковки модуля: модуль разобран, импл ещё можно положить.
+    // Конец слоя — запасной путь, если проверку не нашли.
+    stage::on_link([] { retry_pending(); });
     stage::on_layer_end([](const stage::layer&) { retry_pending(); });
     // Шапка ждёт, когда движку станет чем печатать: кадр вызова Print собирается по
     // шаблонам скриптовых переменных, а их приносит линковка модуля.

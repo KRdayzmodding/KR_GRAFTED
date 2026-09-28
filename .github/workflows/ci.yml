@@ -67,6 +67,11 @@ jobs:
       # CMake 3.30+ и Ninja одним действием: полагаться на то, что есть в образе, дороже.
       - uses: lukka/get-cmake@latest
 
+      # Правило уровня проекта: зашитых адресов движка в коде быть не должно — они
+      # уезжают на первом же патче игры. Проверка дешёвая, поэтому стоит до сборки.
+      - name: Зашитых адресов нет
+        run: python .github/no-addresses.py
+
       - name: Версии
         shell: pwsh
         run: |
@@ -151,7 +156,7 @@ jobs:
         run: gh release list --json name,isDraft --jq '.[] | select(.isDraft) | .name' | xargs -r -I {} gh release delete {} --yes
 
       # THIRD_PARTY.md обязан ехать рядом с бинарником: в hid.dll вкомпилированы
-      # MinHook и HDE под BSD-2, и это требование их лицензии, а не вежливость.
+      # Zydis и Zycore под MIT, и это требование их лицензии, а не вежливость.
       - name: Архив
         run: |
           cp THIRD_PARTY.md LICENSE LICENSE-EXCEPTION pack/

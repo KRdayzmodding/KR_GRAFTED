@@ -6,9 +6,18 @@
 // каждую мелочь.
 #include <gtest/gtest.h>
 
+// Коды исключений и EXCEPTION_* — кейсы ниже проверяют фильтр напрямую.
+#ifndef NOMINMAX
+    #define NOMINMAX
+#endif
+#include <windows.h>
+
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <malloc.h>
+
+#include <iostream>
 #include <string>
 #include <vector>
 
@@ -110,6 +119,44 @@ TEST(Stages, LayerBoundariesFollowTheContext) {
 
     EXPECT_EQ(layer_marks(), (std::vector<std::string>{"+1 string", "-1 string..map",
                                                        "+2 Object", "-2 Object..Object"}));
+}
+
+// Подписчик события сам регистрирует методы (отложенные нативы плагинов) — через ту же
+// врезку и в СВОЁМ контексте. Это не граница модуля: иначе поздняя регистрация открывала
+// фальшивый слой, а настоящий закрывался раньше, чем движок его дорегистрировал.
+TEST(Stages, RegistrationFromSubscriberIsNotABoundary) {
+    // Подписки живут до конца процесса, а номер слоя растёт от кейса к кейсу: метки свои,
+    // без номера — кейс не зависит от того, гоняют его отдельно или всем exe сразу.
+    static std::vector<std::string> marks;
+    static int                      ours = 0;
+    graft::stage::on_layer_begin([](const graft::stage::layer& one) {
+        marks.push_back(std::format("+{}", one.first_class));
+        graft::stage::note_registration(&ours, "CreatureAI");
+    });
+    graft::stage::on_layer_end([](const graft::stage::layer& one) {
+        marks.push_back(std::format("-{}..{}", one.first_class, one.last_class));
+    });
+    graft::stage::on_link([] { graft::stage::note_registration(&ours, "CreatureAIDriver"); });
+
+    int core = 0;
+    int game = 0;
+    graft::stage::note_registration(&core, "string");
+    graft::stage::note_registration(&game, "Object");
+    graft::stage::note_link();
+    graft::stage::note_registration(&game, "EntityAI");
+    graft::stage::note_frame();
+
+    EXPECT_EQ(marks, (std::vector<std::string>{"+string", "-string..string", "+Object", "-Object..EntityAI"}));
+}
+
+// Проверка линковки модуля — событие: будит подписчиков каждый раз, по модулю на раз.
+TEST(Stages, LinkCheckWakesSubscribersEveryTime) {
+    stage_marks().clear();
+    graft::stage::on_link([] { stage_marks().push_back(1); });
+    graft::stage::on_link([] { stage_marks().push_back(2); });
+    graft::stage::note_link();
+    graft::stage::note_link();
+    EXPECT_EQ(stage_marks(), (std::vector<int>{1, 2, 1, 2}));
 }
 
 // ── Журналы ─────────────────────────────────────────────────────────────────
@@ -480,6 +527,19 @@ TEST(World, CastKeepsPointerAcrossTypes) {
     EXPECT_EQ(graft::cast<graft::ref<"EntityAI">>(man).ptr, &marker);
 }
 
+// Позиция сущности: без движка натива GetOrigin нет, и ответ — нули, а не падение и не
+// чтение по мусорному имплу. Настоящее значение сверяется в игре (кейс
+// Entity_MethodsFromCpp гоняет ровно этот путь против скриптового GetPosition).
+TEST(World, PositionWithoutEngineIsZeroNotCrash) {
+    int marker = 0;
+    EXPECT_EQ(graft::position(graft::ref<"Object">{&marker}), graft::vector{});
+    EXPECT_EQ(graft::position(graft::ref<"Object">{}), graft::vector{});
+
+    const auto tried = graft::try_position(graft::ref<"Object">{});
+    ASSERT_FALSE(tried.has_value());
+    EXPECT_EQ(tried.error(), graft::miss::null_object);
+}
+
 TEST(World, BorrowedResetForgetsEverything) {
     int marker = 0;
     graft::borrowed<graft::ref<"Man">> kept{graft::ref<"Man">{&marker}};
@@ -553,6 +613,91 @@ TEST(Guard, VoidNativeSurvivesToo) {
     const std::size_t before = graft::loader::fault_count();
     graft::detail::guarded<void>(nullptr, [] { read_null(); });
     EXPECT_EQ(graft::loader::fault_count(), before + 1);
+}
+
+// Переполнение стека ловится, и ВТОРОЕ тоже. Второе — весь смысл кейса: __except ловит
+// 0xC00000FD и без всякой подготовки, но страница-сторож после этого не восстановлена, и
+// следующее переполнение убивает процесс, сколько бы обёрток вокруг ни стояло. Чинит это
+// _resetstkoflw, и позвать его можно только на раскрученном стеке — из обработчика, а не
+// из фильтра. Заодно проверяется, что отчёт вообще написался: в фильтре его писать нечем,
+// там стека уже нет, поэтому он отложен до обработчика.
+// Предохранитель обязателен, и не ради безопасности. БЕЗ него рекурсия безусловно
+// бесконечна, и компилятор вправе свернуть её в цикл: стек тогда не растёт, переполнения
+// не наступает, а кейс висит вечно. Проверено — именно так он и повёл себя. С условием
+// выхода кадры остаются кадрами, и стек кончается на глубине около шестнадцати тысяч.
+__declspec(noinline) int burn_stack(int depth) {
+    volatile char pad[4096];
+    pad[0] = static_cast<char>(depth);
+    if (depth > 4'000'000) {
+        return 0;
+    }
+    return pad[0] + burn_stack(depth + 1);
+}
+
+TEST(Guard, CatchesStackOverflowAndSurvivesTheSecondOne) {
+    const std::size_t before = graft::loader::fault_count();
+
+    EXPECT_EQ(graft::detail::guarded<int>(nullptr, [] { return burn_stack(0); }), 0);
+    EXPECT_EQ(graft::loader::fault_count(), before + 1);
+    // Код в отчёте есть, значит отчёт дошёл: писать его в фильтре было нечем — там стека
+    // уже не оставалось, — и он отложен до обработчика.
+    EXPECT_NE(graft::loader::last_fault().find("c00000fd"), std::string::npos);
+
+    // Вот ради чего _resetstkoflw. Без него страница-сторож не вернулась бы, и сюда мы
+    // просто не дошли: процесс умер бы молча на втором переполнении.
+    EXPECT_EQ(graft::detail::guarded<int>(nullptr, [] { return burn_stack(0); }), 0);
+    EXPECT_EQ(graft::loader::fault_count(), before + 2);
+}
+
+// Порчу кучи фильтр не берёт и не притворяется. Раньше он возвращал «обрабатываем» на
+// любой код и держался только на том, что движок заберёт 0xC0000374 раньше. Обещание,
+// которое не собираешься выполнять, хуже отсутствующего: продолжать после порчи кучи
+// нельзя — следующий new упадёт в другом месте, где виноватого уже не найти.
+TEST(Guard, RefusesToClaimHeapCorruption) {
+    EXPECT_EQ(graft::detail::fault_filter(nullptr, 0xC0000374ul, nullptr),
+              EXCEPTION_CONTINUE_SEARCH);
+
+    // А обычный сбой берёт — иначе кейс выше ничего бы не значил.
+    const std::size_t before = graft::loader::fault_count();
+    EXPECT_EQ(graft::detail::fault_filter(nullptr, 0xC0000005ul, nullptr),
+              EXCEPTION_EXECUTE_HANDLER);
+    EXPECT_EQ(graft::loader::fault_count(), before + 1);
+}
+
+// Упал ВЛОЖЕННЫЙ вызов — глубина обязана вернуться на уровень внешнего, а не в ноль.
+// Ноль сказал бы арене, что началась новая внешняя цепочка: она сбросила бы окно и
+// прибралась под ногами у внешнего вызова, который ещё жив и держит свои строки.
+TEST(Guard, NestedFaultRestoresDepthToTheCallerNotToZero) {
+    const graft::detail::call_scope outer;
+    ASSERT_EQ(graft::detail::call_depth(), 1u);
+
+    graft::detail::guarded<int>(nullptr, [] {
+        const graft::detail::call_scope inner;
+        return read_null();
+    });
+
+    EXPECT_EQ(graft::detail::call_depth(), 1u);
+}
+
+// Защита ловит сбой ВНУТРИ своей области, и деструкторы снаружи неё отрабатывают.
+//
+// Раскрутка SEH деструкторы не зовёт. Поэтому код, который подменяет ОБЩЕЕ состояние и
+// возвращает его деструктором, ставит защиту внутри своей области, вокруг самого вызова:
+// обёртка, поставленная СНАРУЖИ, поймала бы сбой и оставила подменённое состояние
+// неотданным — это хуже падения. Вот доказательство, что защиты внутри достаточно.
+TEST(Guard, ScopesAroundTheGuardStillUnwindNormally) {
+    bool restored = false;
+    {
+        struct restorer {
+            bool& flag;
+
+            ~restorer() { flag = true; }
+        } held{restored};
+
+        EXPECT_EQ(graft::detail::guarded<int>(nullptr, [] { return read_null(); }), 0);
+        EXPECT_FALSE(restored) << "деструктор сработал раньше выхода из области";
+    }
+    EXPECT_TRUE(restored) << "область не закрылась: значит защиту поставили не туда";
 }
 
 TEST(Guard, ReportNamesThePluginAndTheNative) {
