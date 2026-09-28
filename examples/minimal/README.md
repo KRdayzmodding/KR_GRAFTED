@@ -97,6 +97,7 @@ DayZ.exe
 | `std::string_view` | `string` (аргумент, без копии) |
 | `std::string` | `string` (аргумент) / `owned string` (возврат) |
 | `std::vector<T>` | `array<T>` (аргумент, копия) |
+| `std::span<const T>` — `int`, `float`, `vector` | `array<T>` (аргумент, без копии: смотрит в буфер движка) |
 | `std::array<float, 3>` или `graft::vector` | `vector` |
 | `T&` — неконстантная ссылка | `out T` |
 
@@ -172,6 +173,66 @@ node.field<int, "m_id">();              // а не node.field<int>("m_id")
 Разница — 22 раза. Форма со строкой ищет дескриптор заново на каждом вызове (обход
 контекстов, хеш в движке, `VirtualQuery`); форма с именем в типе — один раз за процесс.
 Строковые формы оставлены для случая, когда имя действительно приезжает в рантайме.
+
+### Имена аргументов и описание — прямо в привязке
+
+```cpp
+bool Resettle(graft::i32 slot, graft::str zone, graft::obj player);
+
+GRAFT_BINDINGS("3_Game") {
+    bind.global<&Resettle>("Resettle", "slot, zone, player", "Переселить игрока в зону.");
+}
+```
+
+Сборка печатает их в объявление — его читает человек, а не компилятор:
+
+```c
+// Переселить игрока в зону.
+proto native bool Resettle(int slot, string zone, Class player);
+```
+
+То же у `.method` и `.static_method`. Описание в несколько строк пишется через `\n`,
+пустая строка становится `//`. Оба параметра необязательны: без них будут `p0`, `p1` и
+объявление без комментария.
+
+### «Любой тип» — `graft::value`
+
+Ванильная идиома `proto void Print(void var)`: аргумент, тип которого приезжает в
+рантайме. В C++ это `graft::value` (`is<T>()`, `as<T>()`, `empty()`), и ставить его можно
+в глобальный натив, метод и `static_method` — рядом с обычными типами, «любой» только там,
+где нужен:
+
+```cpp
+bool Store(graft::i32 slot, graft::obj owner, graft::vec3 at, graft::value payload);
+```
+
+```c
+proto bool Store(int p0, Class p1, vector p2, void p3);
+```
+
+`proto`, а не `proto native`: это маршалируемая форма — аргументы приезжают блоком с
+тегами, и выбирает её библиотека сама, по сигнатуре. `out`-аргументы в ней — только
+`graft::value`.
+
+### Класс, которого в движке нет, — `graft::fresh`
+
+По умолчанию привязка ДОПИСЫВАЕТ методы к классу, который уже есть в скрипте:
+`bind.class_<T>("Имя")` печатает `modded class Имя`, и объявить класс обязан сам мод.
+Если класс вводит плагин, тег `graft::fresh` печатает объявление целиком:
+
+```cpp
+bind.class_<StringTable>("ExampleTable", graft::fresh)
+    .method<&StringTable::Set>("Set")
+    .method<&StringTable::Count>("Count");
+```
+
+```c
+class ExampleTable
+{
+    proto native void Set(string p0, string p1);
+    proto native int Count();
+}
+```
 
 ## Сборка и запуск
 

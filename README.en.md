@@ -112,6 +112,28 @@ against different ones, so ABI bumps are announced in [CHANGELOG.md](CHANGELOG.m
 
 Start from [examples/hello](examples/hello/).
 
+Bindings can carry argument names and a one-line description
+(`bind.global<&F>("F", "slot, zone", "What it does.")` — both land in the generated
+declarations), take `graft::value` for "any type" next to ordinary types, and introduce a
+brand-new script class with `bind.class_<T>("Name", graft::fresh)`. See
+[examples/minimal](examples/minimal/).
+
+Beyond natives, a plugin can reach engine code itself — still without a single hardcoded
+address. Find a function by a string it uses (`scan::function_referencing`), by RTTI
+(`scan::rtti_vtable`) or by a signature (`graft/scan.hpp`); verify it against the listing
+from your debugger, written as assembly lines (`scan::code` from `graft/asm.hpp`, which is
+included separately), and read field offsets out of the signature's holes; hook it one by
+one or as a batch (`graft::hook`, `graft::hook_all`, a guarded detour via
+`graft::hook<&detour>`); call real C++ engine methods (`scan::member_call`) and read world
+positions (`graft::position`). A complete example is in the Russian README, section
+[«Привязка к ассемблерному коду»](README.md#привязка-к-ассемблерному-коду); the reference
+is [docs/engine-access.md](docs/engine-access.md).
+
+The hooking contract is "before the engine starts its own threads". A plugin has no hook
+point for that moment yet — static initialization runs before the host introduces itself,
+and `graft::hook` refuses there — so for now hooks go in from the first tick, and only
+into functions that nothing but the game thread executes.
+
 ## License
 
 **GPL-3.0-or-later** ([LICENSE](LICENSE)) plus the **GRAFT plugin exception 1.0**
