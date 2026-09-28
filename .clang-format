@@ -111,6 +111,8 @@ IntegerLiteralSeparator:
   Decimal: 0
   Hex: 0
 PPIndentWidth: -1
+# extern "C" в проекте один (abi.h), и он без отступа: так и форматируем.
+IndentExternBlock: NoIndent
 
 
 

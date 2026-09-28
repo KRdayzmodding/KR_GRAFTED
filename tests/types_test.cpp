@@ -71,43 +71,43 @@ namespace {
 // Раскладки из graft/script.hpp: у объекта +8 дескриптор класса, +32 обратная ссылка;
 // у обёртки +8 счётчик, +16 объект.
 struct fake_object {
-    void* vtable = nullptr;        // +0
-    void* class_desc = nullptr;    // +8
-    std::uint64_t pad = 0;         // +16
-    std::uint64_t pad2 = 0;        // +24
-    void* back_ref = nullptr;      // +32
+    void*         vtable     = nullptr; // +0
+    void*         class_desc = nullptr; // +8
+    std::uint64_t pad        = 0;       // +16
+    std::uint64_t pad2       = 0;       // +24
+    void*         back_ref   = nullptr; // +32
 };
 
 struct fake_wrapper {
-    void* vtable = nullptr;        // +0
-    std::uint64_t refcount = 1;    // +8  — маленькое число, не указатель
-    void* object = nullptr;        // +16
+    void*         vtable   = nullptr; // +0
+    std::uint64_t refcount = 1;       // +8  — маленькое число, не указатель
+    void*         object   = nullptr; // +16
 };
 
-}  // namespace
+} // namespace
 
 TEST(DerefObject, PlainObjectIsReturnedAsIs) {
-    int class_desc = 0;
+    int         class_desc = 0;
     fake_object obj;
-    obj.class_desc = &class_desc;   // указатель => это объект, не обёртка
+    obj.class_desc = &class_desc; // указатель => это объект, не обёртка
     EXPECT_EQ(graft::script::deref_object(&obj), &obj);
 }
 
 TEST(DerefObject, WrapperIsUnwrapped) {
-    int class_desc = 0;
+    int         class_desc = 0;
     fake_object obj;
     obj.class_desc = &class_desc;
     fake_wrapper wrap;
-    wrap.object = &obj;
-    obj.back_ref = &wrap;           // обратная ссылка замыкает пару
+    wrap.object  = &obj;
+    obj.back_ref = &wrap; // обратная ссылка замыкает пару
     EXPECT_EQ(graft::script::deref_object(&wrap), &obj);
 }
 
 TEST(DerefObject, WrapperWithoutBackRefIsNotUnwrapped) {
-    fake_object obj;                // class_desc == nullptr => медленный путь
+    fake_object  obj; // class_desc == nullptr => медленный путь
     fake_wrapper wrap;
-    wrap.object = &obj;
-    obj.back_ref = nullptr;         // пара не замкнута — разворачивать нельзя
+    wrap.object  = &obj;
+    obj.back_ref = nullptr; // пара не замкнута — разворачивать нельзя
     EXPECT_EQ(graft::script::deref_object(&wrap), &wrap);
 }
 
@@ -630,7 +630,7 @@ namespace {
 //   +44 (слот 7) m_weight      float прямо в слоте
 class FakeFieldObject {
 public:
-    static constexpr std::size_t base = 16;
+    static constexpr std::size_t base        = 16;
     static constexpr std::size_t pos_slot_at = base + 4 * 2;
     static constexpr std::size_t pos_data_at = pos_slot_at + sizeof(void*);
 
@@ -638,8 +638,8 @@ public:
         make_var(0, "m_id", 0);
         make_var(1, "m_pos", 2);
         make_var(2, "m_weight", 7);
-        void** table = table_;
-        const std::uint32_t count = 3;
+        void**              table    = table_;
+        const std::uint32_t count    = 3;
         const std::uint32_t var_base = base;
         std::memcpy(desc_.data() + graft::layout::class_var_table, &table, sizeof table);
         std::memcpy(desc_.data() + graft::layout::class_var_count, &count, sizeof count);
@@ -648,7 +648,8 @@ public:
         std::memcpy(object_.data() + graft::layout::object_class, &desc, sizeof desc);
         point_vector_at(object_.data() + pos_data_at);
     }
-    FakeFieldObject(const FakeFieldObject&) = delete;
+
+    FakeFieldObject(const FakeFieldObject&)            = delete;
     FakeFieldObject& operator=(const FakeFieldObject&) = delete;
 
     void* ptr() { return object_.data(); }
@@ -659,18 +660,22 @@ public:
         std::memcpy(&stored, object_.data() + pos_slot_at, sizeof stored);
         return stored;
     }
+
     void point_vector_at(void* where) {
         std::memcpy(object_.data() + pos_slot_at, &where, sizeof where);
     }
+
     // Байты буфера — читаем в обход библиотеки, чтобы тест не верил ей на слово.
     graft::vector pos_data() const {
         graft::vector v{};
         std::memcpy(&v, object_.data() + pos_data_at, sizeof v);
         return v;
     }
+
     void set_pos_data(graft::vector v) {
         std::memcpy(object_.data() + pos_data_at, &v, sizeof v);
     }
+
     graft::i32 id_slot() const {
         graft::i32 v = 0;
         std::memcpy(&v, object_.data() + base, sizeof v);
@@ -688,7 +693,7 @@ private:
     std::vector<std::uint8_t> object_;
     std::vector<std::uint8_t> desc_;
     std::vector<std::uint8_t> entries_[3];
-    void* table_[3]{};
+    void*                     table_[3]{};
 };
 
 using graft::literals::operator""_f;
@@ -696,7 +701,7 @@ using graft::literals::operator""_f;
 // Число в слоте лежит значением — все читатели обязаны согласиться. Это опора: если
 // покраснеет здесь, дело в фикстуре, а не в разборе вектора.
 TEST(FieldSlots, IntAgreesAcrossEveryAccessor) {
-    FakeFieldObject fake;
+    FakeFieldObject                fake;
     const graft::ref<"SeraphNode"> node{fake.ptr()};
     ASSERT_TRUE(node.set_field("m_id", graft::i32{42}));
     EXPECT_EQ(fake.id_slot(), 42);
@@ -714,7 +719,7 @@ TEST(FieldSlots, VectorAgreesAcrossEveryAccessor) {
     FakeFieldObject fake;
     fake.set_pos_data({1, 2, 3});
     const graft::ref<"SeraphNode"> node{fake.ptr()};
-    const graft::vector want{1, 2, 3};
+    const graft::vector            want{1, 2, 3};
 
     EXPECT_EQ(node.field<graft::vector>("m_pos"), want);
     EXPECT_EQ(node.try_field<graft::vector>("m_pos"), std::optional<graft::vector>{want});
@@ -728,9 +733,9 @@ TEST(FieldSlots, VectorAgreesAcrossEveryAccessor) {
 // отличается от записи числа: двенадцать байт поверх слота убили бы указатель, и упал
 // бы не тот, кто писал, а первое же чтение поля из скрипта.
 TEST(FieldSlots, VectorWriteGoesThroughTheSlotPointer) {
-    FakeFieldObject fake;
+    FakeFieldObject                fake;
     const graft::ref<"SeraphNode"> node{fake.ptr()};
-    void* const before = fake.pos_slot();
+    void* const                    before = fake.pos_slot();
 
     ASSERT_TRUE(node.set_field("m_pos", graft::vector{4, 5, 6}));
     EXPECT_EQ(fake.pos_data(), (graft::vector{4, 5, 6}));
@@ -762,7 +767,7 @@ TEST(FieldSlots, VectorWithoutDataIsRefused) {
 
 // Промах по имени остаётся промахом для всех форм, и вектор тут не исключение.
 TEST(FieldSlots, MissingFieldIsAMissForEveryAccessor) {
-    FakeFieldObject fake;
+    FakeFieldObject                fake;
     const graft::ref<"SeraphNode"> node{fake.ptr()};
 
     EXPECT_EQ(node.field<graft::vector>("m_nope"), graft::vector{});
@@ -797,4 +802,4 @@ static_assert(settable_by_template_name<graft::vector>);
 static_assert(settable_by_str<graft::vector>);
 static_assert(settable_by_name<graft::i32> && settable_by_template_name<graft::f32>);
 
-}  // namespace
+} // namespace

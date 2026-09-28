@@ -8,10 +8,10 @@
 // Часть кейсов ниже проверяет, что врезка не мешает обработке сбоев: для этого нужны и
 // SEH, и векторный обработчик, и права на страницу — то есть Win32 целиком.
 #ifndef NOMINMAX
-#define NOMINMAX
+    #define NOMINMAX
 #endif
 #ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
+    #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
 
@@ -26,7 +26,6 @@
 #include "graft/engine.hpp"
 #include "graft/loader.hpp"
 #include "graft/thunk.hpp"
-#include "graft/loader.hpp"
 
 namespace {
 
@@ -35,7 +34,7 @@ namespace {
 // а каждая врезка стоит десятки миллисекунд. getenv_s, а не getenv: второй у MSVC помечен
 // устаревшим, и сьюта собирается без предупреждений.
 int from_env(const char* name, int fallback) {
-    char buf[32]{};
+    char        buf[32]{};
     std::size_t len = 0;
     if (getenv_s(&len, buf, sizeof buf, name) != 0 || len == 0) {
         return fallback;
@@ -67,8 +66,8 @@ int __fastcall thrice(int x) {
 }
 
 answer_fn g_original = nullptr;
-answer_fn g_twice = nullptr;
-answer_fn g_thrice = nullptr;
+answer_fn g_twice    = nullptr;
+answer_fn g_thrice   = nullptr;
 
 int __fastcall detour(int x) {
     return g_original(x) * 10;
@@ -90,18 +89,18 @@ int __fastcall detour_flat(int) {
 
 // Через указатель, а не по имени: иначе компилятор подставит тело на месте вызова и
 // врезка окажется ни при чём.
-answer_fn volatile g_call = &answer;
-answer_fn volatile g_call_twice = &twice;
+answer_fn volatile g_call        = &answer;
+answer_fn volatile g_call_twice  = &twice;
 answer_fn volatile g_call_thrice = &thrice;
 
-}  // namespace
+} // namespace
 
 TEST(Hook, DetourRunsAndOriginalStaysReachable) {
     ASSERT_EQ(g_call(1), 2);
 
     ASSERT_TRUE(graft::hook(&answer, &detour, &g_original));
-    EXPECT_EQ(g_call(1), 20);      // пошло через детур
-    EXPECT_EQ(g_original(1), 2);   // а оригинал достижим трамплином
+    EXPECT_EQ(g_call(1), 20);    // пошло через детур
+    EXPECT_EQ(g_original(1), 2); // а оригинал достижим трамплином
 
     EXPECT_TRUE(graft::unhook(&answer));
     EXPECT_EQ(g_call(1), 2);
@@ -181,8 +180,8 @@ TEST(Hook, EmptyBatchIsHarmless) {
 // потом фильтруется по своему процессу. Она обязательна, и почему — записано у
 // frozen_threads в SRC/graft/hook.cpp. Практический вывод: врезку ставят на старте.
 TEST(Hook, InstallCostIsMeasured) {
-    answer_fn original = nullptr;
-    constexpr int rounds = 16;
+    answer_fn     original = nullptr;
+    constexpr int rounds   = 16;
 
     const auto t0 = std::chrono::steady_clock::now();
     for (int i = 0; i < rounds; ++i) {
@@ -225,7 +224,7 @@ int guarded_read(const volatile int* where) {
     }
 }
 
-}  // namespace
+} // namespace
 
 // Врезка стоит — сбой в чужом коде по-прежнему доходит до нашего __except. Если этот
 // кейс покраснел, значит механика врезки завела в процессе свой обработчик и встала
@@ -243,7 +242,7 @@ TEST(Hook, FaultStillReachesSehWhileHooked) {
 
 namespace {
 
-std::uint8_t* g_poisoned = nullptr;
+std::uint8_t*     g_poisoned = nullptr;
 std::atomic<long> g_faults{0};
 
 // Считает сбои на отравленной странице и пропускает их дальше по цепочке. Со второго раза
@@ -261,7 +260,7 @@ long CALLBACK count_faults(EXCEPTION_POINTERS* ep) {
     if (g_faults.fetch_add(1) + 1 >= 2) {
         DWORD was = 0;
         VirtualProtect(g_poisoned, 0x1000, PAGE_EXECUTE_READWRITE, &was);
-        return EXCEPTION_CONTINUE_EXECUTION;  // страховка от вечного цикла
+        return EXCEPTION_CONTINUE_EXECUTION; // страховка от вечного цикла
     }
     return EXCEPTION_CONTINUE_SEARCH;
 }
@@ -270,7 +269,7 @@ int __fastcall detour_on_page(int x) {
     return x;
 }
 
-}  // namespace
+} // namespace
 
 // Детур под защитой: падение внутри него отменяет ВЫЗОВ, а не игру.
 //
@@ -280,14 +279,14 @@ int __fastcall detour_on_page(int x) {
 namespace {
 
 int __fastcall detour_that_falls(int) {
-    return read_at(nullptr);  // отдельная noinline функция: иначе сбой уедет из области
+    return read_at(nullptr); // отдельная noinline функция: иначе сбой уедет из области
 }
 
-}  // namespace
+} // namespace
 
 TEST(Hook, GuardedDetourSurvivesItsOwnFault) {
-    answer_fn original = nullptr;
-    const std::size_t before = graft::loader::fault_count();
+    answer_fn         original = nullptr;
+    const std::size_t before   = graft::loader::fault_count();
 
     ASSERT_TRUE(graft::hook<&detour_that_falls>(&answer, &original));
     // Детур падает на каждом вызове, а цель продолжает отвечать — нулём по умолчанию.
@@ -331,9 +330,11 @@ TEST(Hook, RemovedHookLeavesNothingThatSwallowsFaults) {
 
     // Обычный пролог MSVC и возврат: десять байт под переход и корректный разбор любым
     // дизассемблером. Тело не зовём — важно только то, что во врезку оно годится.
+    // clang-format off
     const std::uint8_t body[] = {0x48, 0x89, 0x5C, 0x24, 0x08,   // mov [rsp+8], rbx
                                  0x48, 0x89, 0x6C, 0x24, 0x10,   // mov [rsp+10h], rbp
                                  0xC3};                          // ret
+    // clang-format on
     memcpy(page, body, sizeof body);
     FlushInstructionCache(GetCurrentProcess(), page, sizeof body);
 
@@ -381,38 +382,31 @@ TEST(Hook, RemovedHookLeavesNothingThatSwallowsFaults) {
 // двести — с запасом.
 namespace {
 long CALLBACK report_unhandled(EXCEPTION_POINTERS* ep) {
-    const auto rip = static_cast<std::uintptr_t>(ep->ContextRecord->Rip);
+    const auto rip  = static_cast<std::uintptr_t>(ep->ContextRecord->Rip);
     const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
-    char buf[512];
-    _snprintf_s(buf, sizeof buf, _TRUNCATE,
-                "\n[СБОЙ] code=%08lX rip=%p (RVA %llX) обращение=%p поток=%lu answer=%p\n",
-                ep->ExceptionRecord->ExceptionCode, reinterpret_cast<void*>(rip),
-                static_cast<unsigned long long>(rip >= base ? rip - base : rip),
-                ep->ExceptionRecord->NumberParameters >= 2
-                    ? reinterpret_cast<void*>(ep->ExceptionRecord->ExceptionInformation[1])
-                    : nullptr,
-                GetCurrentThreadId(), reinterpret_cast<void*>(&answer));
+    char       buf[512];
+    _snprintf_s(buf, sizeof buf, _TRUNCATE, "\n[СБОЙ] code=%08lX rip=%p (RVA %llX) обращение=%p поток=%lu answer=%p\n", ep->ExceptionRecord->ExceptionCode, reinterpret_cast<void*>(rip), static_cast<unsigned long long>(rip >= base ? rip - base : rip), ep->ExceptionRecord->NumberParameters >= 2 ? reinterpret_cast<void*>(ep->ExceptionRecord->ExceptionInformation[1]) : nullptr, GetCurrentThreadId(), reinterpret_cast<void*>(&answer));
     DWORD wrote = 0;
     WriteFile(GetStdHandle(STD_ERROR_HANDLE), buf, static_cast<DWORD>(strlen(buf)), &wrote, nullptr);
     return EXCEPTION_EXECUTE_HANDLER;
 }
-}  // namespace
+} // namespace
 
 TEST(Hook, TargetUnderTrafficSurvivesInstallAndRemoval) {
     // Фильтр необработанных исключений: без него падение этого кейса выглядит как молча
     // исчезнувший прогон. Именно он и показал причину — rip на байт внутри цели.
     // Восстанавливаем прежний в конце: фильтр общий на процесс.
     LPTOP_LEVEL_EXCEPTION_FILTER const was_filter = SetUnhandledExceptionFilter(&report_unhandled);
-    std::atomic<bool> stop{false};
-    std::atomic<long long> spins{0};
-    std::atomic<long> wrong{0};
+    std::atomic<bool>                  stop{false};
+    std::atomic<long long>             spins{0};
+    std::atomic<long>                  wrong{0};
 
     // Детур НЕ зовёт оригинал: иначе кейс проверял бы ещё и время жизни трамплина, а
     // после снятия врезки поток может оказаться внутри уже освобождённого.
     static answer_fn s_unused = nullptr;
 
     std::vector<std::jthread> hammer;
-    const int threads = from_env("GRAFT_HAMMERS", 4);
+    const int                 threads = from_env("GRAFT_HAMMERS", 4);
     for (int i = 0; i < threads; ++i) {
         hammer.emplace_back([&] {
             while (!stop.load(std::memory_order_relaxed)) {
@@ -433,8 +427,8 @@ TEST(Hook, TargetUnderTrafficSurvivesInstallAndRemoval) {
 
     // Оборотов много именно потому, что они дешёвые: каждый — окно, в котором чужой поток
     // может оказаться на переписываемом прологе. Это и есть смысл кейса.
-    const int rounds = from_env("GRAFT_ROUNDS", 40);
-    const auto t0 = std::chrono::steady_clock::now();
+    const int  rounds = from_env("GRAFT_ROUNDS", 40);
+    const auto t0     = std::chrono::steady_clock::now();
     for (int round = 0; round < rounds; ++round) {
         ASSERT_TRUE(graft::hook(&answer, &detour_flat, &s_unused));
         ASSERT_TRUE(graft::unhook(&answer));
@@ -445,7 +439,7 @@ TEST(Hook, TargetUnderTrafficSurvivesInstallAndRemoval) {
     std::cout << "  [замер] врезка + снятие ПОД НАГРУЗКОЙ: " << ms << " мс на пару" << std::endl;
 
     stop.store(true);
-    hammer.clear();  // jthread: join на разрушении
+    hammer.clear(); // jthread: join на разрушении
 
     EXPECT_EQ(wrong.load(), 0) << "цель вернула то, чего не возвращают ни оригинал, ни детур";
     EXPECT_GT(spins.load(), 0) << "потоки не крутились — их не разморозили";

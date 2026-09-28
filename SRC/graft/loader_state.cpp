@@ -63,7 +63,7 @@ namespace {
 // Падение кода, который существует ради того, чтобы не падать, — худший вид падения.
 //
 // Форматирование оставлено СНАРУЖИ замка: под ним только правки состояния и журнал.
-std::mutex g_fault_lock;
+std::mutex  g_fault_lock;
 std::size_t g_faults = 0;
 std::string g_last_fault;
 // Сколько строк в журнал отдано на один трамплин. Натив, падающий каждый кадр, иначе
@@ -96,7 +96,7 @@ void note_fault(void* impl, std::uint32_t code, const void* at, const char* what
 
     const std::scoped_lock held{g_fault_lock};
     ++g_faults;
-    g_last_fault = std::move(line);
+    g_last_fault           = std::move(line);
     const std::size_t said = g_fault_lines[impl]++;
     if (said < kMaxLinesPerNative) {
         graft::log("! " + g_last_fault + " — вызов отменён, игра продолжает работу");

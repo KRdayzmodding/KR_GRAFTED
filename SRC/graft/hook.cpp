@@ -100,8 +100,7 @@ std::vector<safetyhook::InlineHook>& retired() {
 // нечего. Адрес сразу — потому что оригинал обязан быть достижим ДО того, как детур
 // станет доступен чужому потоку, иначе первый же вызов уйдёт в ноль.
 bool prepare(const hook_request& want, std::vector<safetyhook::InlineHook>& into) {
-    auto made = safetyhook::InlineHook::create(want.target, want.detour,
-                                               safetyhook::InlineHook::StartDisabled);
+    auto made = safetyhook::InlineHook::create(want.target, want.detour, safetyhook::InlineHook::StartDisabled);
     if (!made) {
         return false;
     }
@@ -110,7 +109,7 @@ bool prepare(const hook_request& want, std::vector<safetyhook::InlineHook>& into
     return true;
 }
 
-}  // namespace
+} // namespace
 
 bool hook(void* target, void* detour, void** original) {
     if (target == nullptr || detour == nullptr || original == nullptr) {
@@ -139,7 +138,7 @@ bool unhook(void* target) {
         return false;
     }
     const std::scoped_lock held{g_lock};
-    const auto found = hooks().find(target);
+    const auto             found = hooks().find(target);
     if (found == hooks().end()) {
         return false;
     }
@@ -156,7 +155,7 @@ bool unhook(void* target) {
 
 bool hook_all(std::span<const hook_request> all) {
     if (all.empty()) {
-        return true;  // ничего не просили — ничего и не сломалось
+        return true; // ничего не просили — ничего и не сломалось
     }
     const std::scoped_lock held{g_lock};
     for (std::size_t i = 0; i < all.size(); ++i) {
@@ -187,7 +186,7 @@ bool hook_all(std::span<const hook_request> all) {
     for (const hook_request& want : all) {
         if (!prepare(want, made)) {
             forget_originals();
-            return false;  // не включено ещё ничего — откатывать нечего
+            return false; // не включено ещё ничего — откатывать нечего
         }
     }
     for (std::size_t i = 0; i < made.size(); ++i) {
@@ -206,4 +205,4 @@ bool hook_all(std::span<const hook_request> all) {
     return true;
 }
 
-}  // namespace graft
+} // namespace graft

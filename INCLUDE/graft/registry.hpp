@@ -22,7 +22,7 @@ struct native {
     // Имена аргументов через запятую и однострочное описание — для генератора.
     // Пустые допустимы: тогда печатаются p0, p1 и объявление без комментария.
     const char* param_names = nullptr;
-    const char* doc = nullptr;
+    const char* doc         = nullptr;
     bool marshalled = false;   // объявлять как `proto` (движок зовёт через блок
                                // аргументов) вместо `proto native`
     // В каком скриптовом модуле печатать объявление. Игровые типы (Object, EntityAI,

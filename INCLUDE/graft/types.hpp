@@ -116,7 +116,7 @@ void leave_call();
 // началась новая внешняя цепочка, и арена затёрла бы строки внешнего вызова, пока он ещё
 // жив и собирается их вернуть.
 std::size_t call_depth();
-void restore_call_depth(std::size_t was);
+void        restore_call_depth(std::size_t was);
 
 struct call_scope {
     call_scope() { enter_call(); }
@@ -209,7 +209,7 @@ inline bool write_field(void* at, vector value) {
     }
     void* data = nullptr;
     std::memcpy(&data, at, sizeof data);
-    if (!data) {  // поле объявлено, а данных за ним нет — писать некуда
+    if (!data) { // поле объявлено, а данных за ним нет — писать некуда
         return false;
     }
     std::memcpy(data, &value, sizeof value);
@@ -578,6 +578,7 @@ struct ref {
         }
         return read_field<T>(addr);
     }
+
     template <writable_field T>
     bool set_field(const char* name, T value) const {
         return write_field(script::variable_address(ptr, script::find_variable(ptr, name)), value);
@@ -605,6 +606,7 @@ struct ref {
         }
         return read_field<T>(addr);
     }
+
     template <name_t Name, writable_field T>
     bool set_field(T value) const {
         return write_field(script::variable_address(ptr, slot_of<Name>()), value);
@@ -647,6 +649,7 @@ struct ref {
     std::optional<T> try_field(str name) const {
         return try_field<T>(name.c_str());
     }
+
     template <writable_field T>
     bool set_field(str name, T value) const {
         return set_field<T>(name.c_str(), value);

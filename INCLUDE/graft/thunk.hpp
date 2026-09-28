@@ -249,4 +249,4 @@ hook_request hooked(F target, F* original) {
             reinterpret_cast<void**>(original)};
 }
 
-}  // namespace graft
+} // namespace graft

@@ -92,8 +92,7 @@ std::uintptr_t view::find_rip(pattern_view insn, std::uintptr_t target, std::uin
     while (i + len <= bytes.size()) {
         if (pivot < len) {
             const auto* hit = static_cast<const std::uint8_t*>(
-                std::memchr(bytes.data() + i + pivot, insn.value[pivot],
-                            bytes.size() - len - i + 1));
+                std::memchr(bytes.data() + i + pivot, insn.value[pivot], bytes.size() - len - i + 1));
             if (!hit) {
                 return 0;
             }
@@ -242,7 +241,7 @@ std::uintptr_t function_referencing(const std::vector<view>& sections, const cha
     std::uintptr_t found = 0;
     for (const std::uintptr_t start : starts) {
         if (found != 0 && found != start) {
-            return 0;  // две разные функции — угадывать не будем
+            return 0; // две разные функции — угадывать не будем
         }
         found = start;
     }
@@ -268,7 +267,7 @@ std::vector<std::uintptr_t> rel32_targets(const std::vector<view>& sections, std
                 out.push_back(target);
             }
         }
-        break;  // адрес лежит ровно в одной секции
+        break; // адрес лежит ровно в одной секции
     }
     return out;
 }
@@ -280,8 +279,8 @@ frame_entry find_frame_entry(const std::vector<view>& sections) {
     constexpr std::uint8_t kCall   = 0xE8;
     // Две приметы кадрового OnUpdate. `cvtss2sd` записан байтами: векторных инструкций
     // кодировщик не знает намеренно, а modrm здесь и так отпущен.
-    constexpr auto kCvtss2sd   = sig<"F3 0F 5A ??">;          // cvtss2sd xmm,xmm
-    constexpr auto kIndexCache = sig<"89 05 [disp32]">;       // mov [rip+disp32],eax
+    constexpr auto kCvtss2sd   = sig<"F3 0F 5A ??">;    // cvtss2sd xmm,xmm
+    constexpr auto kIndexCache = sig<"89 05 [disp32]">; // mov [rip+disp32],eax
 
     for (const view& data : sections) {
         const std::uintptr_t text = data.find_cstr("OnUpdate");
@@ -477,14 +476,12 @@ std::optional<found> find_in(const std::uint8_t* body,
         if (!same(body + i, sig) || --nth != 0) {
             continue;
         }
-        return found{base_ea + i, sig.hole_size != 0
-                                      ? hole_value(body + i + sig.hole, sig.hole_size)
-                                      : 0};
+        return found{base_ea + i, sig.hole_size != 0 ? hole_value(body + i + sig.hole, sig.hole_size) : 0};
     }
     return std::nullopt;
 }
 
-}  // namespace
+} // namespace
 
 bool matches(std::uintptr_t ea, pattern_view sig) {
     return !sig.value.empty() && readable(ea, sig.value.size()) &&
@@ -498,8 +495,7 @@ std::optional<found> find(std::uintptr_t ea, std::size_t span, pattern_view sig,
     return find_in(reinterpret_cast<const std::uint8_t*>(ea), span, ea, sig, nth);
 }
 
-std::optional<found> view::find(std::uintptr_t ea, std::size_t span, pattern_view sig,
-                                unsigned nth) const {
+std::optional<found> view::find(std::uintptr_t ea, std::size_t span, pattern_view sig, unsigned nth) const {
     if (!contains(ea)) {
         return std::nullopt;
     }
@@ -531,7 +527,6 @@ std::uintptr_t table_after(const std::vector<view>& sections, std::uintptr_t loc
 }
 
 } // namespace
-
 
 // ── Таблицы классов ──────────────────────────────────────────────────────────
 

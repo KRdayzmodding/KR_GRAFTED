@@ -84,16 +84,13 @@ public:
         // класс: одна привязка на общий класс работает для всех инстанциаций, а типы
         // приезжают в рантайме. Библиотека переключается на этот путь сама.
         template <auto F>
-        class_scope& method(const char* name, const char* params = nullptr,
-                            const char* doc = nullptr) {
+        class_scope& method(const char* name, const char* params = nullptr, const char* doc = nullptr) {
             if constexpr (detail::marshalled_member<F>) {
                 using T = detail::marshal_thunk<C, F>;
-                return put(name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args, true,
-                           params, doc);
+                return put(name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args, true, params, doc);
             } else {
                 using T = detail::method_thunk<C, F>;
-                return put(name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args, false,
-                           params, doc);
+                return put(name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args, false, params, doc);
             }
         }
 
@@ -101,25 +98,19 @@ public:
         // graft::value в сигнатуре переключает на маршалируемый путь — у статического
         // вызова приёмника нет, форма та же, что у глобального.
         template <auto F>
-        class_scope& static_method(const char* name, const char* params = nullptr,
-                                   const char* doc = nullptr) {
+        class_scope& static_method(const char* name, const char* params = nullptr, const char* doc = nullptr) {
             if constexpr (detail::marshalled_free<F>) {
                 using T = detail::marshal_free_thunk<F>;
-                return put(name, reinterpret_cast<void*>(&T::call), true, T::ret, T::args, true,
-                           params, doc);
+                return put(name, reinterpret_cast<void*>(&T::call), true, T::ret, T::args, true, params, doc);
             } else {
                 using T = detail::free_thunk<F>;
-                return put(name, reinterpret_cast<void*>(&T::call), true, T::ret, T::args, false,
-                           params, doc);
+                return put(name, reinterpret_cast<void*>(&T::call), true, T::ret, T::args, false, params, doc);
             }
         }
 
     private:
-        class_scope& put(const char* name, void* impl, bool is_static, const char* ret,
-                         const char* const* args, bool marshalled = false,
-                         const char* params = nullptr, const char* doc = nullptr) {
-            detail::add({class_name_, name, impl, is_static, ret, args, nullptr, params, doc,
-                         marshalled, module_, generate_, declare_});
+        class_scope& put(const char* name, void* impl, bool is_static, const char* ret, const char* const* args, bool marshalled = false, const char* params = nullptr, const char* doc = nullptr) {
+            detail::add({class_name_, name, impl, is_static, ret, args, nullptr, params, doc, marshalled, module_, generate_, declare_});
             return *this;
         }
 
@@ -180,9 +171,7 @@ public:
             // Порядок полей — как в graft::native (registry.hpp): next, имена аргументов,
             // описание, marshalled, модуль, печатать ли, заголовок класса. У шаблонного
             // метода имён и описания нет: генератор печатает их по параметрам класса.
-            detail::add({class_name_, name, reinterpret_cast<void*>(&D::call), false,
-                         Sig::ret(params_, param_count_), Sig::args(params_, param_count_),
-                         nullptr, nullptr, nullptr, true, module_, true, declare_});
+            detail::add({class_name_, name, reinterpret_cast<void*>(&D::call), false, Sig::ret(params_, param_count_), Sig::args(params_, param_count_), nullptr, nullptr, nullptr, true, module_, true, declare_});
             return *this;
         }
 
@@ -233,16 +222,13 @@ private:
     // объявлении такой аргумент печатается как `void` — «любой», ровно как у
     // ванильных proto void Print(void var) и Serializer.Write(void).
     template <auto Fn>
-    bindings& put_global(const char* name, bool generate, const char* params = nullptr,
-                         const char* doc = nullptr) {
+    bindings& put_global(const char* name, bool generate, const char* params = nullptr, const char* doc = nullptr) {
         if constexpr (detail::marshalled_free<Fn>) {
             using T = detail::marshal_free_thunk<Fn>;
-            detail::add({nullptr, name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args,
-                         nullptr, params, doc, true, module_, generate});
+            detail::add({nullptr, name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args, nullptr, params, doc, true, module_, generate});
         } else {
             using T = detail::free_thunk<Fn>;
-            detail::add({nullptr, name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args,
-                         nullptr, params, doc, false, module_, generate});
+            detail::add({nullptr, name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args, nullptr, params, doc, false, module_, generate});
         }
         return *this;
     }
@@ -268,8 +254,7 @@ std::string proto_file(const char* module = "1_Core");
 // plugin — имя плагина: файл целиком оборачивается в `#ifdef GRAFTED_<ИМЯ>` (у хоста,
 // "graft", — в `#ifdef GRAFTED`). Пусто или module == "1_Core" — без обёртки: этот модуль
 // движок компилирует без дефайнов.
-std::string proto_file(const std::vector<const graft_native_desc*>& source, const char* module,
-                       std::string_view plugin = {});
+std::string proto_file(const std::vector<const graft_native_desc*>& source, const char* module, std::string_view plugin = {});
 // Модули, в которых есть хоть одно объявление (для генератора).
 std::vector<std::string> proto_modules();
 std::vector<std::string> proto_modules(const std::vector<const graft_native_desc*>& source);

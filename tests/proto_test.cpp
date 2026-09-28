@@ -74,12 +74,9 @@ bool DemoWrapped(graft::i32 slot) {
 }
 
 GRAFT_BINDINGS("1_Core") {
-    bind.global<&DemoNamed>("DemoNamed", "slot, zone, player",
-                            "Переселить игрока в зону.");
-    bind.class_<DemoDocs>().method<&DemoDocs::Move>("Move", "speed_cms",
-                                                    "Задать скорость в см/с.");
-    bind.global<&DemoWrapped>("DemoWrapped", "slot",
-                              "Занять слот.\n\nВозврат — влез ли.");
+    bind.global<&DemoNamed>("DemoNamed", "slot, zone, player", "Переселить игрока в зону.");
+    bind.class_<DemoDocs>().method<&DemoDocs::Move>("Move", "speed_cms", "Задать скорость в см/с.");
+    bind.global<&DemoWrapped>("DemoWrapped", "slot", "Занять слот.\n\nВозврат — влез ли.");
     bind.global<&DemoAny>("DemoAny").global<&DemoMixed>("DemoMixed").global<&DemoText2>("DemoText2");
     bind.class_<DemoStatics>().static_method<&DemoStatics::Any>("Any");
     bind.global<&DemoPing>("DemoPing")
@@ -207,13 +204,10 @@ TEST(Proto, ClassWithStateDeclaresOnlyItsMethods) {
 //
 // Реестр тестов весь в 1_Core; копии переносятся в тот модуль, который нужен кейсу.
 std::vector<const graft_native_desc*> own_descs(std::vector<graft_native_desc>& keep,
-                                                const char* module) {
+                                                const char*                     module) {
     for (const graft::native* n = graft::natives(); n; n = n->next) {
         if (n->module && std::string{n->module} == "1_Core") {
-            keep.push_back({n->class_name, n->name, n->impl, n->ret, n->args, module,
-                            n->declare_as, static_cast<std::uint8_t>(n->is_static),
-                            static_cast<std::uint8_t>(n->marshalled),
-                            static_cast<std::uint8_t>(n->generate), n->param_names, n->doc});
+            keep.push_back({n->class_name, n->name, n->impl, n->ret, n->args, module, n->declare_as, static_cast<std::uint8_t>(n->is_static), static_cast<std::uint8_t>(n->marshalled), static_cast<std::uint8_t>(n->generate), n->param_names, n->doc});
         }
     }
     std::vector<const graft_native_desc*> out;
@@ -228,7 +222,7 @@ void expect_wrapped(const std::string& file, const std::string& define) {
     const std::size_t open = file.find("#ifdef " + define + "\n");
     ASSERT_NE(open, std::string::npos) << file;
     EXPECT_EQ(file.find("#ifdef", open + 1), std::string::npos) << "обёртка одна";
-    const std::size_t first = file.find("\nproto");  // не «protogen» из шапки
+    const std::size_t first = file.find("\nproto"); // не «protogen» из шапки
     ASSERT_NE(first, std::string::npos);
     EXPECT_LT(open, first) << "объявление до #ifdef";
     const std::string tail = "#endif\n";
@@ -238,7 +232,7 @@ void expect_wrapped(const std::string& file, const std::string& define) {
 
 TEST(ProtoGuard, PluginFileIsWrappedInItsDefine) {
     std::vector<graft_native_desc> keep;
-    const std::string file = graft::proto_file(own_descs(keep, "3_Game"), "3_Game", "MYMOD");
+    const std::string              file = graft::proto_file(own_descs(keep, "3_Game"), "3_Game", "MYMOD");
     expect_wrapped(file, "GRAFTED_MYMOD");
     // Сдвиг не должен задеть сами объявления.
     EXPECT_NE(file.find("modded class DemoClass\n{\n"), std::string::npos);
@@ -249,7 +243,7 @@ TEST(ProtoGuard, PluginFileIsWrappedInItsDefine) {
 // никогда не сработает.
 TEST(ProtoGuard, DefineNameMatchesHostRule) {
     std::vector<graft_native_desc> keep;
-    const std::string file = graft::proto_file(own_descs(keep, "4_World"), "4_World", "my-mod 2");
+    const std::string              file = graft::proto_file(own_descs(keep, "4_World"), "4_World", "my-mod 2");
     expect_wrapped(file, "GRAFTED_my_mod_2");
 }
 
@@ -257,7 +251,7 @@ TEST(ProtoGuard, DefineNameMatchesHostRule) {
 // GRAFTED_graft не кладёт никогда.
 TEST(ProtoGuard, HostFileIsWrappedInGrafted) {
     std::vector<graft_native_desc> keep;
-    const std::string file = graft::proto_file(own_descs(keep, "2_GameLib"), "2_GameLib", "graft");
+    const std::string              file = graft::proto_file(own_descs(keep, "2_GameLib"), "2_GameLib", "graft");
     expect_wrapped(file, "GRAFTED");
 }
 
@@ -265,7 +259,7 @@ TEST(ProtoGuard, HostFileIsWrappedInGrafted) {
 // НИКОГДА, в том числе с загруженным плагином.
 TEST(ProtoGuard, CoreModuleIsNeverWrapped) {
     std::vector<graft_native_desc> keep;
-    const std::string file = graft::proto_file(own_descs(keep, "1_Core"), "1_Core", "MYMOD");
+    const std::string              file = graft::proto_file(own_descs(keep, "1_Core"), "1_Core", "MYMOD");
     EXPECT_EQ(file.find("#if"), std::string::npos) << file;
     EXPECT_NE(file.find("proto native int DemoPing(int p0);"), std::string::npos);
 }

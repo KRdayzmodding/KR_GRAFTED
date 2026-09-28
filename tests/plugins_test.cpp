@@ -178,7 +178,7 @@ TEST(Reason, BothMismatchesAreReported) {
 // сообщать). Гадать нельзя — но версии хоста и что делать назвать обязаны.
 TEST(Reason, SilentRefusalStillNamesHostNumbers) {
     graft_plugin_info info{};
-    const auto text = graft::plugins::reason(info, GRAFT_ERR_ABI);
+    const auto        text = graft::plugins::reason(info, GRAFT_ERR_ABI);
     EXPECT_TRUE(has(text, "ABI " + num(GRAFT_ABI_VERSION))) << text;
     EXPECT_TRUE(has(text, "LAYOUT " + num(GRAFT_LAYOUT_VERSION))) << text;
     EXPECT_TRUE(has(text, "не сообщил")) << text;
@@ -186,8 +186,8 @@ TEST(Reason, SilentRefusalStillNamesHostNumbers) {
 }
 
 TEST(Reason, TruncatedStructNamesSizes) {
-    auto info = make_info(GRAFT_ABI_VERSION, GRAFT_LAYOUT_VERSION);
-    info.size = 8;
+    auto info       = make_info(GRAFT_ABI_VERSION, GRAFT_LAYOUT_VERSION);
+    info.size       = 8;
     const auto text = graft::plugins::reason(info, GRAFT_ERR_ABI);
     EXPECT_TRUE(has(text, "8")) << text;
     EXPECT_TRUE(has(text, num(sizeof(graft_plugin_info)))) << text;

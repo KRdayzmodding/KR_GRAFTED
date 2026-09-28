@@ -24,13 +24,13 @@ using graft::scan::sig;
 
 // REX появляется ровно когда надо: 64-битный операнд, регистр r8..r15, младший байт
 // rsp/rbp/rsi/rdi (без префикса те же коды значат ah/ch/dh/bh).
-static_assert(code<"mov eax,ecx"> == sig<"8B C1">);        // REX не нужен вовсе
-static_assert(code<"mov rax,rcx"> == sig<"48 8B C1">);     // только W
-static_assert(code<"mov eax,r8d"> == sig<"41 8B C0">);     // только B
-static_assert(code<"mov r8d,eax"> == sig<"44 8B C0">);     // только R
-static_assert(code<"mov r9,r10"> == sig<"4D 8B CA">);      // W, R и B сразу
-static_assert(code<"xor sil,sil"> == sig<"40 32 F6">);     // пустой REX ради sil
-static_assert(code<"xor bl,bl"> == sig<"32 DB">);          // у bl он не нужен
+static_assert(code<"mov eax,ecx"> == sig<"8B C1">);    // REX не нужен вовсе
+static_assert(code<"mov rax,rcx"> == sig<"48 8B C1">); // только W
+static_assert(code<"mov eax,r8d"> == sig<"41 8B C0">); // только B
+static_assert(code<"mov r8d,eax"> == sig<"44 8B C0">); // только R
+static_assert(code<"mov r9,r10"> == sig<"4D 8B CA">);  // W, R и B сразу
+static_assert(code<"xor sil,sil"> == sig<"40 32 F6">); // пустой REX ради sil
+static_assert(code<"xor bl,bl"> == sig<"32 DB">);      // у bl он не нужен
 
 // Направление: приёмник-регистр читает (8B), приёмник-память пишет (89). Компилятор игры
 // пишет так же, и перепутать их — значит получить чужую инструкцию с тем же текстом.
@@ -85,9 +85,9 @@ static_assert(code<"db 48 ?? 81"> == sig<"48 ?? 81">);
 // ── reg64: любой регистр-приёмник ────────────────────────────────────────────────────
 // Отпускаются поле reg в modrm и бит R в префиксе REX — и только они: форма адресации
 // (mod и rm) сверяется по-прежнему, иначе под сигнатуру подойдёт другая инструкция.
-static_assert(code<"lea reg64,[rip+disp32]">  == sig<"48&FB 8D 05&C7 [disp32]">);
-static_assert(code<"mov reg64,[rcx+disp8]">   == sig<"48&FB 8B 41&C7 [disp8]">);
-static_assert(code<"mov [rip+disp32],reg64">  == sig<"48&FB 89 05&C7 [disp32]">);
+static_assert(code<"lea reg64,[rip+disp32]"> == sig<"48&FB 8D 05&C7 [disp32]">);
+static_assert(code<"mov reg64,[rcx+disp8]"> == sig<"48&FB 8B 41&C7 [disp8]">);
+static_assert(code<"mov [rip+disp32],reg64"> == sig<"48&FB 89 05&C7 [disp32]">);
 
 // И это действительно находит ВСЕ шестнадцать регистров, а не младшие восемь. Ровно на
 // этом спотыкался рукописный скан в defines.cpp: REX он сверял целиком.
@@ -113,7 +113,7 @@ TEST(Asm, AnyRegisterFindsHighRegistersToo) {
 // Константы самого сканера записаны байтами (graft/scan.hpp стоит НИЖЕ кодировщика) —
 // сверяем, что мнемоника в их комментарии не разошлась с байтами.
 static_assert(code<"lea rdx,[rip+disp32]"> == graft::scan::lea_rdx);
-static_assert(code<"lea r8,[rip+disp32]">  == graft::scan::lea_r8);
+static_assert(code<"lea r8,[rip+disp32]"> == graft::scan::lea_r8);
 
 // Дырка в ассемблерной записи — та же дырка: её ширина и место известны.
 static_assert(code<"mov rax,[rcx+disp32]">.hole == 3);
@@ -125,7 +125,7 @@ static_assert(code<"mov [rsp+8],rbx">.hole_size == 0);
 // ОШИБКИ СБОРКИ, поэтому кейсов на них здесь нет и быть не может: файл бы не собрался.
 // Проверено руками по одному разу на каждую, текст ошибки ведёт в graft/asm.hpp.
 
-}  // namespace
+} // namespace
 
 // Прогон сьюты должен показывать, что файл собран и сверки посчитаны: static_assert в
 // отчёте ctest не виден, а молчаливо выпавший из сборки файл — видная беда.
@@ -140,7 +140,7 @@ TEST(Asm, EncoderChecksAreCompiled) {
 TEST(Asm, AssembledSignatureWorksWithFind) {
     // nop ; mov eax,[rcx+38h] — поле по короткому смещению, дырка в один байт.
     static const std::uint8_t body[] = {0x90, 0x8B, 0x41, 0x38};
-    const auto ea = reinterpret_cast<std::uintptr_t>(body);
+    const auto                ea     = reinterpret_cast<std::uintptr_t>(body);
 
     const auto at = graft::scan::find(ea, sizeof body, code<"mov eax,[rcx+disp8]">);
     ASSERT_TRUE(at.has_value());

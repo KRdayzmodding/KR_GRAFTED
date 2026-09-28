@@ -68,10 +68,11 @@ template <std::size_t N>
 struct pattern {
     std::array<std::uint8_t, N> value{};
     std::array<std::uint8_t, N> mask{};
-    std::uint8_t hole      = 0;  // смещение дырки от начала, в байтах
-    std::uint8_t hole_size = 0;  // её ширина в байтах; 0 — дырки нет
+    std::uint8_t                hole      = 0; // смещение дырки от начала, в байтах
+    std::uint8_t                hole_size = 0; // её ширина в байтах; 0 — дырки нет
 
     static constexpr std::size_t size() { return N; }
+
     // Сверяется ли байт хоть в чём-нибудь. Нужно тестам и человеку, а не поиску.
     constexpr bool checked(std::size_t i) const { return mask[i] != 0; }
 };
@@ -122,7 +123,7 @@ consteval int sig_nibble(char c) {
 // Байт сигнатуры: значение и маска сверяемых бит.
 struct sig_cell {
     std::uint8_t value = 0;
-    std::uint8_t mask  = 0;  // 0 — байт любой
+    std::uint8_t mask  = 0; // 0 — байт любой
 };
 
 consteval std::uint8_t sig_hex2(std::string_view token) {
@@ -134,7 +135,7 @@ consteval std::uint8_t sig_hex2(std::string_view token) {
 
 consteval sig_cell sig_byte(std::string_view token) {
     if (token == "??" || token == "?") {
-        return {};  // джокер: там смещение поля или регистр, выбранный компилятором игры
+        return {}; // джокер: там смещение поля или регистр, выбранный компилятором игры
     }
     // `05&C7` — сверить только биты маски. Так пишется «поле reg в modrm любое».
     if (const std::size_t amp = token.find('&'); amp != std::string_view::npos) {
@@ -241,11 +242,11 @@ consteval auto parse_sig() {
         }
         out.hole      = static_cast<std::uint8_t>(k);
         out.hole_size = static_cast<std::uint8_t>(sig_hole(t.text));
-        k += out.hole_size;  // байты дырки не сверяются: маска у них и осталась нулевой
+        k += out.hole_size; // байты дырки не сверяются: маска у них и осталась нулевой
     }
 }
 
-}  // namespace detail
+} // namespace detail
 
 template <name_t S>
 inline constexpr auto sig = detail::parse_sig<S>();
@@ -256,8 +257,8 @@ bool matches(std::uintptr_t ea, pattern_view sig);
 
 // Где нашлось и что лежало в дырке.
 struct found {
-    std::uintptr_t site  = 0;  // адрес самой инструкции
-    std::int64_t   value = 0;  // содержимое дырки; 0, если дырки в сигнатуре не было
+    std::uintptr_t site  = 0; // адрес самой инструкции
+    std::int64_t   value = 0; // содержимое дырки; 0, если дырки в сигнатуре не было
 };
 
 // `nth`-е вхождение сигнатуры в [ea, ea+span). Пусто — не нашлось, и это отказ, а не повод
@@ -299,6 +300,7 @@ struct view {
     std::vector<std::uintptr_t> calls_after(std::uintptr_t ea, std::size_t span = 0x40) const {
         return rel32_after(ea, span, 0xE8);
     }
+
     std::vector<std::uintptr_t> calls_before(std::uintptr_t ea, std::size_t span = 0x40) const {
         return rel32_before(ea, span, 0xE8);
     }
@@ -310,8 +312,8 @@ struct view {
 // байтами, а не строчками ассемблера, только из-за слоёв: кодировщик (graft/asm.hpp) стоит
 // НАД этим заголовком и включить его здесь нельзя. Что мнемоника в комментарии не разошлась
 // с байтами, сторожит static_assert в tests/asm_test.cpp.
-inline constexpr auto lea_rdx = sig<"48 8D 15 [disp32]">;  // lea rdx,[rip+disp32]
-inline constexpr auto lea_r8  = sig<"4C 8D 05 [disp32]">;  // lea r8,[rip+disp32]
+inline constexpr auto lea_rdx = sig<"48 8D 15 [disp32]">; // lea rdx,[rip+disp32]
+inline constexpr auto lea_r8  = sig<"4C 8D 05 [disp32]">; // lea r8,[rip+disp32]
 
 // Точки движка. Сигнатуры выведены из декомпиляции (re/out/server/reg_*.c):
 // последний числовой аргумент — размер буфера возврата, для `proto native` он 0.

@@ -1,7 +1,7 @@
 // Copyright (C) 2025-2026 6wingSerap
 // SPDX-License-Identifier: GPL-3.0-or-later
-#include "graft/defines.hpp"
 #include "graft/engine.hpp"
+#include "graft/defines.hpp"
 #include "graft/frame.hpp"
 
 #include <windows.h>
@@ -191,8 +191,8 @@ void* __fastcall hook_register_global(void* ctx, const char* name, void* impl,
 // это за окно и кому оно нужно — в stages.hpp (on_link). Имени у функции нет, есть строка
 // предупреждения — одна на образ.
 constexpr const char* kLinkCheck = "Method not linked '%s.%s'";
-using link_check_fn = std::uint64_t(__fastcall*)(void* compiler, void* errors);
-link_check_fn g_orig_link_check = nullptr;
+using link_check_fn              = std::uint64_t(__fastcall*)(void* compiler, void* errors);
+link_check_fn g_orig_link_check  = nullptr;
 
 std::uint64_t __fastcall hook_link_check(void* compiler, void* errors) {
     stage::note_link();

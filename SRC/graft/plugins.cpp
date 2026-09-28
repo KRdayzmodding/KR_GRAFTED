@@ -154,15 +154,11 @@ namespace {
 
 // Одно разошедшееся число: чьё старее, то и чинить. Старее плагин — пересобрать его под
 // текущий graft; старее хост — пересборка плагина не поможет, обновлять надо хост.
-std::string mismatch(const char* what, std::uint32_t plugin, std::uint32_t host,
-                     const char* meaning) {
-    return std::format("{}: плагин {} {}, хост {} {} — {}; {}", meaning, what, plugin, what, host,
-                       plugin < host ? "плагин старее хоста" : "хост старее плагина",
-                       plugin < host ? "пересобрать плагин под текущий graft"
-                                     : "обновить хост (graft install)");
+std::string mismatch(const char* what, std::uint32_t plugin, std::uint32_t host, const char* meaning) {
+    return std::format("{}: плагин {} {}, хост {} {} — {}; {}", meaning, what, plugin, what, host, plugin < host ? "плагин старее хоста" : "хост старее плагина", plugin < host ? "пересобрать плагин под текущий graft" : "обновить хост (graft install)");
 }
 
-}  // namespace
+} // namespace
 
 std::string reason(const graft_plugin_info& info, std::uint32_t code) {
     if (code == GRAFT_OK) {
@@ -177,12 +173,15 @@ std::string reason(const graft_plugin_info& info, std::uint32_t code) {
         return std::format(
             "плагин отказал хосту (ABI {}, LAYOUT {}) и своих версий не сообщил — собран под "
             "старый graft; пересобрать плагин под текущий graft",
-            GRAFT_ABI_VERSION, GRAFT_LAYOUT_VERSION);
+            GRAFT_ABI_VERSION,
+            GRAFT_LAYOUT_VERSION);
     }
     if (info.size < sizeof(graft_plugin_info)) {
         return std::format("описание плагина обрезано: {} байт вместо {} — собран под другой "
                            "graft; пересобрать плагин под текущий graft (ABI {}, LAYOUT {})",
-                           info.size, sizeof(graft_plugin_info), GRAFT_ABI_VERSION,
+                           info.size,
+                           sizeof(graft_plugin_info),
+                           GRAFT_ABI_VERSION,
                            GRAFT_LAYOUT_VERSION);
     }
     std::string out;
@@ -195,7 +194,9 @@ std::string reason(const graft_plugin_info& info, std::uint32_t code) {
     }
     // Числа сошлись, а отказ есть: противоречие, его и показываем как есть.
     return out.empty() ? std::format("отказ с кодом {} при совпавших версиях (ABI {}, LAYOUT {})",
-                                     code, GRAFT_ABI_VERSION, GRAFT_LAYOUT_VERSION)
+                                     code,
+                                     GRAFT_ABI_VERSION,
+                                     GRAFT_LAYOUT_VERSION)
                        : out;
 }
 

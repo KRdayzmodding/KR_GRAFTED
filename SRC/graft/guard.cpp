@@ -4,7 +4,7 @@
 // не обязан — даже закрытый и платный. См. LICENSE-EXCEPTION.
 #include <windows.h>
 
-#include <malloc.h>  // _resetstkoflw
+#include <malloc.h> // _resetstkoflw
 
 #include <utility>
 
@@ -26,7 +26,7 @@ const void*& pending_overflow() {
     return at;
 }
 
-}  // namespace
+} // namespace
 
 long fault_filter(void* impl, unsigned long code, void* info) {
     const void* at = nullptr;

@@ -11,7 +11,7 @@
 
 namespace {
 
-std::uint64_t g_cell = 0;  // статическая и выровненная: точка на 8 байт требует кратности
+std::uint64_t g_cell = 0; // статическая и выровненная: точка на 8 байт требует кратности
 
 // noinline: врезанный в кейс `mov` дал бы кадром сам кейс, и проверка обратного адреса
 // перестала бы что-либо проверять.
@@ -19,16 +19,16 @@ __declspec(noinline) void poke(std::uint64_t v) {
     g_cell = v;
 }
 
-}  // namespace
+} // namespace
 
 TEST(Watch, CatchesWriteAndNamesTheWriter) {
     graft::watch::head.store(0);
-    graft::watch::tail = 0;
+    graft::watch::tail     = 0;
     graft::watch::chains_n = 0;
 
     ASSERT_TRUE(graft::watch::arm({{&g_cell, "cell", 8}}));
     {
-        const graft::watch::own mark;  // своя запись — так она и должна быть помечена
+        const graft::watch::own mark; // своя запись — так она и должна быть помечена
         poke(0x1234);
     }
     graft::watch::disarm();

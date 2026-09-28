@@ -63,8 +63,7 @@ std::string GraftPluginAt(int index) {
         return {};
     }
     const graft::loader::row& r = rows[static_cast<std::size_t>(index)];
-    return std::format("{} {} {} {}", r.name, r.version, r.count,
-                       r.status == GRAFT_OK ? "ok" : r.why);
+    return std::format("{} {} {} {}", r.name, r.version, r.count, r.status == GRAFT_OK ? "ok" : r.why);
 }
 
 // Сколько имён отклонено из-за спора двух плагинов. Ноль — здоровая установка.

@@ -50,6 +50,7 @@ struct fake_image {
     }
 
     void put_call(std::size_t off, std::uintptr_t target) { put_rel32(off, 0xE8, target); }
+
     void put_jmp(std::size_t off, std::uintptr_t target) { put_rel32(off, 0xE9, target); }
 
     void put_rel32(std::size_t off, std::uint8_t opcode, std::uintptr_t target) {
@@ -60,6 +61,7 @@ struct fake_image {
 
     // dword по смещению в секции данных — ею собираются структуры RTTI.
     void put_u32(std::size_t off, std::uint32_t v) { std::memcpy(strings.data() + off, &v, 4); }
+
     void put_ptr(std::size_t off, std::uintptr_t v) {
         std::memcpy(strings.data() + off, &v, sizeof v);
     }
@@ -130,17 +132,17 @@ constexpr std::uintptr_t kIndexVar  = kStrBase + 0x80;
 // Раскладка как в CGame::Update: имя -> поиск индекса -> float-аргумент -> кэш индекса ->
 // сборка вызова. Маркер float кладётся, только если его просят.
 fake_image make_frame_image(bool with_float) {
-    fake_image           img;
-    const std::uintptr_t name = img.put_str(0x00, "OnUpdate");
+    fake_image            img;
+    const std::uintptr_t  name = img.put_str(0x00, "OnUpdate");
     constexpr std::size_t site = 0x100;
-    img.put_insn(site, graft::scan::lea_rdx, name);              // lea rdx,"OnUpdate"
-    img.put_call(site + 7, kFindIndex);                          // найти индекс по имени
+    img.put_insn(site, graft::scan::lea_rdx, name); // lea rdx,"OnUpdate"
+    img.put_call(site + 7, kFindIndex);             // найти индекс по имени
     if (with_float) {
-        img.put_bytes(site + 12, {0xF3, 0x0F, 0x5A, 0xC6});      // cvtss2sd xmm0,xmm6
+        img.put_bytes(site + 12, {0xF3, 0x0F, 0x5A, 0xC6}); // cvtss2sd xmm0,xmm6
     }
-    img.put_insn(site + 16, graft::scan::sig<"89 05 [disp32]">,  // mov [rip+d],eax
+    img.put_insn(site + 16, graft::scan::sig<"89 05 [disp32]">, // mov [rip+d],eax
                  kIndexVar);
-    img.put_call(site + 22, kPrepare);                           // собрать вызов <- цель
+    img.put_call(site + 22, kPrepare); // собрать вызов <- цель
     return img;
 }
 
@@ -182,7 +184,7 @@ TEST(Scan, EmptyImageIsHarmless) {
 // выбранный компилятором игры регистр, байт обязан считаться любым.
 TEST(Scan, MatchesSignatureWithWildcards) {
     static const std::uint8_t body[] = {0x48, 0x89, 0x5C, 0x24, 0x10, 0x57, 0x48, 0x83};
-    const auto ea = reinterpret_cast<std::uintptr_t>(body);
+    const auto                ea     = reinterpret_cast<std::uintptr_t>(body);
 
     EXPECT_TRUE(graft::scan::matches(ea, graft::scan::sig<"48 89 5C 24 ?? 57">));
     EXPECT_TRUE(graft::scan::matches(ea, graft::scan::sig<"48 89">));
@@ -193,10 +195,10 @@ TEST(Scan, MatchesSignatureWithWildcards) {
 
 // Маскированный байт: совпасть обязаны только биты маски.
 TEST(Scan, MasksCompareOnlyTheBitsThatMatter) {
-    static const std::uint8_t rax[] = {0x48, 0x8D, 0x05, 0x11, 0x22, 0x33, 0x44};
-    static const std::uint8_t rdx[] = {0x48, 0x8D, 0x15, 0x11, 0x22, 0x33, 0x44};
+    static const std::uint8_t rax[]   = {0x48, 0x8D, 0x05, 0x11, 0x22, 0x33, 0x44};
+    static const std::uint8_t rdx[]   = {0x48, 0x8D, 0x15, 0x11, 0x22, 0x33, 0x44};
     static const std::uint8_t other[] = {0x48, 0x8D, 0x41, 0x08, 0x00, 0x00, 0x00};
-    constexpr auto any_reg = graft::scan::sig<"48 8D 05&C7">;
+    constexpr auto            any_reg = graft::scan::sig<"48 8D 05&C7">;
 
     EXPECT_TRUE(graft::scan::matches(reinterpret_cast<std::uintptr_t>(rax), any_reg));
     EXPECT_TRUE(graft::scan::matches(reinterpret_cast<std::uintptr_t>(rdx), any_reg));
@@ -238,7 +240,7 @@ TEST(Scan, MatchesRefusesUnreadableAddress) {
 // требует выравнивания по 8, а «страница читается» — нет, и спутать их легко.
 TEST(Scan, MatchesWorksAtUnalignedAddress) {
     static const std::uint8_t body[] = {0x00, 0x48, 0x89, 0x5C, 0x24, 0x10};
-    const auto ea = reinterpret_cast<std::uintptr_t>(body) + 1;
+    const auto                ea     = reinterpret_cast<std::uintptr_t>(body) + 1;
     EXPECT_TRUE(graft::scan::matches(ea, graft::scan::sig<"48 89 5C">));
 }
 
@@ -282,9 +284,11 @@ TEST(Scan, SignatureLiteralIsParsedAtCompileTime) {
 // промах мимо нужной читал четыре байта там, где лежит один.
 TEST(Scan, FindReadsTheHoleAtItsOwnWidth) {
     // mov eax,[rcx+38h] ; mov rax,[rcx+2C8h] ; mov eax,[rcx+40h]
+    // clang-format off
     static const std::uint8_t body[] = {0x8B, 0x41, 0x38,
                                         0x48, 0x8B, 0x81, 0xC8, 0x02, 0x00, 0x00,
                                         0x8B, 0x41, 0x40};
+    // clang-format on
     const auto ea = reinterpret_cast<std::uintptr_t>(body);
 
     const auto first = graft::scan::find(ea, sizeof body, graft::scan::sig<"8B 41 [disp8]">);
@@ -310,8 +314,8 @@ TEST(Scan, FindReadsTheHoleAtItsOwnWidth) {
 // расширял его нулями и молча превращал в +128.
 TEST(Scan, HoleIsSignExtended) {
     static const std::uint8_t body[] = {0x8B, 0x41, 0x80};
-    const auto ea = reinterpret_cast<std::uintptr_t>(body);
-    const auto at = graft::scan::find(ea, sizeof body, graft::scan::sig<"8B 41 [disp8]">);
+    const auto                ea     = reinterpret_cast<std::uintptr_t>(body);
+    const auto                at     = graft::scan::find(ea, sizeof body, graft::scan::sig<"8B 41 [disp8]">);
     ASSERT_TRUE(at.has_value());
     EXPECT_EQ(at->value, -128);
 }
@@ -320,7 +324,7 @@ TEST(Scan, HoleIsSignExtended) {
 // иначе разбор одной функции цепляет соседнюю.
 TEST(Scan, FindStaysInsideTheWindow) {
     static const std::uint8_t body[] = {0x90, 0x90, 0x90, 0x8B, 0x41, 0x38};
-    const auto ea = reinterpret_cast<std::uintptr_t>(body);
+    const auto                ea     = reinterpret_cast<std::uintptr_t>(body);
     EXPECT_TRUE(graft::scan::find(ea, 6, graft::scan::sig<"8B 41 [disp8]">).has_value());
     EXPECT_FALSE(graft::scan::find(ea, 5, graft::scan::sig<"8B 41 [disp8]">).has_value());
 }
@@ -328,8 +332,8 @@ TEST(Scan, FindStaysInsideTheWindow) {
 // Сигнатура без дырки ищется так же, просто отвечать нечем, кроме адреса.
 TEST(Scan, FindWithoutAHoleReturnsOnlyTheSite) {
     static const std::uint8_t body[] = {0x90, 0x48, 0x8B, 0xC4};
-    const auto ea = reinterpret_cast<std::uintptr_t>(body);
-    const auto at = graft::scan::find(ea, sizeof body, graft::scan::sig<"48 8B C4">);
+    const auto                ea     = reinterpret_cast<std::uintptr_t>(body);
+    const auto                at     = graft::scan::find(ea, sizeof body, graft::scan::sig<"48 8B C4">);
     ASSERT_TRUE(at.has_value());
     EXPECT_EQ(at->site, ea + 1);
     EXPECT_EQ(at->value, 0);
@@ -357,13 +361,16 @@ TEST(Scan, CollectsRel32TargetsAndDropsGarbage) {
 // ── Длина C++ таблицы ────────────────────────────────────────────────────────
 namespace vt_probe {
 int one() { return 1; }
+
 int two() { return 2; }
+
 int data_slot = 0;
-}  // namespace vt_probe
+} // namespace vt_probe
 
 TEST(Scan, VtableSlotsCountsCodeUntilFirstNonCode) {
     void* table[] = {reinterpret_cast<void*>(&vt_probe::one),
-                     reinterpret_cast<void*>(&vt_probe::two), &vt_probe::data_slot,
+                     reinterpret_cast<void*>(&vt_probe::two),
+                     &vt_probe::data_slot,
                      reinterpret_cast<void*>(&vt_probe::one)};
     EXPECT_EQ(graft::scan::vtable_slots(table), 2u);
 
@@ -393,11 +400,12 @@ struct rtti_image {
 
     explicit rtti_image(const char* mangled) {
         img.put_str(kName, mangled);
-        img.put_u32(kLocator + 0, 1);                                       // сигнатура x64
-        img.put_u32(kLocator + 12, static_cast<std::uint32_t>(kTypeDesc));  // RVA дескриптора
-        img.put_u32(kLocator + 20, static_cast<std::uint32_t>(kLocator));   // pSelf
+        img.put_u32(kLocator + 0, 1);                                      // сигнатура x64
+        img.put_u32(kLocator + 12, static_cast<std::uint32_t>(kTypeDesc)); // RVA дескриптора
+        img.put_u32(kLocator + 20, static_cast<std::uint32_t>(kLocator));  // pSelf
         img.put_ptr(kColPtr, kStrBase + kLocator);
     }
+
     std::uintptr_t vtable() const { return kStrBase + kColPtr + sizeof(void*); }
 };
 
@@ -429,16 +437,19 @@ namespace graft_rtti_probe {
 class base {
 public:
     virtual ~base() = default;
+
     virtual int id() const { return 1; }
 };
+
 class derived : public base {
 public:
     int id() const override { return 2; }
 };
+
 struct plain_struct {
     virtual ~plain_struct() = default;
 };
-}  // namespace graft_rtti_probe
+} // namespace graft_rtti_probe
 
 namespace {
 
@@ -449,7 +460,7 @@ std::uintptr_t table_of(const void* object) {
 }
 
 TEST(Scan, RttiVtableMatchesTheRealBinary) {
-    void* self = GetModuleHandleW(nullptr);
+    void*                                self = GetModuleHandleW(nullptr);
     const graft_rtti_probe::base         b;
     const graft_rtti_probe::derived      d;
     const graft_rtti_probe::plain_struct s;
@@ -474,6 +485,7 @@ TEST(Scan, RttiVtableMatchesTheRealBinary) {
 std::size_t graft_anchor_sink(const char* text, std::size_t salt) {
     return std::strlen(text) + salt;
 }
+
 std::size_t (*volatile g_anchor_sink)(const char*, std::size_t) = &graft_anchor_sink;
 
 __declspec(noinline) std::size_t graft_anchor_probe(std::size_t salt) {
@@ -492,7 +504,7 @@ TEST(Scan, FunctionStartFromAnyAddressInside) {
     const auto start = reinterpret_cast<std::uintptr_t>(&graft_anchor_probe);
     EXPECT_EQ(graft::scan::function_start(start), start);
     EXPECT_EQ(graft::scan::function_start(start + 4), start);
-    EXPECT_EQ(graft::scan::function_start(0), 0u);  // не код — не функция
+    EXPECT_EQ(graft::scan::function_start(0), 0u); // не код — не функция
 }
 
 TEST(Scan, FunctionReferencingFindsItsStart) {
@@ -509,14 +521,14 @@ TEST(Scan, FunctionReferencingFindsItsStart) {
 // настоящем образе игры (у DayZDiag .rdata ~3.4 МБ, .data ~57 МБ). Замер печатает
 // пропускную способность — по ней видно, во что обойдётся тот образ.
 TEST(Scan, RttiVtableCostIsMeasured) {
-    void* self = GetModuleHandleW(nullptr);
+    void*       self    = GetModuleHandleW(nullptr);
     std::size_t scanned = 0;
     for (const graft::scan::view& v : graft::scan::sections_of(self)) {
         if (!v.exec) {
             scanned += v.bytes.size();
         }
     }
-    const auto t0 = std::chrono::steady_clock::now();
+    const auto           t0 = std::chrono::steady_clock::now();
     const std::uintptr_t found =
         graft::scan::rtti_vtable(self, ".?AVderived@graft_rtti_probe@@");
     const double ms =
@@ -540,7 +552,9 @@ struct fake_entity {
     int   id = 0;
 
     __declspec(noinline) graft::vector origin() const { return {x, y, z}; }
-    __declspec(noinline) int           ident() const { return id; }
+
+    __declspec(noinline) int ident() const { return id; }
+
     __declspec(noinline) graft::vector shifted(float by) const { return {x + by, y, z}; }
 };
 
@@ -552,17 +566,17 @@ void* address_of(graft::vector (fake_entity::*mp)() const) {
 }
 
 TEST(MemberCall, TwelveByteReturnRidesInTheSecondArgument) {
-    fake_entity e{1.0f, 2.0f, 3.0f, 7};
+    fake_entity         e{1.0f, 2.0f, 3.0f, 7};
     const graft::vector got =
         graft::scan::member_call<graft::vector>(address_of(&fake_entity::origin), &e);
     EXPECT_EQ(got, (graft::vector{1.0f, 2.0f, 3.0f}));
-    EXPECT_EQ(e.id, 7);  // объект не тронут: буфер уехал не поверх него
+    EXPECT_EQ(e.id, 7); // объект не тронут: буфер уехал не поверх него
 }
 
 TEST(MemberCall, SmallReturnStaysInTheRegister) {
     fake_entity e{1.0f, 2.0f, 3.0f, 42};
     int (fake_entity::*mp)() const = &fake_entity::ident;
-    void* raw = nullptr;
+    void* raw                      = nullptr;
     std::memcpy(&raw, &mp, sizeof raw);
     EXPECT_EQ(graft::scan::member_call<int>(raw, &e), 42);
 }
@@ -570,7 +584,7 @@ TEST(MemberCall, SmallReturnStaysInTheRegister) {
 TEST(MemberCall, ArgumentsFollowTheHiddenBuffer) {
     fake_entity e{1.0f, 2.0f, 3.0f, 0};
     graft::vector (fake_entity::*mp)(float) const = &fake_entity::shifted;
-    void* raw = nullptr;
+    void* raw                                     = nullptr;
     std::memcpy(&raw, &mp, sizeof raw);
     EXPECT_EQ(graft::scan::member_call<graft::vector>(raw, &e, 10.0f),
               (graft::vector{11.0f, 2.0f, 3.0f}));

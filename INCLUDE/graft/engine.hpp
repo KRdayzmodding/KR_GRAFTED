@@ -135,8 +135,7 @@ bool unhook(void* target);
 template <class F>
     requires std::is_pointer_v<F>
 bool hook(F target, F detour, F* original) {
-    return hook(reinterpret_cast<void*>(target), reinterpret_cast<void*>(detour),
-                reinterpret_cast<void**>(original));
+    return hook(reinterpret_cast<void*>(target), reinterpret_cast<void*>(detour), reinterpret_cast<void**>(original));
 }
 
 template <class F>
@@ -173,8 +172,7 @@ inline bool hook_all(std::initializer_list<hook_request> all) {
 template <class F>
     requires std::is_pointer_v<F>
 hook_request hooked(F target, F detour, F* original) {
-    return {reinterpret_cast<void*>(target), reinterpret_cast<void*>(detour),
-            reinterpret_cast<void**>(original)};
+    return {reinterpret_cast<void*>(target), reinterpret_cast<void*>(detour), reinterpret_cast<void**>(original)};
 }
 
 // ── Точка входа для кода на C++ ──────────────────────────────────────────────

@@ -30,8 +30,8 @@ graft_plugin_entry_fn fixture_entry() {
 // Хост «из другого времени»: плагин вправе прочесть только заголовок, дальше — ни шагу.
 graft_host_api foreign_host(std::uint32_t abi, std::uint32_t layout) {
     graft_host_api host{};
-    host.size = sizeof(graft_host_api);
-    host.abi = abi;
+    host.size   = sizeof(graft_host_api);
+    host.abi    = abi;
     host.layout = layout;
     return host;
 }
@@ -51,7 +51,7 @@ void expect_header_filled(const graft_plugin_info& info) {
 TEST(PluginEntry, RefusingForeignAbiReportsOwnHeader) {
     const auto entry = fixture_entry();
     ASSERT_NE(entry, nullptr) << "нет SIXW_HASHMAP.grafted.dll рядом с graft_tests";
-    const auto host = foreign_host(GRAFT_ABI_VERSION + 1, GRAFT_LAYOUT_VERSION);
+    const auto        host = foreign_host(GRAFT_ABI_VERSION + 1, GRAFT_LAYOUT_VERSION);
     graft_plugin_info info{};
     EXPECT_EQ(entry(&host, &info), GRAFT_ERR_ABI);
     expect_header_filled(info);
@@ -60,7 +60,7 @@ TEST(PluginEntry, RefusingForeignAbiReportsOwnHeader) {
 TEST(PluginEntry, RefusingForeignLayoutReportsOwnHeader) {
     const auto entry = fixture_entry();
     ASSERT_NE(entry, nullptr);
-    const auto host = foreign_host(GRAFT_ABI_VERSION, GRAFT_LAYOUT_VERSION + 1);
+    const auto        host = foreign_host(GRAFT_ABI_VERSION, GRAFT_LAYOUT_VERSION + 1);
     graft_plugin_info info{};
     EXPECT_EQ(entry(&host, &info), GRAFT_ERR_LAYOUT);
     expect_header_filled(info);
@@ -104,4 +104,4 @@ TEST(PluginProtogen, CoreModuleFileIsNotWrapped) {
     EXPECT_EQ(text.find("#if"), std::string::npos) << text;
 }
 
-}  // namespace
+} // namespace

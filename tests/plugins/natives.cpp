@@ -15,9 +15,9 @@
 #include <format>
 #include <iterator>
 #include <ranges>
+#include <span>
 #include <stdexcept>
 #include <string>
-#include <span>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
@@ -95,6 +95,7 @@ struct Node : graft::script_object<"SeraphNode"> {
     // читает то, что записал C++. Разойдись раскладка — либо разъедутся числа, либо
     // первое же чтение из скрипта пойдёт по убитому указателю.
     vector Pos() const { return field<vector, "m_pos">(); }
+
     vector SetPos(vector p) { return set_field<"m_pos">(p) ? Pos() : vector{}; }
 
     // Обход незнакомой структуры: сколько полей и как называется каждое.

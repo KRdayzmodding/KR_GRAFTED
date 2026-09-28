@@ -114,7 +114,7 @@ constexpr auto kWide  = scan::code<"shl rax,4">;
 // совпадение. Отпусти бит R — и любой случайный `lea r9,[rcx+n]` раньше по телу станет
 // ответом, проверка `счётчик == массив + 12` не сойдётся, и дефайны молча выключатся.
 // Расширять сверку можно, только посмотрев в IDA, что там действительно бывает.
-constexpr auto kArray = scan::sig<"48 8D 41&C7 [disp8]">;  // lea r{rax..rdi},[rcx+disp8]
+constexpr auto kArray = scan::sig<"48 8D 41&C7 [disp8]">; // lea r{rax..rdi},[rcx+disp8]
 
 enum class shape : std::uint8_t {
     none,
@@ -132,7 +132,7 @@ shape shape_of(const scan::view& code, std::uintptr_t fn) {
     }
     // Окно НЕ больше короткой из двух целей (0x60), иначе в ответ попали бы байты соседней
     // функции: там `shl rax,4` есть у кого угодно, и путь для модулей стал бы «дефайнами».
-    constexpr std::size_t kBody = 0x60;
+    constexpr std::size_t            kBody = 0x60;
     const std::optional<scan::found> count = code.find(fn, kBody, kCount);
     const std::optional<scan::found> array = code.find(fn, kBody, kArray);
     // Тройка {указатель, ёмкость, счёт} лежит подряд: счётчик на 12 байт дальше массива.

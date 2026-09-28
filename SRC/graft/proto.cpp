@@ -30,7 +30,9 @@ graft_native_desc to_desc(const native& n) {
             n.declare_as,
             static_cast<std::uint8_t>(n.is_static),
             static_cast<std::uint8_t>(n.marshalled),
-            static_cast<std::uint8_t>(n.generate), n.param_names, n.doc};
+            static_cast<std::uint8_t>(n.generate),
+            n.param_names,
+            n.doc};
 }
 
 // Список складывается LIFO — разворачиваем к порядку объявления в исходнике.
@@ -71,7 +73,7 @@ std::vector<std::string> split_params(const char* csv) {
     std::string_view rest{csv};
     while (!rest.empty()) {
         const std::size_t comma = rest.find(',');
-        std::string_view one = rest.substr(0, comma);
+        std::string_view  one   = rest.substr(0, comma);
         while (!one.empty() && one.front() == ' ') {
             one.remove_prefix(1);
         }
@@ -98,7 +100,7 @@ void emit_doc(std::string& out, const char* doc, std::string_view indent) {
     }
     std::string_view rest{doc};
     while (true) {
-        const std::size_t nl = rest.find('\n');
+        const std::size_t      nl   = rest.find('\n');
         const std::string_view line = rest.substr(0, nl);
         out += indent;
         out += line.empty() ? "//" : "// ";
@@ -143,8 +145,7 @@ std::string proto_decl(const native& n) {
     return proto_decl(to_desc(n));
 }
 
-std::string proto_file(const std::vector<const graft_native_desc*>& source, const char* module,
-                       std::string_view plugin) {
+std::string proto_file(const std::vector<const graft_native_desc*>& source, const char* module, std::string_view plugin) {
     std::vector<const graft_native_desc*> all;
     for (const graft_native_desc* n : source) {
         if (n->generate && n->module && std::strcmp(n->module, module) == 0) {

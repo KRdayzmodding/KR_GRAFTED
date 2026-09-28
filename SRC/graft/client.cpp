@@ -228,7 +228,7 @@ const std::vector<graft_native_desc>& flatten() {
             d.marshalled = static_cast<uint8_t>(n.marshalled);
             d.generate = static_cast<uint8_t>(n.generate);
             d.param_names = n.param_names;
-            d.doc = n.doc;
+            d.doc         = n.doc;
             out.push_back(d);
         }
         return out;
@@ -246,10 +246,10 @@ extern "C" __declspec(dllexport) uint32_t __cdecl graft_plugin_entry(const graft
     // Заголовок — ДО сверки: отказывая, плагин обязан назвать себя и свои числа, иначе
     // хосту нечего написать в журнал, кроме «?». Писать его безопасно при любом хосте:
     // раскладка заголовка заморожена (см. abi.h), а нативы отдаются только при согласии.
-    out->size = sizeof(graft_plugin_info);
-    out->abi = GRAFT_ABI_VERSION;
-    out->layout = GRAFT_LAYOUT_VERSION;
-    out->name = graft_plugin_name_;
+    out->size    = sizeof(graft_plugin_info);
+    out->abi     = GRAFT_ABI_VERSION;
+    out->layout  = GRAFT_LAYOUT_VERSION;
+    out->name    = graft_plugin_name_;
     out->version = graft_plugin_version_;
     // host == nullptr — это генератор объявлений в обычном процессе: движка нет,
     // сервисы не понадобятся, заполняем только описание.

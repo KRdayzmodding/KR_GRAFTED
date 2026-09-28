@@ -101,6 +101,7 @@ struct reg_def {
 
 // ah/ch/dh/bh здесь нет намеренно: их коды 4..7 без REX, а С префиксом те же коды значат
 // spl/bpl/sil/dil. Движковый код пользуется вторыми, и путать их нечем, когда первых нет.
+// clang-format off
 constexpr reg_def k_regs[] = {
     {"rax", 0, 64},  {"rcx", 1, 64},  {"rdx", 2, 64},   {"rbx", 3, 64},
     {"rsp", 4, 64},  {"rbp", 5, 64},  {"rsi", 6, 64},   {"rdi", 7, 64},
@@ -115,26 +116,31 @@ constexpr reg_def k_regs[] = {
     {"r8b", 8, 8},   {"r9b", 9, 8},   {"r10b", 10, 8},  {"r11b", 11, 8},
     {"r12b", 12, 8}, {"r13b", 13, 8}, {"r14b", 14, 8},  {"r15b", 15, 8},
 };
+// clang-format on
 
 // Группа 1: у всех восьми общая форма, различает их только поле reg в modrm.
 struct byte_def {
     std::string_view text;
-    std::uint8_t     value;  // цифра в поле reg у групповых команд, опкод у переходов
+    std::uint8_t     value; // цифра в поле reg у групповых команд, опкод у переходов
 };
 
+// clang-format off
 constexpr byte_def k_alu[] = {
     {"add", 0}, {"or", 1}, {"adc", 2}, {"sbb", 3},
     {"and", 4}, {"sub", 5}, {"xor", 6}, {"cmp", 7},
 };
+// clang-format on
 
 constexpr byte_def k_shift[] = {{"rol", 0}, {"ror", 1}, {"shl", 4}, {"shr", 5}, {"sar", 7}};
 
+// clang-format off
 constexpr byte_def k_jcc[] = {
     {"jo", 0x70},  {"jno", 0x71}, {"jb", 0x72},  {"jc", 0x72},  {"jae", 0x73}, {"jnb", 0x73},
     {"je", 0x74},  {"jz", 0x74},  {"jne", 0x75}, {"jnz", 0x75}, {"jbe", 0x76}, {"ja", 0x77},
     {"js", 0x78},  {"jns", 0x79}, {"jl", 0x7C},  {"jge", 0x7D}, {"jle", 0x7E}, {"jg", 0x7F},
     {"jmp", 0xEB},
 };
+// clang-format on
 
 consteval const byte_def* digit_of(const byte_def* table, std::size_t n, std::string_view t) {
     for (std::size_t i = 0; i < n; ++i) {
@@ -218,20 +224,25 @@ struct width_def {
     std::uint8_t     bits;
 };
 
-enum class op_kind : std::uint8_t { none, reg, mem, imm };
+enum class op_kind : std::uint8_t {
+    none,
+    reg,
+    mem,
+    imm
+};
 
 struct operand {
     op_kind      kind      = op_kind::none;
-    std::uint8_t bits      = 0;  // ширина операнда; 0 — не сказана
-    std::uint8_t num       = 0;  // номер регистра, он же база для памяти
+    std::uint8_t bits      = 0; // ширина операнда; 0 — не сказана
+    std::uint8_t num       = 0; // номер регистра, он же база для памяти
     bool         rip       = false;
-    std::uint8_t disp_bits = 0;  // 0 — смещения нет, иначе 8 или 32
+    std::uint8_t disp_bits = 0; // 0 — смещения нет, иначе 8 или 32
     long long    disp      = 0;
     bool         disp_hole = false;
     long long    imm       = 0;
-    std::uint8_t imm_bits  = 0;  // ширина, если её задала дырка; иначе 0
+    std::uint8_t imm_bits  = 0; // ширина, если её задала дырка; иначе 0
     bool         imm_hole  = false;
-    bool         any       = false;  // `reg64`: регистр любой, сверяются остальные биты
+    bool         any       = false; // `reg64`: регистр любой, сверяются остальные биты
 };
 
 consteval operand asm_operand(std::string_view t) {
@@ -386,8 +397,7 @@ struct asm_buf {
 
 // REX нужен при 64-битном операнде, при регистре r8..r15 и при младшем байте rsp/rbp/rsi/rdi
 // (без префикса те же коды значат ah/ch/dh/bh).
-consteval void put_rex(asm_buf& out, bool wide, unsigned reg_field, unsigned rm, bool always,
-                       bool reg_any = false) {
+consteval void put_rex(asm_buf& out, bool wide, unsigned reg_field, unsigned rm, bool always, bool reg_any = false) {
     unsigned bits = (wide ? 8u : 0u) | (reg_field >= 8 ? 4u : 0u) | (rm >= 8 ? 1u : 0u);
     unsigned mask = 0xFF;
     if (reg_any) {
@@ -431,13 +441,14 @@ consteval void put_rm(asm_buf& out, const operand& rm, unsigned reg_field, bool 
     }
     // [rbp] и [r13] без смещения не кодируются — этот код занят формой rip+disp32, поэтому
     // компилятор пишет туда disp8 = 0. Делаем то же.
-    unsigned mod = rm.disp_bits == 8 ? 1 : rm.disp_bits == 32 ? 2 : 0;
+    unsigned mod = rm.disp_bits == 8 ? 1 : rm.disp_bits == 32 ? 2
+                                                              : 0;
     if (mod == 0 && (rm.num & 7) == 5) {
         mod = 1;
     }
     out.put((mod << 6) | ((reg_field & 7) << 3) | (rm.num & 7), m);
     if ((rm.num & 7) == 4) {
-        out.put(0x24);  // rsp и r12 адресуются только через SIB
+        out.put(0x24); // rsp и r12 адресуются только через SIB
     }
     if (mod != 0) {
         const unsigned bits = mod == 1 ? 8 : 32;
@@ -458,15 +469,15 @@ consteval void put_imm(asm_buf& out, const operand& imm, unsigned bits) {
 }
 
 // Общий путь: префикс lock, REX, опкод (один или два байта), modrm с хвостом.
-consteval void put_form(asm_buf& out,
-                        bool     lock,
-                        int      op0,
-                        int      op1,
+consteval void put_form(asm_buf&       out,
+                        bool           lock,
+                        int            op0,
+                        int            op1,
                         const operand& rm,
-                        unsigned reg_field,
-                        unsigned bits,
-                        bool     rex_always,
-                        bool     reg_any = false) {
+                        unsigned       reg_field,
+                        unsigned       bits,
+                        bool           rex_always,
+                        bool           reg_any = false) {
     if (bits == 16) {
         throw "16-битные операнды кодировщик не знает — поставь db с байтами";
     }
@@ -499,7 +510,7 @@ consteval void asm_line(asm_buf& out, std::string_view line) {
         line = asm_trim(line.substr(4));
     }
 
-    std::size_t            cut = 0;
+    std::size_t cut = 0;
     while (cut < line.size() && !asm_space(line[cut])) {
         ++cut;
     }
@@ -537,13 +548,13 @@ consteval void asm_line(asm_buf& out, std::string_view line) {
             throw "больше трёх операндов кодировщик не знает";
         }
         const std::size_t comma = rest.find(',');
-        ops[count++] = asm_operand(comma == std::string_view::npos ? rest : rest.substr(0, comma));
-        rest = comma == std::string_view::npos ? std::string_view{} : asm_trim(rest.substr(comma + 1));
+        ops[count++]            = asm_operand(comma == std::string_view::npos ? rest : rest.substr(0, comma));
+        rest                    = comma == std::string_view::npos ? std::string_view{} : asm_trim(rest.substr(comma + 1));
     }
 
-    const operand& a     = ops[0];
-    const operand& b     = ops[1];
-    const bool     rex8  = needs_rex8(a) || needs_rex8(b);
+    const operand& a    = ops[0];
+    const operand& b    = ops[1];
+    const bool     rex8 = needs_rex8(a) || needs_rex8(b);
 
     if (mnemonic == "push" || mnemonic == "pop") {
         if (count != 1 || a.kind != op_kind::reg || a.bits != 64) {
@@ -583,7 +594,7 @@ consteval void asm_line(asm_buf& out, std::string_view line) {
         }
         if (b.kind == op_kind::imm) {
             // Ширину даёт регистр, а для памяти — только явное `dword`/`qword`.
-            const unsigned bits = a.bits;  // у регистра своя, у памяти — только явная
+            const unsigned bits = a.bits; // у регистра своя, у памяти — только явная
             if (bits == 0) {
                 throw "ширина записи в память не сказана: напиши `mov dword [rcx+38h],5`";
             }
@@ -594,7 +605,7 @@ consteval void asm_line(asm_buf& out, std::string_view line) {
                 return;
             }
             put_form(out, lock, bits == 8 ? 0xC6 : 0xC7, -1, a, 0, bits, rex8);
-            put_imm(out, b, bits == 8 ? 8 : 32);  // у qword-записи непосредственное всё равно 32
+            put_imm(out, b, bits == 8 ? 8 : 32); // у qword-записи непосредственное всё равно 32
             return;
         }
         throw "такой формы mov кодировщик не знает — поставь db с байтами";
@@ -703,7 +714,7 @@ consteval void asm_line(asm_buf& out, std::string_view line) {
 }
 
 consteval asm_buf assemble_text(std::string_view text) {
-    asm_buf out;
+    asm_buf     out;
     std::size_t i = 0;
     while (i <= text.size()) {
         std::size_t end = i;
@@ -735,7 +746,7 @@ consteval auto assemble() {
     return out;
 }
 
-}  // namespace graft::scan::detail
+} // namespace graft::scan::detail
 
 namespace graft::scan {
 
@@ -744,4 +755,4 @@ namespace graft::scan {
 template <name_t S>
 inline constexpr auto code = detail::assemble<S>();
 
-}  // namespace graft::scan
+} // namespace graft::scan

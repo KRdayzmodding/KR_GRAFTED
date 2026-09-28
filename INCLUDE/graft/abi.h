@@ -38,8 +38,8 @@ extern "C" {
 
 // Одна заявка на врезку: куда, чем и куда положить адрес трамплина.
 typedef struct graft_hook_request {
-    void* target;
-    void* detour;
+    void*  target;
+    void*  detour;
     void** original;
 } graft_hook_request;
 

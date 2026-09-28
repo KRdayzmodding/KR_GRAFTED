@@ -8,7 +8,7 @@
 
 // Коды исключений и EXCEPTION_* — кейсы ниже проверяют фильтр напрямую.
 #ifndef NOMINMAX
-#define NOMINMAX
+    #define NOMINMAX
 #endif
 #include <windows.h>
 
@@ -128,7 +128,7 @@ TEST(Stages, RegistrationFromSubscriberIsNotABoundary) {
     // Подписки живут до конца процесса, а номер слоя растёт от кейса к кейсу: метки свои,
     // без номера — кейс не зависит от того, гоняют его отдельно или всем exe сразу.
     static std::vector<std::string> marks;
-    static int ours = 0;
+    static int                      ours = 0;
     graft::stage::on_layer_begin([](const graft::stage::layer& one) {
         marks.push_back(std::format("+{}", one.first_class));
         graft::stage::note_registration(&ours, "CreatureAI");
@@ -146,8 +146,7 @@ TEST(Stages, RegistrationFromSubscriberIsNotABoundary) {
     graft::stage::note_registration(&game, "EntityAI");
     graft::stage::note_frame();
 
-    EXPECT_EQ(marks, (std::vector<std::string>{"+string", "-string..string", "+Object",
-                                               "-Object..EntityAI"}));
+    EXPECT_EQ(marks, (std::vector<std::string>{"+string", "-string..string", "+Object", "-Object..EntityAI"}));
 }
 
 // Проверка линковки модуля — событие: будит подписчиков каждый раз, по модулю на раз.
@@ -635,7 +634,6 @@ __declspec(noinline) int burn_stack(int depth) {
     return pad[0] + burn_stack(depth + 1);
 }
 
-
 TEST(Guard, CatchesStackOverflowAndSurvivesTheSecondOne) {
     const std::size_t before = graft::loader::fault_count();
 
@@ -692,6 +690,7 @@ TEST(Guard, ScopesAroundTheGuardStillUnwindNormally) {
     {
         struct restorer {
             bool& flag;
+
             ~restorer() { flag = true; }
         } held{restored};
 

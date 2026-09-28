@@ -69,10 +69,10 @@ T as_typed(const void* var) {
         if (!var) {
             return T{};
         }
-        const auto* at = static_cast<const char*>(var);
-        const auto tag = *reinterpret_cast<const std::uint32_t*>(at + 16);
-        const auto raw = *reinterpret_cast<const std::uint64_t*>(at);
-        const auto family = tag & script::type_family;
+        const auto* at     = static_cast<const char*>(var);
+        const auto  tag    = *reinterpret_cast<const std::uint32_t*>(at + 16);
+        const auto  raw    = *reinterpret_cast<const std::uint64_t*>(at);
+        const auto  family = tag & script::type_family;
         if constexpr (std::is_same_v<T, bool>) {
             return tag == script::type_bool && raw != 0;
         } else if constexpr (std::is_same_v<T, i32>) {
@@ -91,7 +91,7 @@ T as_typed(const void* var) {
             return family == script::type_string ? str{reinterpret_cast<const char*>(raw)} : str{};
         } else if constexpr (std::is_same_v<T, std::string>) {
             if (family != script::type_string) {
-                return read_var(var).to_string();  // не строка — приводим к тексту
+                return read_var(var).to_string(); // не строка — приводим к тексту
             }
             const auto* text = reinterpret_cast<const char*>(raw);
             return text ? std::string{text} : std::string{};
@@ -189,6 +189,7 @@ template <class T>
 struct marshal_name {
     static constexpr name_t id = enf_type<std::remove_cvref_t<T>>::id;
 };
+
 template <>
 struct marshal_name<value> {
     static constexpr name_t id{"void"};
@@ -269,12 +270,13 @@ std::int64_t marshal_run(C&& object, M method, void** block, void* ret,
                          std::index_sequence<I...>) {
     // Значения живут до конца вызова: out-ссылки смотрят именно на них.
     std::tuple<std::remove_cvref_t<A>...> slots{from_var<A>(block ? block[I] : nullptr)...};
-    const auto write_back = [&] {
+    const auto                            write_back = [&] {
         ([&] {
             if constexpr (is_out_param<A> && is_value_type<A>) {
                 write_var(block ? block[I] : nullptr, std::get<I>(slots), var_kind::out);
             }
-        }(), ...);
+        }(),
+         ...);
     };
     if constexpr (std::is_void_v<R>) {
         (object.*method)(static_cast<A>(std::get<I>(slots))...);
@@ -329,12 +331,13 @@ template <class R, class... A, class Fn, std::size_t... I>
 std::int64_t marshal_run_free(Fn fn, void** block, void* ret, std::index_sequence<I...>) {
     // Значения живут до конца вызова: out-ссылки смотрят именно на них.
     std::tuple<std::remove_cvref_t<A>...> slots{from_var<A>(block ? block[I] : nullptr)...};
-    const auto write_back = [&] {
+    const auto                            write_back = [&] {
         ([&] {
             if constexpr (is_out_param<A> && is_value_type<A>) {
                 write_var(block ? block[I] : nullptr, std::get<I>(slots), var_kind::out);
             }
-        }(), ...);
+        }(),
+         ...);
     };
     if constexpr (std::is_void_v<R>) {
         fn(static_cast<A>(std::get<I>(slots))...);
@@ -358,10 +361,10 @@ struct marshal_free_thunk<F> : marshal_check<R, A...> {
         return guarded<std::int64_t>(reinterpret_cast<void*>(&call),
                                      [&] { return body(args, ret); });
     }
+
     static std::int64_t body(void*** args, void** ret) {
         [[maybe_unused]] arena_scope<R> alive;
-        return marshal_run_free<R, A...>(F, args ? *args : nullptr, ret ? *ret : nullptr,
-                                         std::index_sequence_for<A...>{});
+        return marshal_run_free<R, A...>(F, args ? *args : nullptr, ret ? *ret : nullptr, std::index_sequence_for<A...>{});
     }
 };
 

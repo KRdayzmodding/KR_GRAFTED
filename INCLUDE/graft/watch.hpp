@@ -64,14 +64,14 @@ namespace graft::watch {
 
 // За чем смотреть. bytes — 1, 2, 4 или 8, и адрес должен быть кратен им.
 struct spot {
-    void* at = nullptr;
-    const char* name = "?";
+    void*        at    = nullptr;
+    const char*  name  = "?";
     std::uint8_t bytes = 8;
 };
 
-constexpr int k_spots = 4;   // столько точек у железа, и больше не будет
-constexpr int k_frames = 5;  // столько кадров снимается с места записи
-constexpr int k_ring = 128;
+constexpr int k_spots  = 4; // столько точек у железа, и больше не будет
+constexpr int k_frames = 5; // столько кадров снимается с места записи
+constexpr int k_ring   = 128;
 constexpr int k_chains = 64;
 
 // Свой вызов или чужой. Счётчик, а не флаг: свои вызовы вкладываются друг в друга.
@@ -79,39 +79,43 @@ inline thread_local int ours = 0;
 
 struct own {
     own() { ++ours; }
+
     ~own() { --ours; }
-    own(const own&) = delete;
+
+    own(const own&)            = delete;
     own& operator=(const own&) = delete;
 };
 
 struct hit {
     std::uintptr_t frames[k_frames];
-    std::uint64_t value;  // что лежит по адресу СРАЗУ ПОСЛЕ записи
-    int which;
-    bool ours;
+    std::uint64_t  value; // что лежит по адресу СРАЗУ ПОСЛЕ записи
+    int            which;
+    bool           ours;
 };
 
-inline spot spots[k_spots]{};
-inline DWORD watched = 0;
-inline PVOID veh = nullptr;
-inline hit ring[k_ring]{};
+inline spot                  spots[k_spots]{};
+inline DWORD                 watched = 0;
+inline PVOID                 veh     = nullptr;
+inline hit                   ring[k_ring]{};
 inline std::atomic<unsigned> head{0};
-inline unsigned tail = 0;
+inline unsigned              tail = 0;
 
 inline LONG CALLBACK on_exception(EXCEPTION_POINTERS* e) {
     // Правило 4: выход по коду исключения первой же строкой.
     if (e->ExceptionRecord->ExceptionCode != EXCEPTION_SINGLE_STEP) {
         return EXCEPTION_CONTINUE_SEARCH;
     }
-    CONTEXT* c = e->ContextRecord;
+    CONTEXT*      c   = e->ContextRecord;
     const DWORD64 dr6 = c->Dr6;
-    if (!(dr6 & 0xF)) {  // пошаговый режим чужого отладчика — не наше дело
+    if (!(dr6 & 0xF)) { // пошаговый режим чужого отладчика — не наше дело
         return EXCEPTION_CONTINUE_SEARCH;
     }
     c->Dr6 = 0;
     hit h{};
-    h.which = (dr6 & 0x1) ? 0 : (dr6 & 0x2) ? 1 : (dr6 & 0x4) ? 2 : 3;
-    h.ours = ours != 0;
+    h.which = (dr6 & 0x1) ? 0 : (dr6 & 0x2) ? 1
+                            : (dr6 & 0x4)   ? 2
+                                            : 3;
+    h.ours  = ours != 0;
     if (spots[h.which].at) {
         // Ровно столько, сколько взведено: лишние байты могли бы лежать за страницей.
         std::memcpy(&h.value, spots[h.which].at, spots[h.which].bytes);
@@ -120,16 +124,15 @@ inline LONG CALLBACK on_exception(EXCEPTION_POINTERS* e) {
     // кадр. Обрыв на первой функции без записи раскрутки (лист без пролога, чужой трамплин).
     CONTEXT walk = *c;
     for (int f = 0; f < k_frames; ++f) {
-        h.frames[f] = walk.Rip;
-        DWORD64 image = 0;
-        PRUNTIME_FUNCTION fe = RtlLookupFunctionEntry(walk.Rip, &image, nullptr);
+        h.frames[f]             = walk.Rip;
+        DWORD64           image = 0;
+        PRUNTIME_FUNCTION fe    = RtlLookupFunctionEntry(walk.Rip, &image, nullptr);
         if (!fe) {
             break;
         }
-        void* handler_data = nullptr;
-        DWORD64 frame = 0;
-        RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, walk.Rip, fe, &walk, &handler_data, &frame,
-                         nullptr);
+        void*   handler_data = nullptr;
+        DWORD64 frame        = 0;
+        RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, walk.Rip, fe, &walk, &handler_data, &frame, nullptr);
     }
     ring[head.fetch_add(1) % k_ring] = h;
     return EXCEPTION_CONTINUE_EXECUTION;
@@ -140,16 +143,19 @@ namespace detail {
 // LEN в DR7: 00 = 1 байт, 01 = 2, 11 = 4, 10 = 8. Порядок не по возрастанию — это таблица
 // из SDM, а не битовое поле.
 inline std::uint64_t len_bits(std::uint8_t bytes) {
-    return bytes == 1 ? 0b00 : bytes == 2 ? 0b01 : bytes == 4 ? 0b11 : 0b10;
+    return bytes == 1 ? 0b00 : bytes == 2 ? 0b01
+                           : bytes == 4   ? 0b11
+                                          : 0b10;
 }
 
 // Правило 1: регистры ставит поток-помощник. Выглядит как тупик — взводящий поток сам себя
 // и усыпляет, — но тупика нет: он ждёт в `join()`, помощник его будит и выходит.
 inline bool set_registers(DWORD target, void* const a[k_spots], std::uint64_t dr7) {
-    bool ok = false;
+    bool        ok = false;
     std::thread worker{[&] {
         HANDLE t = OpenThread(THREAD_GET_CONTEXT | THREAD_SET_CONTEXT | THREAD_SUSPEND_RESUME,
-                              FALSE, target);
+                              FALSE,
+                              target);
         if (!t) {
             return;
         }
@@ -163,7 +169,7 @@ inline bool set_registers(DWORD target, void* const a[k_spots], std::uint64_t dr
             c.Dr3 = reinterpret_cast<DWORD64>(a[3]);
             c.Dr6 = 0;
             c.Dr7 = dr7;
-            ok = SetThreadContext(t, &c) != 0;
+            ok    = SetThreadContext(t, &c) != 0;
         }
         ResumeThread(t);
         CloseHandle(t);
@@ -172,7 +178,7 @@ inline bool set_registers(DWORD target, void* const a[k_spots], std::uint64_t dr
     return ok;
 }
 
-}  // namespace detail
+} // namespace detail
 
 // Взвести. Звать С ТОГО ПОТОКА, за которым смотрим: регистры у каждого потока свои.
 // Отказ — не повод продолжать: не взведено ничего, и в журнале написано почему.
@@ -193,20 +199,20 @@ inline bool arm(std::initializer_list<spot> all) {
             print(std::format("[watch] {}: длина {} — бывает 1, 2, 4 или 8", s.name, s.bytes));
             return false;
         }
-        if (at % s.bytes) {  // правило 2: невыровненная точка молча не срабатывает
+        if (at % s.bytes) { // правило 2: невыровненная точка молча не срабатывает
             print(std::format("[watch] {}: адрес {:#x} не кратен {}", s.name, at, s.bytes));
             return false;
         }
     }
 
-    void* addrs[k_spots]{};
+    void*         addrs[k_spots]{};
     std::uint64_t dr7 = 0;
-    int i = 0;
+    int           i   = 0;
     for (const spot& s : all) {
         spots[i] = s;
         addrs[i] = s.at;
-        dr7 |= 1ull << (i * 2);         // локальная точка i
-        dr7 |= 0x1ull << (16 + i * 4);  // RW = только запись
+        dr7 |= 1ull << (i * 2);        // локальная точка i
+        dr7 |= 0x1ull << (16 + i * 4); // RW = только запись
         dr7 |= detail::len_bits(s.bytes) << (18 + i * 4);
         ++i;
     }
@@ -252,8 +258,8 @@ inline std::string where(std::uintptr_t rip) {
     if (!rip) {
         return "-";
     }
-    const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
-    PVOID image = nullptr;
+    const auto base  = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+    PVOID      image = nullptr;
     RtlPcToFileHeader(reinterpret_cast<PVOID>(rip), &image);
     if (reinterpret_cast<std::uintptr_t>(image) != base) {
         return std::format("{:#x}(не игра)", rip);
@@ -264,22 +270,22 @@ inline std::string where(std::uintptr_t rip) {
 
 // Правило 5: по строке на ЦЕПОЧКУ, остальное — счётчиком к ней.
 struct chain {
-    std::uintptr_t at = 0;
-    std::uintptr_t from = 0;
-    int which = 0;
-    bool ours = false;
-    int count = 0;
+    std::uintptr_t at    = 0;
+    std::uintptr_t from  = 0;
+    int            which = 0;
+    bool           ours  = false;
+    int            count = 0;
 };
 
 inline chain chains[k_chains]{};
-inline int chains_n = 0;
+inline int   chains_n = 0;
 
 // Разобрать накопленное. Печатает только НОВЫЕ цепочки; звать можно хоть каждый кадр.
 inline void drain(std::string_view context = {}) {
     const unsigned now = head.load();
     for (; tail != now; ++tail) {
-        const hit& h = ring[tail % k_ring];
-        chain* found = nullptr;
+        const hit& h     = ring[tail % k_ring];
+        chain*     found = nullptr;
         for (int i = 0; i < chains_n; ++i) {
             if (chains[i].at == h.frames[0] && chains[i].from == h.frames[1] &&
                 chains[i].which == h.which) {
@@ -300,8 +306,11 @@ inline void drain(std::string_view context = {}) {
             frames += (frames.empty() ? "" : " <- ") + where(f);
         }
         print(std::format("[watch] {} {} -> {:#x} | {} | {}",
-                          h.ours ? "СВОЯ запись" : "ЧУЖАЯ ЗАПИСЬ", spots[h.which].name, h.value,
-                          frames, context));
+                          h.ours ? "СВОЯ запись" : "ЧУЖАЯ ЗАПИСЬ",
+                          spots[h.which].name,
+                          h.value,
+                          frames,
+                          context));
     }
 }
 
@@ -309,10 +318,9 @@ inline void drain(std::string_view context = {}) {
 // считается заново.
 inline void report() {
     for (int i = 0; i < chains_n; ++i) {
-        print(std::format("[watch] итог: {} {} — {} раз | {}", chains[i].ours ? "своя" : "ЧУЖАЯ",
-                          spots[chains[i].which].name, chains[i].count, where(chains[i].at)));
+        print(std::format("[watch] итог: {} {} — {} раз | {}", chains[i].ours ? "своя" : "ЧУЖАЯ", spots[chains[i].which].name, chains[i].count, where(chains[i].at)));
     }
     chains_n = 0;
 }
 
-}  // namespace graft::watch
+} // namespace graft::watch

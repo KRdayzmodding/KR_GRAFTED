@@ -109,5 +109,4 @@ inline constexpr bool is_element<T> = true;
 template <class T>
 concept plain_element = std::same_as<T, i32> || std::same_as<T, f32> || std::same_as<T, vector>;
 
-
 }  // namespace graft
