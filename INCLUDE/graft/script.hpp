@@ -72,6 +72,10 @@ inline constexpr std::size_t var_extent = 32;  // два uint16: размерн�
 //   type = (*(void**)(var+24))[104][tag & 0xFFFFFFF]      (sub_140367280)
 // Ради него шаблон и копируется целиком: с нулём здесь падает разрешение типа.
 inline constexpr std::size_t var_context = 24;
+// Там же, в контексте: дескрипторы типов по номеру из тега. У дескриптора типа класса
+// флаг 0x10 по type_flags значит «переменные держат объект обёрткой» (holds_wrapper).
+inline constexpr std::size_t context_types = 104;
+inline constexpr std::size_t type_flags    = 80;
 
 // Флаги дескриптора функции. Выведены из компилятора (re/README.md) и сверены с
 // ванильными дескрипторами на живом сервере: у member-натива бита static нет
@@ -313,6 +317,50 @@ inline void* deref_object(void* maybe_wrapper) {
     void* back =
         *reinterpret_cast<void**>(static_cast<char*>(inner) + layout::object_back_ref);
     return back == maybe_wrapper ? inner : maybe_wrapper;
+}
+
+// Обратное к deref_object: обёртка, через которую на объект смотрит скрипт. nullptr, если
+// её нет — объект ни разу не лежал в переменной, которая держит обёртку.
+inline void* wrapper_of(void* object) {
+    if (!detail::plausible(object) ||
+        !detail::readable(object, layout::object_back_ref + sizeof(void*))) {
+        return nullptr;
+    }
+    void* wrapper =
+        *reinterpret_cast<void**>(static_cast<char*>(object) + layout::object_back_ref);
+    return wrapper && deref_object(wrapper) == object ? wrapper : nullptr;
+}
+
+// Как переменная держит объект — решает её ТИП, а не значение (sub_1403673C0): у класса с
+// флагом 0x10 в дескрипторе типа (+80) — обёрткой {vtable, счётчик, объект}, и импл
+// достаёт объект по +16 (sub_140367200). У переменной с флагами 0x8800 — прямым
+// указателем: так объявлены параметры Class и Managed (флаги 0xc00), поэтому
+// EnScript.GetClassVar и ScriptModule.CallFunction и работали с голым объектом. Снято в
+// игре кейсом Diag_MethodFlags. Ещё движок не разворачивает неявные this и super, но
+// параметрами они не бывают.
+//
+// Положить голый объект туда, где ждут обёртку, — отдать импл-у мусор вместо `this`: так
+// `proto external` IEntity.GetLocalPosition возвращал мусор, а GetBounds падал в движке.
+inline bool holds_wrapper(const void* var) {
+    const auto* at    = static_cast<const char*>(var);
+    const auto  tag   = *reinterpret_cast<const std::uint32_t*>(at + layout::var_type);
+    const auto  flags = *reinterpret_cast<const std::uint32_t*>(at + layout::var_flags);
+    if ((tag & type_family) != type_class || (flags & 0x8800) != 0) {
+        return false;
+    }
+    // Дескриптор типа: (*(var+24))[104][tag & 0xFFFFFFF] — sub_140367280.
+    const void* ctx = *reinterpret_cast<void* const*>(at + layout::var_context);
+    if (!detail::plausible(ctx)) {
+        return false;
+    }
+    const auto* types = *reinterpret_cast<void* const* const*>(static_cast<const char*>(ctx) +
+                                                               layout::context_types);
+    if (!detail::plausible(types)) {
+        return false;
+    }
+    const auto* type = static_cast<const char*>(types[tag & 0x0FFFFFFF]);
+    return detail::plausible(type) &&
+           (static_cast<unsigned char>(type[layout::type_flags]) & 0x10) != 0;
 }
 
 inline std::int32_t variable_count(void* instance) {

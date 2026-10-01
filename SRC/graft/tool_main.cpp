@@ -192,8 +192,7 @@ int cmd_apigen(int argc, char** argv) {
     std::println("\nклассов {} из них с методами {}", c.classes, c.emitted_classes);
     std::println("объявлений {}: прямых {}, маршалируемых {}", c.functions, c.emitted_native,
                  c.emitted_marshalled);
-    std::println("пропущено: статических {}, с невыразимым типом {}", c.skipped_static,
-                 c.skipped_type);
+    std::println("из них статических {}; пропущено с невыразимым типом {}", c.emitted_static, c.skipped_type);
 
     // Условия препроцессора не разрешены, а перенесены в C++ как есть: какие из них
     // определены в КОНКРЕТНОЙ сборке игры, знает только её владелец. Печатаем список,

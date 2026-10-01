@@ -449,6 +449,61 @@ bool SeraphGraftEntityHas(graft::ref<"Object"> o, str method) {
     return o.has(method);
 }
 
+// ── Маршалируемые `proto` с vector и `external` ─────────────────────────────
+// Оба пути возвращали мусор, пока их не поймал репорт: vector-возврат `proto` приходил
+// нулями (у переменной возврата срезался флаг хранилища), а `proto external` отвергался
+// как wrong_arity (объект едет первым в блоке, а не в rcx). Кейс Proto_VectorAndExternal
+// сверяет каждый со скриптом.
+vector SeraphGraftModelToWorld(graft::ref<"Object"> o, vector at) {
+    return o.proto<vector, "ModelToWorld">(at);
+}
+
+vector SeraphGraftWorldToModel(graft::ref<"Object"> o, vector at) {
+    return o.proto<vector, "WorldToModel">(at);
+}
+
+vector SeraphGraftLocalPosition(graft::ref<"IEntity"> e) {
+    return e.proto<vector, "GetLocalPosition">();
+}
+
+// `proto external void GetBounds(out vector mins, out vector maxs)` — external и out разом.
+// Сдвиг на 1000: у яблока на сервере bounds нулевые, а сбой под защитой трамплина тоже
+// возвращает ноль — без сдвига кейс не отличил бы падение от ответа.
+vector SeraphGraftBound(graft::ref<"IEntity"> e, i32 which) {
+    vector mins{-7, -7, -7};
+    vector maxs{-7, -7, -7};
+    e.proto<void, "GetBounds">(std::ref(mins), std::ref(maxs));
+    return (which == 0 ? mins : maxs) + vector{1000, 1000, 1000};
+}
+
+// Как переменная i-го параметра держит объект: 1 — обёрткой (holds_wrapper), 2 — у типа
+// стоит флаг 0x10. Для журнала Diag_MethodFlags: по нему снято, что Class и Managed
+// параметры объявлены с 0x800 и держат объект прямым указателем.
+i32 SeraphGraftParamWrapperBits(str class_name, str method, i32 index) {
+    const graft::script::method fn  = graft::script::find_method(class_name.c_str(), method.c_str());
+    const auto*                 var = static_cast<const char*>(graft::script::param_template(fn, static_cast<std::size_t>(index)));
+    if (!var) {
+        return -1;
+    }
+    i32         bits = graft::script::holds_wrapper(var) ? 1 : 0;
+    const void* ctx  = *reinterpret_cast<void* const*>(var + graft::layout::var_context);
+    const auto  tag  = *reinterpret_cast<const std::uint32_t*>(var + graft::layout::var_type);
+    if (ctx) {
+        const auto* types = *reinterpret_cast<void* const* const*>(static_cast<const char*>(ctx) + graft::layout::context_types);
+        const auto* type  = static_cast<const char*>(types[tag & 0x0FFFFFFF]);
+        if ((static_cast<unsigned char>(type[graft::layout::type_flags]) & 0x10) != 0) {
+            bits |= 2;
+        }
+        graft::log(std::format("wrapper {}.{}[{}] type={} bits={} flags={:#x}", class_name.view(), method.view(), index, *reinterpret_cast<const char* const*>(type + graft::layout::class_name), bits, *reinterpret_cast<const std::uint32_t*>(var + graft::layout::var_flags)));
+    }
+    return bits;
+}
+
+// Статический `proto native` с vector-возвратом: свободная функция, буфер первым.
+vector SeraphGraftYawToVector(f32 yaw) {
+    return graft::ref<"vector">::call_static<vector, "YawToVector">(yaw);
+}
+
 // Вложенность: контейнер -> игровой объект -> движковый метод -> vector. Считаем сумму
 // высот всех объектов массива, ничего не зная о них заранее.
 i32 SeraphGraftSumHeights(graft::array<graft::ref<"Object">> objects) {
@@ -1057,6 +1112,118 @@ bool SeraphGraftObjectReturnMatches(graft::obj from_script) {
 #endif
 }
 
+// ── Зеркало: out, статические массивы, статические методы ───────────────────
+// Всё через сгенерированное зеркало — ровно тем путём, каким зовёт мод. Без зеркала
+// нативы отвечают заглушкой, и кейсы честно краснеют.
+constexpr vector kNoMirror{-100, -100, -100};
+
+// `proto native bool GetCollisionBox(out vector minMax[2])` — статический массив натива.
+vector SeraphGraftCollisionCorner(graft::ref<"Object"> o, i32 which) {
+#ifdef SERAPH_HAVE_DAYZ_API
+    std::array<vector, 2> box{};
+    if (!graft::cast<graft::dayz::Object>(o).GetCollisionBox(box)) {
+        return vector{-1, -1, -1};
+    }
+    return box[which == 0 ? 0 : 1];
+#else
+    return kNoMirror;
+#endif
+}
+
+// `proto native void PlaceOnSurfaceRotated(out vector trans[4], vector pos, ...)` — ровно
+// форма из репорта: out vector[4] у натива, дальше обычные аргументы и умолчания.
+vector SeraphGraftSurfaceRow(graft::ref<"EntityAI"> e, vector at, f32 angle, i32 row) {
+#ifdef SERAPH_HAVE_DAYZ_API
+    // Функция читает trans и как вход: подаём то же, что и скрипт, — единичный поворот
+    // и саму точку.
+    std::array<vector, 4> trans{vector{1, 0, 0}, vector{0, 1, 0}, vector{0, 0, 1}, at};
+    graft::cast<graft::dayz::EntityAI>(e).PlaceOnSurfaceRotated(trans, at, 0, 0, angle);
+    return trans[static_cast<std::size_t>(row & 3)];
+#else
+    return kNoMirror;
+#endif
+}
+
+// `proto native bool SampleNavmeshPosition(..., out vector sampledPosition)` — out vector
+// натива. Значением он уезжал во временную копию, и ответ терялся.
+vector SeraphGraftNavmeshSample(graft::ref<"AIWorld"> ai, vector at, f32 radius, graft::ref<"PGFilter"> filter) {
+#ifdef SERAPH_HAVE_DAYZ_API
+    vector found{-1, -1, -1};
+    if (!graft::cast<graft::dayz::AIWorld>(ai).SampleNavmeshPosition(
+            at, radius, graft::cast<graft::dayz::PGFilter>(filter), found)) {
+        return vector{-2, -2, -2};
+    }
+    return found;
+#else
+    return kNoMirror;
+#endif
+}
+
+// `proto void GetDate(out int year, ...)` — out маршалируемого `proto`.
+text SeraphGraftWorldDate() {
+#ifdef SERAPH_HAVE_DAYZ_API
+    const auto game = graft::cast<graft::dayz::CGame>(graft::game());
+    if (!game) {
+        return text::from("нет g_Game");
+    }
+    i32 year   = 0;
+    i32 month  = 0;
+    i32 day    = 0;
+    i32 hour   = 0;
+    i32 minute = 0;
+    game.GetWorld().GetDate(year, month, day, hour, minute);
+    return text::of("{}-{}-{} {}:{}", year, month, day, hour, minute);
+#else
+    return text::from("зеркало не сгенерено");
+#endif
+}
+
+// Статические `proto` класса: Math.Sqrt, Math.AbsInt.
+f32 SeraphGraftMathSqrt(f32 v) {
+#ifdef SERAPH_HAVE_DAYZ_API
+    return graft::dayz::Math::Sqrt(v);
+#else
+    return -1;
+#endif
+}
+
+i32 SeraphGraftMathAbsInt(i32 v) {
+#ifdef SERAPH_HAVE_DAYZ_API
+    return graft::dayz::Math::AbsInt(v);
+#else
+    return -1;
+#endif
+}
+
+// `proto static bool RayCastBullet(...)` — статический, enum в параметре, четыре out
+// (объект, два vector, float). what: 0 — точка, 1 — нормаль, 2 — {доля, попал, 0}.
+vector SeraphGraftRayCast(vector from, vector to, i32 mask, i32 what) {
+#ifdef SERAPH_HAVE_DAYZ_API
+    graft::dayz::Object hit{};
+    vector              at{};
+    vector              normal{};
+    f32                 fraction = -1;
+    const bool          ok       = graft::dayz::DayZPhysics::RayCastBullet(from, to, mask, graft::dayz::Object{}, hit, at, normal, fraction);
+    return what == 0 ? at : what == 1 ? normal
+                                      : vector{fraction, ok ? 1.0f : 0.0f, 0};
+#else
+    return kNoMirror;
+#endif
+}
+
+graft::ref<"Object"> SeraphGraftRayObject(vector from, vector to, i32 mask) {
+#ifdef SERAPH_HAVE_DAYZ_API
+    graft::dayz::Object hit{};
+    vector              at{};
+    vector              normal{};
+    f32                 fraction = 0;
+    graft::dayz::DayZPhysics::RayCastBullet(from, to, mask, graft::dayz::Object{}, hit, at, normal, fraction);
+    return graft::ref<"Object">{hit.ptr};
+#else
+    return {};
+#endif
+}
+
 text SeraphGraftPlayerIds() {
 #ifdef SERAPH_HAVE_DAYZ_API
     const auto game = graft::cast<graft::dayz::CGame>(graft::game());
@@ -1212,6 +1379,20 @@ GRAFT_BINDINGS("3_Game") {
         .global<&SeraphGraftEntityVector>("SeraphGraftEntityVector")
         .global<&SeraphGraftEntityVectorOf>("SeraphGraftEntityVectorOf")
         .global<&SeraphGraftEntityHas>("SeraphGraftEntityHas")
+        .global<&SeraphGraftModelToWorld>("SeraphGraftModelToWorld")
+        .global<&SeraphGraftWorldToModel>("SeraphGraftWorldToModel")
+        .global<&SeraphGraftLocalPosition>("SeraphGraftLocalPosition")
+        .global<&SeraphGraftBound>("SeraphGraftBound")
+        .global<&SeraphGraftParamWrapperBits>("SeraphGraftParamWrapperBits")
+        .global<&SeraphGraftYawToVector>("SeraphGraftYawToVector")
+        .global<&SeraphGraftCollisionCorner>("SeraphGraftCollisionCorner")
+        .global<&SeraphGraftSurfaceRow>("SeraphGraftSurfaceRow")
+        .global<&SeraphGraftNavmeshSample>("SeraphGraftNavmeshSample")
+        .global<&SeraphGraftWorldDate>("SeraphGraftWorldDate")
+        .global<&SeraphGraftMathSqrt>("SeraphGraftMathSqrt")
+        .global<&SeraphGraftMathAbsInt>("SeraphGraftMathAbsInt")
+        .global<&SeraphGraftRayCast>("SeraphGraftRayCast")
+        .global<&SeraphGraftRayObject>("SeraphGraftRayObject")
         .global<&SeraphGraftSumHeights>("SeraphGraftSumHeights")
         .global<&SeraphGraftRaiseAll>("SeraphGraftRaiseAll")
         // Игровые классы (CGame, Man) появляются только здесь.
