@@ -49,6 +49,8 @@ struct param {
     std::string name;
     std::string default_value;  // как записано в скрипте; пусто, если его нет
     bool is_out = false;
+    // Статический массив: `out vector transform[4]` -> 4, `vector mat[]` -> -1, не массив -> 0.
+    int array_len = 0;
 };
 
 struct function {
@@ -93,17 +95,20 @@ struct unit {
     // Все символы препроцессора, встреченные в скриптах. Генератор печатает их списком:
     // какие из них определены в КОНКРЕТНОЙ сборке игры, знает только её владелец.
     std::vector<std::string> conditions;
+    // Имена enum: в сигнатуре такой тип — это int, и метод из-за него терять незачем.
+    std::vector<std::string> enums;
 };
 
 // Разбор одного файла. Всё, что не объявление `proto`, пропускается — тела, комментарии,
-// препроцессор, enum-ы, typedef-ы.
+// препроцессор, typedef-ы; от enum-ов остаётся только имя.
 unit parse(std::string_view source, std::string_view module = {});
 
 // Слить: `modded class` и повторное `class X` дополняют один и тот же класс.
 void merge(unit& into, unit&& more);
 
 // Разобрать целое дерево скриптов (каталог с 1_Core/2_GameLib/...). Модуль берётся из
-// первого сегмента пути.
+// первого сегмента пути без учёта регистра (`3_game` — это 3_Game); каталоги-ссылки
+// (junction, symlink) обходятся тоже.
 unit parse_tree(const std::string& root);
 
 // Зеркало на C++ для одного модуля. include_prev — заголовок предыдущего модуля, если
@@ -114,7 +119,7 @@ std::string mirror(const unit& all, std::string_view module, std::string_view in
 std::vector<std::string> mirror_modules(const unit& all);
 
 // Сколько объявлений разобрано и сколько выпущено — для отчёта генератора. Разница это
-// не потеря, а осознанный отказ (неизвестный тип, статический метод, зарезервированное
+// не потеря, а осознанный отказ (неизвестный тип, массив без размера, зарезервированное
 // имя), и видеть её надо цифрой.
 struct coverage {
     std::size_t classes = 0;
@@ -122,7 +127,7 @@ struct coverage {
     std::size_t functions = 0;
     std::size_t emitted_native = 0;
     std::size_t emitted_marshalled = 0;
-    std::size_t skipped_static = 0;
+    std::size_t emitted_static     = 0; // из выпущенных выше — статических
     std::size_t skipped_type = 0;
 };
 coverage measure(const unit& all);

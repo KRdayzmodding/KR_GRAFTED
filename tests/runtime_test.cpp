@@ -364,8 +364,8 @@ TEST(LoaderState, RootIsRememberedButNeverCleared) {
 // ── Оставшиеся пути отказа вызова наружу ────────────────────────────────────
 
 TEST(CallOutRefusals, MissingTemplateIsRefusedNotInvented) {
-    // Дескриптора нет вовсе — брать шаблон переменной неоткуда, и собирать его самим
-    // нельзя: движок разрешает тип по полю, которого мы не знаем.
+    // Дескриптора нет, а движка нет и подавно — нет и контекста встроенных типов. Собирать
+    // переменную не из чего: с нулём в +24 движок упал бы на разрешении её типа.
     graft::script::method fn;
     fn.impl = reinterpret_cast<void*>(&count_tick);  // адрес настоящего кода
     fn.executable = true;
@@ -538,6 +538,18 @@ TEST(World, PositionWithoutEngineIsZeroNotCrash) {
     const auto tried = graft::try_position(graft::ref<"Object">{});
     ASSERT_FALSE(tried.has_value());
     EXPECT_EQ(tried.error(), graft::miss::null_object);
+}
+
+// try_call<void> — обычный случай «позвать и узнать, получилось ли». Он обязан собираться в
+// обеих формах: std::expected<void, E> не строится из void{}.
+TEST(World, TryCallVoidCompilesInBothForms) {
+    const graft::ref<"Object">             none{};
+    const std::expected<void, graft::miss> by_name = none.try_call<void>("SetOrigin", graft::vector{});
+    const std::expected<void, graft::miss> by_type = none.try_call<void, "SetOrigin">(graft::vector{});
+    ASSERT_FALSE(by_name.has_value());
+    ASSERT_FALSE(by_type.has_value());
+    EXPECT_EQ(by_name.error(), graft::miss::null_object);
+    EXPECT_EQ(by_type.error(), graft::miss::null_object);
 }
 
 TEST(World, BorrowedResetForgetsEverything) {

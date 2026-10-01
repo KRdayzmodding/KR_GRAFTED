@@ -103,7 +103,7 @@ void open_layer(void* context, const char* class_name) {
 // Условие этапа linked — «движок зовётся», и это три разные вещи, каждая нужна:
 //
 //   класс отвечает          find_method("string","Length")  — обход дескрипторов верен
-//   есть шаблон переменной  donor_template(строка)          — иначе не собрать кадр
+//   есть контекст типов     builtin_context()               — иначе не собрать кадр
 //                                                             вызова маршалируемого `proto`
 //   глобали зарегистрированы find_global("Print")           — у них нет класса, и узнать
 //                                                             их можно только с регистрации
@@ -118,7 +118,7 @@ bool engine_answers() {
     // сгорел бы вхолостую, и этап не наступил бы никогда — проверено: шапка уезжала в
     // конец запуска. Здесь дорогой поиск оправдан: он идёт только ДО этапа.
     return static_cast<bool>(script::find_method("string", "Length")) &&
-           ::graft::detail::donor_template(script::tag_string) != nullptr &&
+           ::graft::detail::builtin_context() != nullptr &&
            script::find_global("Print") != nullptr;
 }
 

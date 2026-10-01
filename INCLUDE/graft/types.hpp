@@ -251,7 +251,7 @@ enum class miss {
     too_many_args,
     unsafe_arg,
     wrong_type,    // тип аргумента разошёлся с дескриптором движка
-    no_template,   // не нашлось шаблона переменной этого типа — собирать её самим нельзя
+    no_template,   // переменную не из чего собрать: движок ещё не разобрал ядро
 };
 
 namespace detail {
@@ -304,6 +304,8 @@ std::expected<R, miss> proto_invoke(void* self, const A&... args);
 // блоке аргументов, а не в rcx. См. комментарий у определения.
 template <class R, name_t Klass, name_t Method, class... A>
 std::expected<R, miss> proto_invoke_on_value(const graft::value& receiver, const A&... args);
+template <class R, name_t Klass, name_t Method, class... A>
+std::expected<R, miss> proto_invoke_static(const A&... args);
 }  // namespace detail
 
 namespace detail {
@@ -434,6 +436,20 @@ R call_native(const script::method& fn, void* self, A... args) {
     }
 }
 
+// Статический `proto native` — свободная функция без объекта, ровно как external без
+// приёмника: возврат больше 8 байт компилятор сам кладёт в скрытый буфер первым.
+template <class R, class... A>
+R call_static_native(const script::method& fn, A... args) {
+    if constexpr (object_return<R>) {
+        void* raw = reinterpret_cast<void*(__fastcall*)(A...)>(fn.impl)(args...);
+        R     out{};
+        out.ptr = script::deref_object(raw);
+        return out;
+    } else {
+        return reinterpret_cast<R(__fastcall*)(A...)>(fn.impl)(args...);
+    }
+}
+
 }  // namespace detail
 
 // Внутри — тот самый указатель, который движок кладёт в регистр.
@@ -454,6 +470,15 @@ struct ref {
     // не зависящего от шаблонного параметра — а это почти весь API игровых объектов
     // (IEntity.GetOrigin/GetID/GetName, Object.*, ...). Поиск идёт с обходом базовых
     // классов, поэтому на Object находятся и методы IEntity.
+    //
+    // Ищется от СТАТИЧЕСКОГО класса — от N, а не от того, чем объект оказался на деле, и
+    // только ВВЕРХ по базам. Поэтому graft::obj (ref<"Class">) видит лишь методы Class:
+    // `obj.call<i32>("GetBoneIndexByName", ...)` — промах и ноль, хотя у Human метод есть.
+    // Сначала приведи: graft::cast<graft::ref<"Human">>(o) — cast тип не проверяет, он
+    // только говорит, откуда искать. Промах — это ноль и строка в журнал, а ноль у
+    // индекса кости неотличим от ответа: где это важно, зови try_call или спроси has().
+    // Класс объекта на деле — type_name(); есть ли метод у него — method_of(o.type_name(),
+    // "Имя").callable().
     //   graft::vector pos = o.call<graft::vector>("GetOrigin");
     //   o.call<void>("SetOrigin", graft::vector{1, 2, 3});
     template <class R, class... A>
@@ -487,7 +512,7 @@ struct ref {
         }
         if constexpr (std::is_void_v<R>) {
             detail::call_native<void>(fn, ptr, args...);
-            return R{};
+            return {};
         } else {
             return detail::call_native<R>(fn, ptr, args...);
         }
@@ -531,7 +556,7 @@ struct ref {
         }
         if constexpr (std::is_void_v<R>) {
             detail::call_native<void>(fn, ptr, args...);
-            return R{};
+            return {};
         } else {
             return detail::call_native<R>(fn, ptr, args...);
         }
@@ -568,6 +593,44 @@ struct ref {
     template <class R, name_t Method, class... A>
     std::expected<R, miss> try_proto(A... args) const {
         return detail::proto_invoke<R, N, Method>(ptr, args...);
+    }
+
+    // ── Статические методы класса ────────────────────────────────────────────
+    // Объекта нет, поэтому это статические члены: `graft::ref<"Math">::proto_static<
+    // graft::f32, "Sqrt">(16.0f)`. Зеркало зовёт ровно их (`graft::dayz::Math::Sqrt`).
+    template <class R, name_t Method, class... A>
+    static R call_static(A... args) {
+        const script::method fn = detail::engine_method<N, Method>();
+        if (!fn.callable()) {
+            detail::report_miss<N, Method>(nullptr, fn);
+            if constexpr (std::is_void_v<R>) {
+                return;
+            } else {
+                return R{};
+            }
+        }
+        return detail::call_static_native<R>(fn, args...);
+    }
+
+    template <class R, name_t Method, class... A>
+    static R proto_static(A... args) {
+        const std::expected<R, miss> r = detail::proto_invoke_static<R, N, Method>(args...);
+        if (!r) {
+            detail::report_miss<N, Method>(nullptr, detail::engine_method<N, Method>());
+            if constexpr (std::is_void_v<R>) {
+                return;
+            } else {
+                return R{};
+            }
+        }
+        if constexpr (!std::is_void_v<R>) {
+            return *r;
+        }
+    }
+
+    template <class R, name_t Method, class... A>
+    static std::expected<R, miss> try_proto_static(A... args) {
+        return detail::proto_invoke_static<R, N, Method>(args...);
     }
 
     // ── Поля объекта по имени ────────────────────────────────────────────────

@@ -195,9 +195,12 @@ void* find_global(const char* name) {
 }
 
 void note_call_miss(const char* class_name, const char* name, void* self, const method& fn) {
-    const char* why = !self      ? "объект null"
-                      : !fn.impl ? "метод не найден"
-                                 : "метод не нативный (в impl байткод)";
+    // У статического метода объекта нет по определению — «объект null» про него соврал бы.
+    const bool  needs_self = (fn.flags & layout::flag_static) == 0;
+    const char* why        = !fn.impl              ? "метод не найден"
+                             : !fn.executable      ? "метод не нативный (в impl байткод)"
+                             : !self && needs_self ? "объект null"
+                                                   : "вызов отклонён: арность или типы (точнее — try_*)";
     g_last_error = std::format("{}.{}: {}", class_name ? class_name : "?", name ? name : "?", why);
     log("! " + g_last_error);
 }

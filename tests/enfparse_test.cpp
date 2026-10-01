@@ -5,9 +5,14 @@
 // об этом на живом сервере дороже всего.
 #include <gtest/gtest.h>
 
-#include <string>
 #include <algorithm>
+#include <cstdlib>
+#include <filesystem>
+#include <format>
+#include <fstream>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include "graft/enfparse.hpp"
 
@@ -197,6 +202,28 @@ class Man extends EntityAI
     EXPECT_TRUE(k->bases[1].when[0].negated);
 }
 
+// Object.c:248 и EnEntity.c:288 — массив в параметре с размером и без.
+TEST(EnfParse, StaticArrayParamKeepsItsLength) {
+    const auto u = graft::enf::parse(
+        "class Object {\n"
+        "\tproto native \tvoid \t\tGetBoneTransformWS(int pivot, out vector transform[4]);\n"
+        "\tproto external void GetTransform(out vector mat[]);\n"
+        "}\n");
+    const graft::enf::class_* k = find(u, "Object");
+    ASSERT_NE(k, nullptr);
+    const graft::enf::function* f = find(*k, "GetBoneTransformWS");
+    ASSERT_NE(f, nullptr);
+    ASSERT_EQ(f->params.size(), 2u);
+    EXPECT_EQ(f->params[1].type, "vector");
+    EXPECT_EQ(f->params[1].name, "transform");
+    EXPECT_EQ(f->params[1].array_len, 4);
+    EXPECT_TRUE(f->params[1].is_out);
+    EXPECT_EQ(f->params[0].array_len, 0);
+    const graft::enf::function* g = find(*k, "GetTransform");
+    ASSERT_NE(g, nullptr);
+    EXPECT_EQ(g->params[0].array_len, -1);
+}
+
 TEST(EnfParse, ColonWithoutSpaceIsStillABase) {
     // 1_Core/proto/EnEntity.c:164 — `class IEntity: Managed`. Двоеточие прилипает к
     // имени, и раньше такой класс отбрасывался ЦЕЛИКОМ: вместе с IEntity терялись
@@ -282,16 +309,119 @@ TEST(EnfMirror, EmitsForRequestedModuleOnly) {
     EXPECT_EQ(graft::enf::mirror(u, "3_Game").find("struct Only1Core"), std::string::npos);
 }
 
-TEST(EnfMirror, StaticMethodsAreNotEmittedAsMembers) {
+// Статический `proto` зовётся без объекта — это статический член, а не метод экземпляра.
+TEST(EnfMirror, StaticMethodsBecomeStaticMembers) {
     graft::enf::unit u = graft::enf::parse(
         "class Widget { static proto bool CastTo(out Class to, Class from);\n"
         "               proto native int Id(); }");
     const std::string out = graft::enf::mirror(u, "1_Core");
     ASSERT_NE(out.find("struct Widget"), std::string::npos);
     EXPECT_NE(out.find("Id()"), std::string::npos);
-    // Статический `proto` зовётся на дескрипторе класса, а не на объекте — методом
-    // экземпляра его выпускать нельзя.
-    EXPECT_EQ(out.find("CastTo("), std::string::npos);
+    EXPECT_NE(out.find("    static bool CastTo(graft::obj& to, graft::obj from);"),
+              std::string::npos);
+    EXPECT_NE(out.find("graft::ref<N>::template proto_static<bool, \"CastTo\">(std::ref(to), from)"),
+              std::string::npos);
+    EXPECT_EQ(out.find("CastTo(graft::obj& to, graft::obj from) const"), std::string::npos);
+}
+
+// Класс из одних статических методов (Math, DayZPhysics) тоже нужен — раньше выпадал целиком.
+TEST(EnfMirror, ClassOfStaticsOnlyIsEmitted) {
+    graft::enf::unit u    = graft::enf::parse("class Math { proto static float Sqrt(float val);\n"
+                                              "             proto native static int AbsInt(int i); }");
+    u.classes[0].module   = "1_Core";
+    const std::string out = graft::enf::mirror(u, "1_Core");
+    EXPECT_NE(out.find("struct Math : Math_<\"Math\">"), std::string::npos);
+    EXPECT_NE(out.find("graft::ref<N>::template proto_static<graft::f32, \"Sqrt\">(val)"),
+              std::string::npos);
+    EXPECT_NE(out.find("graft::ref<N>::template call_static<graft::i32, \"AbsInt\">(i)"),
+              std::string::npos);
+    EXPECT_EQ(graft::enf::mirror_modules(u), std::vector<std::string>{"1_Core"});
+}
+
+// Enum в сигнатуре — int. Без этого DayZPhysics.RayCastBullet терялся из-за layerMask.
+TEST(EnfMirror, EnumParameterIsInt) {
+    graft::enf::unit u = graft::enf::parse(R"(
+enum PhxInteractionLayers
+{
+    NOCOLLISION,
+    DEFAULT
+}
+class Object { proto native int GetID(); }
+class DayZPhysics
+{
+    proto static bool RayCastBullet(vector begPos, vector endPos, PhxInteractionLayers layerMask, Object ignoreObj, out Object hitObject, out vector hitPosition, out vector hitNormal, out float hitFraction);
+}
+)");
+    EXPECT_EQ(u.enums, std::vector<std::string>{"PhxInteractionLayers"});
+    const std::string out = graft::enf::mirror(u, "3_Game");
+    EXPECT_NE(out.find("static bool RayCastBullet(graft::vector begPos, graft::vector endPos, "
+                       "graft::i32 layerMask, Object ignoreObj, Object& hitObject, "
+                       "graft::vector& hitPosition, graft::vector& hitNormal, "
+                       "graft::f32& hitFraction);"),
+              std::string::npos)
+        << out;
+    EXPECT_NE(out.find("(begPos, endPos, layerMask, ignoreObj, std::ref(hitObject), "
+                       "std::ref(hitPosition), std::ref(hitNormal), std::ref(hitFraction))"),
+              std::string::npos);
+}
+
+// `out vector` у натива — указатель на переменную вызывающего. Значением он уезжал во
+// временную копию, и результат пропадал молча (AIWorld.SampleNavmeshPosition).
+TEST(EnfMirror, OutVectorOfNativeGoesByPointer) {
+    graft::enf::unit u = graft::enf::parse(
+        "class PGFilter { proto native int GetFlags(); }\n"
+        "class AIWorld { proto native bool SampleNavmeshPosition(vector position, float "
+        "maxDistance, PGFilter pgFilter, out vector sampledPosition); }\n");
+    const std::string out = graft::enf::mirror(u, "3_Game");
+    EXPECT_NE(out.find("bool SampleNavmeshPosition(graft::vector position, graft::f32 maxDistance, "
+                       "PGFilter pgFilter, graft::vector& sampledPosition) const;"),
+              std::string::npos)
+        << out;
+    EXPECT_NE(out.find("(position, maxDistance, pgFilter, &sampledPosition)"), std::string::npos);
+}
+
+// Out маршалируемого `proto` движок пишет в переменную блока — назад его несёт std::ref.
+// Строку через out не отдаём: ею владеет движок.
+TEST(EnfMirror, OutOfMarshalledIsWrittenBack) {
+    graft::enf::unit u = graft::enf::parse(
+        "class World { proto void GetDate(out int year, out int month);\n"
+        "              proto bool GetHostAddress(out string address, out int port); }\n");
+    const std::string out = graft::enf::mirror(u, "3_Game");
+    EXPECT_NE(out.find("void GetDate(graft::i32& year, graft::i32& month) const;"),
+              std::string::npos)
+        << out;
+    EXPECT_NE(out.find("proto<void, \"GetDate\">(std::ref(year), std::ref(month))"),
+              std::string::npos);
+    EXPECT_EQ(out.find("GetHostAddress"), std::string::npos);
+}
+
+// Статический массив натив получает указателем на элементы: с размером это std::array.
+// Без размера и у маршалируемого пути — не выразить, метод не выпускается.
+TEST(EnfMirror, StaticArrayOfNativeIsStdArray) {
+    graft::enf::unit  u   = graft::enf::parse(R"(
+class Object
+{
+    proto native void GetBoneTransformWS(int pivot, out vector transform[4]);
+    proto native void GetBoneRotationWS(int pivot, out float quaternion[4]);
+    proto native bool GetCollisionBox(out vector minMax[2]);
+    proto native void SetTransform(vector mat[4]);
+    proto external void GetTransform(out vector mat[]);
+    proto float ClippingInfo(out vector minMax[2]);
+}
+)");
+    const std::string out = graft::enf::mirror(u, "3_Game");
+    EXPECT_NE(out.find("void GetBoneTransformWS(graft::i32 pivot, std::array<graft::vector, 4>& "
+                       "transform) const;"),
+              std::string::npos)
+        << out;
+    EXPECT_NE(out.find("(pivot, transform.data())"), std::string::npos);
+    EXPECT_NE(out.find("std::array<graft::f32, 4>& quaternion"), std::string::npos);
+    EXPECT_NE(out.find("bool GetCollisionBox(std::array<graft::vector, 2>& minMax) const;"),
+              std::string::npos);
+    EXPECT_NE(out.find("void SetTransform(const std::array<graft::vector, 4>& mat) const;"),
+              std::string::npos);
+    EXPECT_EQ(out.find("GetTransform("), std::string::npos);
+    EXPECT_EQ(out.find("ClippingInfo"), std::string::npos);
 }
 
 TEST(EnfMirror, BanIsInheritedByDerivedClasses) {
@@ -473,3 +603,62 @@ class Man extends EntityAI
 }
 
 }  // namespace
+
+// ── Дерево скриптов на диске ────────────────────────────────────────────────
+// P:\scripts у мододелов собран как придётся: каталоги в нижнем регистре (распаковщик
+// PBO), модули junction-ами из другого места. Ни то, ни другое не повод потерять модуль.
+namespace {
+
+namespace fs = std::filesystem;
+
+struct scratch_tree {
+    fs::path root = fs::temp_directory_path() / "graft_enf_tree";
+
+    scratch_tree() {
+        fs::remove_all(root);
+        fs::create_directories(root);
+    }
+
+    ~scratch_tree() {
+        std::error_code ec;
+        fs::remove_all(root, ec);
+    }
+
+    void write(const fs::path& rel, std::string_view text) const {
+        fs::create_directories((root / rel).parent_path());
+        std::ofstream(root / rel, std::ios::binary) << text;
+    }
+
+    // Junction, а не symlink: его создаёт любой пользователь, и именно им собирают P:.
+    bool junction(const fs::path& link, const fs::path& target) const {
+        const std::string cmd = std::format("cmd /c mklink /J \"{}\" \"{}\" >nul",
+                                            (root / link).string(),
+                                            (root / target).string());
+        return std::system(cmd.c_str()) == 0;
+    }
+};
+
+TEST(EnfTree, ModuleDirectoryCaseDoesNotMatter) {
+    const scratch_tree t;
+    t.write("scripts/3_game/a.c", "class Foo { proto native int X(); }");
+    const graft::enf::unit    u = graft::enf::parse_tree((t.root / "scripts").string());
+    const graft::enf::class_* k = find(u, "Foo");
+    ASSERT_NE(k, nullptr);
+    EXPECT_EQ(k->module, "3_Game");
+    EXPECT_EQ(graft::enf::mirror_modules(u), std::vector<std::string>{"3_Game"});
+}
+
+TEST(EnfTree, JunctionedModuleIsFollowedOnce) {
+    const scratch_tree t;
+    t.write("unpacked/core/a.c", "class Foo { proto native int X(); }");
+    fs::create_directories(t.root / "scripts");
+    ASSERT_TRUE(t.junction("scripts/1_Core", "unpacked/core"));
+    // Петля: ссылка внутри модуля обратно на корень. Обход обязан закончиться.
+    ASSERT_TRUE(t.junction("unpacked/core/loop", "scripts"));
+    const graft::enf::unit u = graft::enf::parse_tree((t.root / "scripts").string());
+    ASSERT_EQ(u.classes.size(), 1u);
+    EXPECT_EQ(u.classes[0].name, "Foo");
+    EXPECT_EQ(u.classes[0].module, "1_Core");
+}
+
+} // namespace

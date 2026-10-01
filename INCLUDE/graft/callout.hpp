@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH LicenseRef-GRAFT-plugin-exception-1.0
 // Мод на GRAFT ничего не обязан — даже закрытый и платный. См. LICENSE-EXCEPTION.
 #pragma once
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <span>
 #include <string>
 #include <type_traits>
@@ -24,8 +26,10 @@
 // Мы делаем ровно то же — и потому не гадаем, что лежит в полях, которых не разобрали:
 // они доезжают до движка байт в байт такими, какими он их сам туда положил.
 //
-// Шаблона нет только у переменной ВОЗВРАТА (дескриптор её не носит) — её собираем по
-// тегу. Если однажды окажется, что этого мало, чинить надо здесь и только здесь.
+// Шаблона нет у переменной ВОЗВРАТА (дескриптор её не носит), у параметра `void` и у
+// глобального `proto` без дескриптора — там переменную собираем по тегу так же, как её
+// размечает компилятор (script::var::of_tag). Если однажды окажется, что этого мало,
+// чинить надо там и только там.
 namespace graft {
 
 // Результат маршалируемого вызова. Аргументы отдаются ПОСЛЕ вызова: у `out`-параметра
@@ -64,63 +68,54 @@ inline std::uint32_t tag_of(const value& v) {
     return v.is<std::string>() ? script::tag_string : 0u;
 }
 
-// ── Донорские шаблоны ────────────────────────────────────────────────────────
-// Движок НИКОГДА не собирает скриптовую переменную с нуля — он копирует готовый
-// 40-байтный шаблон (sub_1403663B0). Значит и нам собирать нельзя: у переменной есть
-// поля, которых мы не разобрали, и одно из них движку нужно для разрешения типа.
-// Синтезированная переменная с верным тегом, но пустым остатком роняет процесс —
-// проверено падением: в момент разрешения типа rcx = 0, а в rax наш же тег.
-//
-// Параметрам шаблон даёт сама вызываемая функция. А вот возврату его взять неоткуда:
-// дескриптор функции его не носит. Поэтому берём у ЧУЖОГО ПАРАМЕТРА того же типа —
-// функции ниже выбраны за то, что они есть в любой сборке и вместе покрывают все
-// семейства. Не нашлось донора — отказ, а не попытка сочинить.
-struct donor_site {
-    const char* class_name;
-    const char* method;
-    std::size_t param;
-};
-
-inline const void* donor_template(std::uint32_t tag) {
-    struct slot {
-        std::uint32_t tag;
-        donor_site from;
-    };
-    // EnScript.GetClassVar(Class inst, string varname, int index, out void result)
-    // Physics.SetMass(float), Physics.SetVelocity(vector)
-    // EnProfiler.GetTimeOfClass(typename clss, bool immediate)
-    static constexpr slot kDonors[] = {
-        {script::tag_class, {"EnScript", "GetClassVar", 0}},
-        {script::tag_string, {"EnScript", "GetClassVar", 1}},
-        {script::tag_int, {"EnScript", "GetClassVar", 2}},
-        {script::tag_float, {"Physics", "SetMass", 0}},
-        {script::tag_vector, {"Physics", "SetVelocity", 0}},
-        {script::tag_typename, {"EnProfiler", "GetTimeOfClass", 0}},
-        {script::tag_bool, {"EnProfiler", "GetTimeOfClass", 1}},
-    };
-    static const void* found[std::size(kDonors)]{};
-    for (std::size_t i = 0; i < std::size(kDonors); ++i) {
-        if (kDonors[i].tag != tag) {
-            continue;
+// Шаблон параметра функции с ровно таким тегом; nullptr, если такого параметра нет.
+inline const void* param_template_of_tag(const script::method& fn, std::uint32_t tag) {
+    for (std::size_t i = 0; i < script::param_count(fn); ++i) {
+        const void* tpl = script::param_template(fn, i);
+        if (tpl && *reinterpret_cast<const std::uint32_t*>(static_cast<const char*>(tpl) +
+                                                           layout::var_type) == tag) {
+            return tpl;
         }
-        if (!found[i]) {
-            // Промах не кэшируем: первый вызов может случиться раньше, чем движок
-            // разобрал нужный модуль.
-            found[i] = script::param_template(
-                script::find_method(kDonors[i].from.class_name, kDonors[i].from.method),
-                kDonors[i].from.param);
-        }
-        return found[i];
     }
     return nullptr;
 }
 
-// Флаги, которые донор принёс от параметра, а переменной возврата не нужны: const,
+// Контекст встроенных типов — туда смотрит +24 всякой переменной int, string, vector, в
+// каком бы модуле её ни объявили. Его носит дескриптор корня иерархии, Class. nullptr —
+// движок ещё не разобрал ядро (или его нет вовсе, как в тестах): тогда собирать переменную
+// не из чего, и вызов получает отказ no_template, а не переменную с нулём в +24 (с ним
+// движок падает на разрешении типа — проверено).
+inline void* builtin_context() {
+    void* root = script::find_class("Class");
+    return root ? *reinterpret_cast<void**>(static_cast<char*>(root) + layout::class_context)
+                : nullptr;
+}
+
+// Переменная встроенного типа там, где шаблона нет (см. script::var::of_tag).
+inline bool builtin_var(std::uint32_t tag, script::var& out) {
+    void* ctx = tag != 0 ? builtin_context() : nullptr;
+    if (!ctx) {
+        return false;
+    }
+    out = script::var::of_tag(tag, ctx);
+    return true;
+}
+
+// Флаги, которые шаблон чужого параметра принёс, а переменной возврата не нужны: const,
 // «не писать» и out. С 0x40 движок просто молча не запишет результат (проверено в
 // GetModule и Spawn — оба его читают).
+//
+// Кроме vector: у него 0x40 значит другое — «значение лежит по указателю из +0». Его
+// ставит каждой vector-переменной сама подготовка кадра (sub_1403663B0), и только с ним
+// присваивание копирует 12 байт через указатель (sub_140347CB0); без него движок пишет
+// 4 байта прямо в +0, поверх указателя. Так `proto vector` (Object.ModelToWorld)
+// возвращал нули.
 inline void make_writable(script::var& v) {
     auto* flags = reinterpret_cast<std::uint32_t*>(v.raw + layout::var_flags);
     *flags &= ~0xD0u;
+    if ((v.tag() & script::type_family) == script::type_vector) {
+        *flags |= 0x40u;
+    }
 }
 
 }  // namespace detail
@@ -170,11 +165,29 @@ inline std::expected<proto_result, miss> call_proto(const script::method& fn, vo
     if (args.size() > script::max_proto_args) {
         return std::unexpected(miss::too_many_args);
     }
+    // `proto external` у метода объекта устроен как метод типа-значения: в rcx объекта
+    // нет, он едет ПЕРВЫМ В БЛОКЕ, и параметров в дескрипторе на один больше объявленных
+    // (IEntity.GetLocalPosition: объявлено 0, в дескрипторе 1). Вызывающей стороне знать
+    // это незачем — решает бит дескриптора, а номера out-аргументов в ответе остаются её.
+    if (self && (fn.flags & (layout::flag_external | layout::flag_static)) == layout::flag_external) {
+        if (args.size() + 1 > script::max_proto_args) {
+            return std::unexpected(miss::too_many_args);
+        }
+        value with_self[script::max_proto_args];
+        with_self[0] = value{obj{self}};
+        std::ranges::copy(args, with_self + 1);
+        auto r = call_proto(fn, nullptr, std::span{with_self, args.size() + 1}, ret_tag);
+        if (r) {
+            std::shift_left(r->args.begin(), r->args.begin() + r->count, 1);
+            --r->count;
+        }
+        return r;
+    }
     // ДЕСКРИПТОРА МОЖЕТ И НЕ БЫТЬ. У метода класса он есть всегда, а вот у ГЛОБАЛЬНОГО
     // `proto` движка (Print, ErrorEx) он живёт в таблице функций скриптового модуля, до
     // которой из C++ хода нет: наружу торчит только импл, и тот — с регистрации, по
-    // имени. Тогда арность знает вызывающая сторона, а шаблоны берутся у доноров, как
-    // они и так берутся для параметров, объявленных `void`.
+    // имени. Тогда арность знает вызывающая сторона, а переменные собираются по тегу,
+    // как и для параметров, объявленных `void` (var::of_tag).
     const bool blind = fn.desc == nullptr;
     // Арность сверяем с дескриптором, а не с надеждой: неполный блок — это кадр, в
     // котором движок прочитает мусор, и разбираться потом придётся по минидампу.
@@ -187,26 +200,27 @@ inline std::expected<proto_result, miss> call_proto(const script::method& fn, vo
     void* block[script::max_proto_args]{};
 
     for (std::size_t i = 0; i < args.size(); ++i) {
-        const void* tpl = blind ? detail::donor_template(detail::tag_of(args[i]))
-                                : script::param_template(fn, i);
-        if (!tpl) {
+        const std::uint32_t want = detail::tag_of(args[i]);
+        if (blind) {
+            if (!detail::builtin_var(want, slots[i])) {
+                return std::unexpected(miss::no_template);
+            }
+        } else if (const void* tpl = script::param_template(fn, i)) {
+            slots[i] = script::var::from_template(tpl);
+        } else {
             return std::unexpected(miss::no_template);
         }
-        slots[i] = script::var::from_template(tpl);
-        const std::uint32_t want = detail::tag_of(args[i]);
         const std::uint32_t have = slots[i].tag() & script::type_family;
         if (have == script::type_any || have == 0) {
             // Параметр объявлен как `void` — это «любой тип», и настоящую переменную
             // движок собирает на месте вызова по фактическому аргументу. Значит и мы
-            // берём готовую переменную нужного типа, а не переписываем тег в чужой:
+            // собираем переменную нужного типа целиком, а не переписываем тег в чужой:
             // от типа зависит не только тег.
             const std::uint32_t keep =
                 *reinterpret_cast<const std::uint32_t*>(slots[i].raw + layout::var_flags);
-            const void* filled = detail::donor_template(want);
-            if (!filled) {
+            if (!detail::builtin_var(want, slots[i])) {
                 return std::unexpected(miss::no_template);
             }
-            slots[i] = script::var::from_template(filled);
             *reinterpret_cast<std::uint32_t*>(slots[i].raw + layout::var_flags) |= keep;
         } else if (want != 0 && (want & script::type_family) != have) {
             // Сигнатура разошлась с движком. Ловим это ЗДЕСЬ, а не падением внутри
@@ -217,7 +231,7 @@ inline std::expected<proto_result, miss> call_proto(const script::method& fn, vo
         // Строку в `out`-параметр не отдаём: ею владеет движок и освободит её сам, а
         // наша живёт в кольце — это порча кучи, тот же запрет, что и на запись char* в
         // array<string>. ponytail: путь наверх есть — подкладывать движковую пустую
-        // строку (ctx+1144, её же освобождение пропускает), но пока такого вызова нет.
+        // строку (как var::of_tag, её же освобождение пропускает), но пока такого вызова нет.
         const std::uint32_t flags =
             *reinterpret_cast<const std::uint32_t*>(slots[i].raw + layout::var_flags);
         if ((flags & 0x80) != 0 &&
@@ -231,31 +245,33 @@ inline std::expected<proto_result, miss> call_proto(const script::method& fn, vo
             std::memcpy(slots[i].raw, &storage, sizeof storage);
         }
         detail::write_var(slots[i].raw, args[i]);
+        // Объект — тем способом, каким его держит переменная этого типа: где ждут
+        // обёртку, голый указатель импл прочтёт как обёртку и уйдёт в мусор. Обёртки нет
+        // — отказ, а не попытка.
+        if (void* object = args[i].is<obj>() ? args[i].as<obj>().ptr : nullptr;
+            object && script::holds_wrapper(slots[i].raw)) {
+            void* wrapper = script::wrapper_of(object);
+            if (!wrapper) {
+                return std::unexpected(miss::unsafe_arg);
+            }
+            std::memcpy(slots[i].raw, &wrapper, sizeof wrapper);
+        }
         block[i] = slots[i].raw;
     }
 
     // Переменная возврата подаётся ВСЕГДА, даже у `proto void`: ванильные имплы её
-    // разыменовывают, лишь проверяя на ноль сам указатель. Для void берём донора int —
-    // это законная переменная, в которую просто никто не запишет.
+    // разыменовывают, лишь проверяя на ноль сам указатель. Для void собираем int — это
+    // законная переменная, в которую просто никто не запишет.
     //
-    // Шаблон ищем сперва у САМОЙ вызываемой функции: если у неё есть параметр того же
-    // типа, это лучший донор какой бывает — он от неё же и ходить никуда не надо.
+    // Шаблон берём сперва у САМОЙ вызываемой функции: параметр того же типа размечен её же
+    // компилятором, и ходить никуда не надо. Нет такого — собираем по тегу.
     const std::uint32_t want_ret = ret_tag != 0 ? ret_tag : script::tag_int;
-    const void* ret_tpl = nullptr;
-    for (std::size_t i = 0; !blind && i < script::param_count(fn) && !ret_tpl; ++i) {
-        const void* tpl = script::param_template(fn, i);
-        if (tpl && *reinterpret_cast<const std::uint32_t*>(static_cast<const char*>(tpl) +
-                                                           layout::var_type) == want_ret) {
-            ret_tpl = tpl;
-        }
-    }
-    if (!ret_tpl) {
-        ret_tpl = detail::donor_template(want_ret);
-    }
-    if (!ret_tpl) {
+    script::var         ret_var;
+    if (const void* own = blind ? nullptr : detail::param_template_of_tag(fn, want_ret)) {
+        ret_var = script::var::from_template(own);
+    } else if (!detail::builtin_var(want_ret, ret_var)) {
         return std::unexpected(miss::no_template);
     }
-    script::var ret_var = script::var::from_template(ret_tpl);
     detail::make_writable(ret_var);
     vector ret_vector{};
     if ((ret_var.tag() & script::type_family) == script::type_vector) {
@@ -290,7 +306,7 @@ inline std::expected<proto_result, miss> call_proto(const script::method& fn, vo
         out.args[i] = detail::read_var(slots[i].raw);
     }
     // У `proto void` переменная возврата была нужна только для того, чтобы движку было
-    // куда не писать. Читать её нечего — иначе наружу поехал бы ноль донора.
+    // куда не писать. Читать её нечего — иначе наружу поехал бы её ноль.
     if (ret_tag != 0) {
         out.ret = detail::read_var(ret_var.raw);
     }
@@ -303,9 +319,22 @@ namespace detail {
 // Дальше — только перевод обычных типов C++ в value и обратно, чтобы сгенерированное
 // зеркало движкового API читалось как обычный C++.
 
+// Out-аргумент маршалируемого вызова передаётся как std::ref(x): после вызова в x
+// ляжет то, что движок записал в переменную блока. Без метки аргумент — только вход.
+template <class T>
+inline constexpr bool written_back = false;
+template <class T>
+inline constexpr bool written_back<std::reference_wrapper<T>> = true;
+
 template <class T>
 value to_arg(const T& v) {
-    if constexpr (script_class<T>) {
+    if constexpr (written_back<T>) {
+        return to_arg(v.get());
+    } else if constexpr (script_class<T>) {
+        return value{obj{v.ptr}};
+    } else if constexpr (requires { v.ptr; }) {
+        // Контейнер (array, set, map) в переменной — тоже ссылка на объект движка: тег
+        // семейства class, значение — указатель (ErrorModuleHandler.GetErrorModules).
         return value{obj{v.ptr}};
     } else if constexpr (std::is_same_v<T, const char*>) {
         return value{std::string{v ? v : ""}};
@@ -339,15 +368,49 @@ consteval std::uint32_t ret_tag() {
 }
 
 template <class R>
+R from_value(const value& v) {
+    if constexpr (script_class<R>) {
+        return R{v.as<obj>().ptr};
+    } else if constexpr (std::is_same_v<R, std::string>) {
+        return std::string{v.view()};
+    } else {
+        return v.as<R>();
+    }
+}
+
+template <class R>
 R from_result(const proto_result& r) {
     if constexpr (std::is_void_v<R>) {
         return;
-    } else if constexpr (script_class<R>) {
-        return R{r.ret.as<obj>().ptr};
-    } else if constexpr (std::is_same_v<R, std::string>) {
-        return std::string{r.ret.view()};
     } else {
-        return r.ret.as<R>();
+        return from_value<R>(r.ret);
+    }
+}
+
+// Раздать out-аргументы обратно вызывающему: i-й элемент пачки — i-я переменная блока.
+template <class... A>
+void write_back(const proto_result& r, const A&... args) {
+    std::size_t i   = 0;
+    const auto  one = [&]<class T>(const T& arg) {
+        if constexpr (written_back<T>) {
+            arg.get() = from_value<std::remove_cv_t<typename T::type>>(r.arg(i));
+        }
+        ++i;
+    };
+    (one(args), ...);
+}
+
+template <class R, class... A>
+std::expected<R, miss> finish_proto(const std::expected<proto_result, miss>& r,
+                                    const A&... args) {
+    if (!r) {
+        return std::unexpected(r.error());
+    }
+    write_back(*r, args...);
+    if constexpr (std::is_void_v<R>) {
+        return {};
+    } else {
+        return from_result<R>(*r);
     }
 }
 
@@ -364,15 +427,17 @@ std::expected<R, miss> proto_invoke(void* self, const A&... args) {
     }
     const script::method fn = engine_method<Klass, Method>();
     const value block[] = {to_arg(args)..., value{}};
-    const auto r = call_proto(fn, self, std::span{block}.first(sizeof...(A)), ret_tag<R>());
-    if (!r) {
-        return std::unexpected(r.error());
-    }
-    if constexpr (std::is_void_v<R>) {
-        return {};
-    } else {
-        return from_result<R>(*r);
-    }
+    return finish_proto<R>(
+        call_proto(fn, self, std::span{block}.first(sizeof...(A)), ret_tag<R>()), args...);
+}
+
+// Статический `proto`: объекта нет, двухаргументная форма (DayZPhysics.RayCastBullet).
+template <class R, name_t Klass, name_t Method, class... A>
+std::expected<R, miss> proto_invoke_static(const A&... args) {
+    const script::method fn      = engine_method<Klass, Method>();
+    const value          block[] = {to_arg(args)..., value{}};
+    return finish_proto<R>(
+        call_proto(fn, nullptr, std::span{block}.first(sizeof...(A)), ret_tag<R>()), args...);
 }
 
 // То же, но у метода приёмник — ЗНАЧЕНИЕ, а не объект.
@@ -388,15 +453,7 @@ std::expected<R, miss> proto_invoke_on_value(const value& receiver, const A&... 
     const script::method fn = engine_method<Klass, Method>();
     const value block[] = {receiver, to_arg(args)...};
     // Объекта нет — значит нет и rcx: зовём двухаргументную форму.
-    const auto r = call_proto(fn, nullptr, block, ret_tag<R>());
-    if (!r) {
-        return std::unexpected(r.error());
-    }
-    if constexpr (std::is_void_v<R>) {
-        return {};
-    } else {
-        return from_result<R>(*r);
-    }
+    return finish_proto<R>(call_proto(fn, nullptr, block, ret_tag<R>()), receiver, args...);
 }
 
 }  // namespace detail

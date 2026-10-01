@@ -539,6 +539,152 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         return 1;
     }
 
+    [KRU_TEST_CASE("Proto_VectorAndExternalFromCpp").IN(SERAPH_GRAFT_TEST)];
+    void Proto_VectorAndExternalFromCpp()
+    {
+        // Маршалируемый `proto` с vector-возвратом (ModelToWorld, WorldToModel) приходил
+        // нулями, `proto external` (GetLocalPosition, GetBounds с out) отвергался как
+        // wrong_arity. Плюс статический `proto native` с vector-возвратом (YawToVector).
+        Object obj = GetGame().CreateObjectEx("Apple", "1000 5 1000", ECE_NONE);
+        string info = "obj=null";
+        int bad = -1;
+        if (obj)
+        {
+            obj.SetOrientation("30 0 0");
+            vector inModel = "0.5 0.25 1";
+            vector inWorld = obj.GetPosition() + Vector(1, 2, 3);
+            vector mins;
+            vector maxs;
+            obj.GetBounds(mins, maxs);
+            info = "";
+            bad = 0;
+            bad += SameVector(info, "ModelToWorld", SeraphGraftModelToWorld(obj, inModel), obj.ModelToWorld(inModel));
+            bad += SameVector(info, "WorldToModel", SeraphGraftWorldToModel(obj, inWorld), obj.WorldToModel(inWorld));
+            bad += SameVector(info, "GetLocalPosition", SeraphGraftLocalPosition(obj), obj.GetLocalPosition());
+            vector shift = Vector(1000, 1000, 1000);
+            bad += SameVector(info, "GetBounds.mins", SeraphGraftBound(obj, 0), mins + shift);
+            bad += SameVector(info, "GetBounds.maxs", SeraphGraftBound(obj, 1), maxs + shift);
+            bad += SameVector(info, "YawToVector", SeraphGraftYawToVector(30), vector.YawToVector(30));
+        }
+        assert(bad == 0, "все шесть совпали со скриптом", info,
+            "маршалируемый vector, external и статический натив из C++");
+        if (obj)
+            GetGame().ObjectDelete(obj);
+    }
+
+    [KRU_TEST_CASE("Proto_BuiltinVarsMatchCompiler").IN(SERAPH_GRAFT_TEST)];
+    void Proto_BuiltinVarsMatchCompiler()
+    {
+        // Переменную возврата, параметра `void` и аргумент глобали без дескриптора (Print)
+        // graft собирает сам, без шаблона. Она обязана совпасть с той, что размечает
+        // компилятор; что именно разошлось — в журнале graft.
+        int bad = SeraphGraftBuiltinVarsMismatch();
+        assert(bad == 0, "все семь совпали с шаблонами компилятора", "расхождений: " + bad.ToString(),
+            "переменная встроенного типа собирается как у компилятора");
+    }
+
+    [KRU_TEST_CASE("Mirror_OutArraysAndStaticsFromCpp").IN(SERAPH_GRAFT_TEST)];
+    void Mirror_OutArraysAndStaticsFromCpp()
+    {
+        // Через сгенерированное зеркало, тем путём, каким зовёт мод: статический массив
+        // натива (GetCollisionBox, PlaceOnSurfaceRotated), out vector натива
+        // (SampleNavmeshPosition), out маршалируемого proto (World.GetDate), статические
+        // proto (Math, DayZPhysics.RayCastBullet с enum и четырьмя out). Точка — поле у
+        // Балоты: там и земля, и навмеш.
+        float ground = GetGame().SurfaceY(4700, 2500);
+        vector at = Vector(4700, ground, 2500);
+        Object obj = GetGame().CreateObjectEx("Apple", at, ECE_NONE);
+        EntityAI item = EntityAI.Cast(obj);
+        string info = "obj=null";
+        int bad = -1;
+        if (item)
+        {
+            info = "";
+            bad = 0;
+
+            vector box[2];
+            if (!obj.GetCollisionBox(box))
+            {
+                info += "GetCollisionBox: у скрипта false; ";
+                bad++;
+            }
+            bad += SameVector(info, "GetCollisionBox[0]", SeraphGraftCollisionCorner(obj, 0), box[0]);
+            bad += SameVector(info, "GetCollisionBox[1]", SeraphGraftCollisionCorner(obj, 1), box[1]);
+
+            // trans функция читает и как вход — подаём единичный поворот и саму точку.
+            vector trans[4];
+            trans[0] = "1 0 0";
+            trans[1] = "0 1 0";
+            trans[2] = "0 0 1";
+            trans[3] = at;
+            item.PlaceOnSurfaceRotated(trans, at, 0, 0, 30);
+            for (int row = 0; row < 4; row++)
+                bad += SameVector(info, "PlaceOnSurfaceRotated[" + row.ToString() + "]", SeraphGraftSurfaceRow(item, at, 30, row), trans[row]);
+
+            AIWorld ai = GetGame().GetWorld().GetAIWorld();
+            PGFilter filter = new PGFilter();
+            filter.SetFlags(PGPolyFlags.WALK, PGPolyFlags.DISABLED, 0);
+            vector sampled = "-2 -2 -2";
+            if (!ai || !ai.SampleNavmeshPosition(at, 50, filter, sampled))
+            {
+                // Без точки навмеша сверять нечего — это не зелёный, а пустой кейс.
+                info += "SampleNavmeshPosition: у скрипта нет точки; ";
+                bad++;
+                sampled = "-2 -2 -2";
+            }
+            bad += SameVector(info, "SampleNavmeshPosition", SeraphGraftNavmeshSample(ai, at, 50, filter), sampled);
+
+            int year;
+            int month;
+            int day;
+            int hour;
+            int minute;
+            GetGame().GetWorld().GetDate(year, month, day, hour, minute);
+            string date = year.ToString() + "-" + month.ToString() + "-" + day.ToString() + " " + hour.ToString() + ":" + minute.ToString();
+            string dateCpp = SeraphGraftWorldDate();
+            if (dateCpp != date)
+            {
+                info += "GetDate: cpp=" + dateCpp + " scr=" + date + "; ";
+                bad++;
+            }
+
+            if (Math.AbsFloat(SeraphGraftMathSqrt(16) - Math.Sqrt(16)) > 0.001 || SeraphGraftMathAbsInt(-12) != Math.AbsInt(-12))
+            {
+                info += "Math: cpp=" + SeraphGraftMathSqrt(16).ToString() + "/" + SeraphGraftMathAbsInt(-12).ToString() + "; ";
+                bad++;
+            }
+
+            vector rayFrom = at + Vector(0, 10, 0);
+            vector rayTo = at - Vector(0, 5, 0);
+            int mask = PhxInteractionLayers.TERRAIN | PhxInteractionLayers.ITEM_SMALL | PhxInteractionLayers.ITEM_LARGE | PhxInteractionLayers.DYNAMICITEM;
+            Object hitObject;
+            vector hitPosition;
+            vector hitNormal;
+            float hitFraction;
+            bool hit = DayZPhysics.RayCastBullet(rayFrom, rayTo, mask, null, hitObject, hitPosition, hitNormal, hitFraction);
+            if (!hit)
+            {
+                info += "RayCastBullet: у скрипта нет попадания; ";
+                bad++;
+            }
+            bad += SameVector(info, "RayCastBullet.pos", SeraphGraftRayCast(rayFrom, rayTo, mask, 0), hitPosition);
+            bad += SameVector(info, "RayCastBullet.normal", SeraphGraftRayCast(rayFrom, rayTo, mask, 1), hitNormal);
+            vector rest = Vector(hitFraction, 0, 0);
+            if (hit)
+                rest[1] = 1;
+            bad += SameVector(info, "RayCastBullet.fraction/hit", SeraphGraftRayCast(rayFrom, rayTo, mask, 2), rest);
+            if (SeraphGraftRayObject(rayFrom, rayTo, mask) != hitObject)
+            {
+                info += "RayCastBullet.hitObject разошёлся; ";
+                bad++;
+            }
+        }
+        assert(bad == 0, "всё совпало со скриптом", info,
+            "out, статические массивы и статические методы через зеркало");
+        if (obj)
+            GetGame().ObjectDelete(obj);
+    }
+
     [KRU_TEST_CASE("Modern_RangesOverScriptArray").IN(SERAPH_GRAFT_TEST)];
     void Modern_RangesOverScriptArray()
     {
@@ -636,6 +782,19 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         SeraphGraftMethodFlags("IEntity", "GetOrigin");
         SeraphGraftMethodFlags("IEntity", "CoordToParent");
         SeraphGraftMethodFlags("SeraphNode", "Pos");
+        // маршалируемые: vector-возврат, external, статические (Proto_*, Mirror_*)
+        SeraphGraftMethodFlags("Object", "ModelToWorld");
+        SeraphGraftMethodFlags("IEntity", "GetLocalPosition");
+        SeraphGraftMethodFlags("IEntity", "GetBounds");
+        SeraphGraftMethodFlags("vector", "YawToVector");
+        SeraphGraftMethodFlags("Math", "Sqrt");
+        SeraphGraftMethodFlags("DayZPhysics", "RayCastBullet");
+        // объект в переменной: обёрткой или прямым указателем (callout.hpp, holds_wrapper)
+        SeraphGraftParamWrapperBits("IEntity", "GetLocalPosition", 0);
+        SeraphGraftParamWrapperBits("EnScript", "GetClassVar", 0);
+        SeraphGraftParamWrapperBits("ScriptModule", "CallFunction", 0);
+        SeraphGraftParamWrapperBits("DayZPhysics", "RayCastBullet", 3);
+        SeraphGraftParamWrapperBits("ParticleManager", "SetScriptEvents", 0);
 
         assert(true, "смотри graft.log", "смотри graft.log", "снимок флагов дескрипторов");
     }

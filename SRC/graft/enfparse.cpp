@@ -9,6 +9,7 @@
 #include <format>
 #include <fstream>
 #include <ranges>
+#include <set>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -23,6 +24,33 @@
 // строки с `proto`.
 namespace graft::enf {
 namespace {
+
+// Порядок разбора скриптов движком. Он же — порядок, в котором классы становятся
+// видимы: класс из 3_Game в заголовке 1_Core упомянуть нельзя, его там ещё нет.
+constexpr std::array<const char*, 5> kModuleOrder{"1_Core", "2_GameLib", "3_Game", "4_World", "5_Mission"};
+
+int module_rank(std::string_view module) {
+    for (const auto [i, name] : std::views::enumerate(kModuleOrder)) {
+        if (module == name) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1; // модуль не задан (тесты) — считаем «виден всегда»
+}
+
+// Имя каталога модуля без учёта регистра: Windows его не различает, и `3_game` у
+// распаковщика PBO — тот же 3_Game. Незнакомое имя остаётся как есть.
+std::string canonical_module(const std::string& dir) {
+    for (const char* name : kModuleOrder) {
+        if (std::ranges::equal(dir, std::string_view{name}, [](char a, char b) {
+                return std::tolower(static_cast<unsigned char>(a)) ==
+                       std::tolower(static_cast<unsigned char>(b));
+            })) {
+            return name;
+        }
+    }
+    return dir;
+}
 
 bool ident_char(char c) {
     return (std::isalnum(static_cast<unsigned char>(c)) != 0) || c == '_';
@@ -131,9 +159,18 @@ bool parse_param(std::string_view text, param& out) {
         tokens.pop_back();
     }
     out.type = tokens.size() == 1 ? tokens.front() : "";
-    // Статический массив в параметре (`void param_array[]`) наш вызов не выражает —
-    // пустой тип заставит генератор отказаться от всей функции.
-    if (out.name.find('[') != std::string::npos || out.type.find('[') != std::string::npos) {
+    // Статический массив в параметре: `out vector transform[4]`. Размер запоминаем —
+    // натив получает указатель на элементы, и с размером это выразимо. Без размера
+    // (`vector mat[]`) — -1, от такой функции генератор откажется.
+    if (const std::size_t open = out.name.find('['); open != std::string::npos) {
+        const std::string len   = out.name.substr(open + 1, out.name.find(']', open) - open - 1);
+        const bool        sized = !len.empty() && std::ranges::all_of(len, [](char c) {
+            return std::isdigit(static_cast<unsigned char>(c)) != 0;
+        });
+        out.array_len           = sized ? std::stoi(len) : -1;
+        out.name.erase(open);
+    }
+    if (out.type.find('[') != std::string::npos) {
         out.type.clear();
     }
     return true;
@@ -252,7 +289,8 @@ bool function::same_as(const function& other) const {
         return false;
     }
     for (std::size_t i = 0; i < params.size(); ++i) {
-        if (params[i].type != other.params[i].type) {
+        if (params[i].type != other.params[i].type ||
+            params[i].array_len != other.params[i].array_len) {
             return false;
         }
     }
@@ -509,6 +547,15 @@ unit parse(std::string_view source, std::string_view module) {
                 if (class_* owner = current_class()) {
                     take_ctor_dtor(owner);
                 }
+                // `enum PhxInteractionLayers {` — тело мимо, а имя нужно: в сигнатурах
+                // такой тип это int (`enum E : Base` тоже бывает — база отрезается).
+                if (const std::vector<std::string> t = split_tokens(trim(buffer));
+                    t.size() >= 2 && t[0] == "enum") {
+                    const std::string name = t[1].substr(0, t[1].find(':'));
+                    if (is_identifier(name) && std::ranges::find(out.enums, name) == out.enums.end()) {
+                        out.enums.push_back(name);
+                    }
+                }
                 scope.push_back(-1);
             }
             pending_bases.clear();
@@ -564,6 +611,11 @@ void merge(unit& into, unit&& more) {
             into.conditions.push_back(c);
         }
     }
+    for (std::string& e : more.enums) {
+        if (std::ranges::find(into.enums, e) == into.enums.end()) {
+            into.enums.push_back(std::move(e));
+        }
+    }
     for (function& f : more.globals) {
         if (std::ranges::none_of(into.globals,
                                  [&](const function& have) { return have.same_as(f); })) {
@@ -580,17 +632,34 @@ unit parse_tree(const std::string& root) {
     }
     // Порядок обхода задаёт, в каком модуле класс объявлен ВПЕРВЫЕ, — поэтому он должен
     // быть детерминированным, а не тем, что вернула файловая система.
+    //
+    // Каталоги-ссылки обходим: P:\scripts нередко собран junction-ами из распакованных
+    // PBO. Каждый настоящий каталог — один раз: петля из ссылок или две ссылки на одно
+    // место иначе дали бы бесконечный обход либо те же файлы дважды.
     std::vector<fs::path> files;
-    for (const fs::directory_entry& entry : fs::recursive_directory_iterator(root)) {
-        if (entry.is_regular_file() && entry.path().extension() == ".c") {
-            files.push_back(entry.path());
+    std::error_code       ec;
+    std::set<fs::path>    seen{fs::canonical(root, ec)};
+    constexpr auto        kOptions = fs::directory_options::follow_directory_symlink |
+                              fs::directory_options::skip_permission_denied;
+    for (auto it = fs::recursive_directory_iterator(root, kOptions, ec);
+         it != fs::recursive_directory_iterator();
+         it.increment(ec)) {
+        if (ec) {
+            break;
+        }
+        if (it->is_directory(ec)) {
+            if (!seen.insert(fs::canonical(it->path(), ec)).second) {
+                it.disable_recursion_pending();
+            }
+        } else if (it->path().extension() == ".c") {
+            files.push_back(it->path());
         }
     }
     std::ranges::sort(files);
     for (const fs::path& file : files) {
-        const fs::path rel = fs::relative(file, root);
-        const std::string module = rel.begin() == rel.end() ? std::string{}
-                                                            : rel.begin()->string();
+        const fs::path     rel    = file.lexically_relative(root);
+        const std::string  module = rel.begin() == rel.end() ? std::string{}
+                                                             : canonical_module(rel.begin()->string());
         std::ifstream in(file, std::ios::binary);
         std::ostringstream text;
         text << in.rdbuf();
@@ -646,20 +715,6 @@ bool split_generic(const std::string& type, std::string& base, std::vector<std::
     return true;
 }
 
-// Порядок разбора скриптов движком. Он же — порядок, в котором классы становятся
-// видимы: класс из 3_Game в заголовке 1_Core упомянуть нельзя, его там ещё нет.
-constexpr std::array<const char*, 5> kModuleOrder{"1_Core", "2_GameLib", "3_Game", "4_World",
-                                                  "5_Mission"};
-
-int module_rank(std::string_view module) {
-    for (const auto [i, name] : std::views::enumerate(kModuleOrder)) {
-        if (module == name) {
-            return static_cast<int>(i);
-        }
-    }
-    return -1;  // модуль не задан (тесты) — считаем «виден всегда»
-}
-
 // Условие препроцессора обратно в C++. Печатаем единообразно через defined(), чтобы
 // цепочку вариантов собирать из #if/#elif/#else.
 std::string guard_expr(const guard& g) {
@@ -687,6 +742,7 @@ public:
         for (const class_& k : all.classes) {
             by_name_.emplace(k.name, &k);
         }
+        enums_.insert(all.enums.begin(), all.enums.end());
         for (const class_& k : all.classes) {
             if (emittable(k)) {
                 emitted_.insert(k.name);
@@ -712,9 +768,6 @@ public:
                 };
                 for (const base_variant& b : k.bases) { want(b.name); }
                 for (const function& f : k.functions) {
-                    if (f.is_static) {
-                        continue;
-                    }
                     for (const std::string& leaf : type_leaves(f.ret)) {
                         want(leaf);
                     }
@@ -748,8 +801,7 @@ public:
         if (!is_identifier(k.name) || reserved(k.name) || builtin_types().contains(k.name)) {
             return false;
         }
-        return std::ranges::any_of(k.functions,
-                                   [](const function& f) { return !f.is_static; });
+        return !k.functions.empty();
     }
 
     bool in_module(const class_& k) const {
@@ -794,7 +846,7 @@ public:
             return {};
         }
         if (!emitted_.contains(enf_name)) {
-            return {};
+            return enums_.contains(enf_name) ? "graft::i32" : "";
         }
         // Класс из более позднего модуля в этом заголовке ещё не объявлен — и не будет:
         // движок разбирает модули в том же порядке.
@@ -819,10 +871,6 @@ public:
     };
 
     emitted_method method(const class_& owner, const function& f, coverage& out) const {
-        if (f.is_static) {
-            ++out.skipped_static;
-            return {};
-        }
         if (!is_identifier(f.name) || reserved(f.name)) {
             ++out.skipped_type;
             return {};
@@ -841,18 +889,20 @@ public:
         // Значение по умолчанию в C++ обязано идти хвостом. Enforce это не требует
         // (`SetHeading(float yaw, float dt = -1, float maxSpeed)`), поэтому считаем
         // справа: как только встретился параметр без значения, всё левее его теряет своё.
+        // У out и массива его нет вовсе: они уходят ссылкой.
         std::vector<bool> keep_default(f.params.size(), false);
         for (std::size_t i = f.params.size(); i-- > 0;) {
+            const param& p       = f.params[i];
             const bool tail_ok = i + 1 == f.params.size() || keep_default[i + 1];
-            keep_default[i] = tail_ok && !f.params[i].default_value.empty() &&
-                              simple_default(f.params[i].default_value);
+            keep_default[i]      = tail_ok && !p.is_out && p.array_len == 0 &&
+                              !p.default_value.empty() && simple_default(p.default_value);
         }
 
         std::string decl_args;
         std::string def_args;
         std::string pass;
         for (const auto [i, p] : std::views::enumerate(f.params)) {
-            const std::string type = cpp_type(p.type, false);
+            std::string type = cpp_type(p.type, false);
             if (type.empty() || type == "void") {
                 // `void` в параметре — это «любой тип» маршалируемого пути. Выразить его
                 // типизированно нельзя, а тихо подменить — соврать.
@@ -860,6 +910,44 @@ public:
                 return {};
             }
             const std::string name = p.name.empty() ? std::format("p{}", i) : sanitize(p.name);
+            std::string       arg  = name;
+            if (p.array_len != 0) {
+                // Статический массив натив получает указателем на элементы. Без размера
+                // (`mat[]`) его не выразить, а маршалируемому пути переменную-массив
+                // собирать не по чему — её раскладку мы не снимали.
+                if (p.array_len < 0 || !f.is_native) {
+                    ++out.skipped_type;
+                    return {};
+                }
+                type = std::format("{}std::array<{}, {}>&", p.is_out ? "" : "const ", type, p.array_len);
+                arg  = name + ".data()";
+            } else if (p.is_out && value_type(type)) {
+                if (f.is_native) {
+                    // `out vector` натива — указатель на 12 байт вызывающего. Значением он
+                    // уехал бы во временную копию, и результат пропадал бы молча. Других
+                    // out-значений у ванильных нативов нет — выпускать их наугад незачем.
+                    if (type != "graft::vector") {
+                        ++out.skipped_type;
+                        return {};
+                    }
+                    arg = "&" + name;
+                } else {
+                    // Маршалируемый out: движок пишет в переменную блока, std::ref
+                    // возвращает записанное (callout.hpp, write_back). Строку не отдаём
+                    // вовсе — ею владеет движок, call_proto её отвергнет.
+                    if (type == "graft::str") {
+                        ++out.skipped_type;
+                        return {};
+                    }
+                    arg = std::format("std::ref({})", name);
+                }
+                type += "&";
+            } else if (p.is_out && !f.is_native && !container_type(type)) {
+                // Объект через out маршалируемого вызова: в переменную блока движок кладёт
+                // новую ссылку (DayZPhysics.RayCastBullet, hitObject).
+                type += "&";
+                arg = std::format("std::ref({})", name);
+            }
             if (i) {
                 decl_args += ", ";
                 def_args += ", ";
@@ -872,15 +960,44 @@ public:
             if (keep_default[static_cast<std::size_t>(i)]) {
                 decl_args += " = " + p.default_value;
             }
-            pass += name;
+            pass += arg;
         }
         const char* how = f.is_native ? "call" : "proto";
         (f.is_native ? out.emitted_native : out.emitted_marshalled) += 1;
+        if (f.is_static) {
+            // Объекта нет: статический член, зовётся на имени класса — `Math::Sqrt(16)`.
+            ++out.emitted_static;
+            return {std::format("    static {} {}({});\n", ret, sanitize(f.name), decl_args),
+                    std::format("template <graft::name_t N>\n{} {}_<N>::{}({}) {{ return "
+                                "graft::ref<N>::template {}_static<{}, \"{}\">({}); }}\n",
+                                ret,
+                                sanitize(owner.name),
+                                sanitize(f.name),
+                                def_args,
+                                how,
+                                ret,
+                                f.name,
+                                pass)};
+        }
         return {std::format("    {} {}({}) const;\n", ret, sanitize(f.name), decl_args),
                 std::format("template <graft::name_t N>\n{} {}_<N>::{}({}) const {{ return "
                             "this->template {}<{}, \"{}\">({}); }}\n",
                             ret, sanitize(owner.name), sanitize(f.name), def_args, how, ret,
                             f.name, pass)};
+    }
+
+    // Значение лежит в самой переменной, а не ссылкой на объект движка: такой out
+    // приходится возвращать вызывающему отдельно.
+    static bool value_type(const std::string& cpp) {
+        return cpp == "graft::i32" || cpp == "graft::f32" || cpp == "bool" ||
+               cpp == "graft::vector" || cpp == "graft::str" || cpp == "graft::type";
+    }
+
+    // Контейнер через out движок заполняет на месте — его создаёт вызывающий
+    // (`GetPlayers(out array<Man>)`), и передаётся он как есть.
+    static bool container_type(const std::string& cpp) {
+        return cpp.starts_with("graft::array") || cpp.starts_with("graft::set") ||
+               cpp.starts_with("graft::map");
     }
 
     // Значение по умолчанию переносим, только если оно и в C++ значит ровно то же.
@@ -1095,6 +1212,7 @@ private:
     int rank_;
     std::unordered_map<std::string, const class_*> by_name_;
     std::unordered_set<std::string> emitted_;
+    std::unordered_set<std::string>                enums_;
 };
 
 }  // namespace
@@ -1179,14 +1297,10 @@ std::string mirror(const unit& all, std::string_view module, std::string_view in
 
 std::vector<std::string> mirror_modules(const unit& all) {
     // Порядок разбора скриптов движком; в нём же классы наследуют друг друга.
-    static constexpr std::array<const char*, 5> order{"1_Core", "2_GameLib", "3_Game", "4_World",
-                                                      "5_Mission"};
     std::vector<std::string> out;
-    for (const char* module : order) {
+    for (const char* module : kModuleOrder) {
         if (std::ranges::any_of(all.classes, [&](const class_& k) {
-                return k.module == module &&
-                       std::ranges::any_of(k.functions,
-                                           [](const function& f) { return !f.is_static; });
+                return k.module == module && !k.functions.empty();
             })) {
             out.emplace_back(module);
         }

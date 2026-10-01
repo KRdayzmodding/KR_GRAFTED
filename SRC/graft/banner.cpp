@@ -77,13 +77,12 @@ void for_each_line(std::string_view text, F emit) {
 // Один раз за процесс, как можно раньше.
 bool g_said_to_game = false;
 
-// Может ли движок печатать. Условие ровно одно, и оно проверяемое: чтобы позвать Print,
-// нужно собрать скриптовую переменную-строку, а её шаблон берётся у ванильного параметра
-// (donor_template). До линковки модуля шаблона не существует — печатать нечем, и это не
+// Может ли движок печатать. Условие проверяемое: чтобы позвать Print, нужно собрать
+// скриптовую переменную-строку, а для неё — контекст встроенных типов
+// (detail::builtin_context). Пока движок его не разобрал, печатать нечем, и это не
 // ошибка, а «ещё рано».
 bool ready() {
-    return script::find_global("Print") != nullptr &&
-           detail::donor_template(script::tag_string) != nullptr;
+    return script::find_global("Print") != nullptr && detail::builtin_context() != nullptr;
 }
 
 }  // namespace
