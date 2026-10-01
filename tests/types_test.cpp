@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "graft/native.hpp"
+#include "graft/scan.hpp"
 
 namespace {
 
@@ -461,6 +462,60 @@ TEST(PlainBinding, TranslatesOrdinaryCppTypes) {
 }
 
 }  // namespace
+
+// ── Натив-член с vector-возвратом ───────────────────────────────────────────
+// Флаги у наших членов те же, что у Object.GetPosition (0xa28, без external), и движок
+// зовёт их как функцию-член C++: this, потом скрытый буфер под vector. Трамплин обязан
+// принять ровно это — иначе движок пишет результат поверх шапки скриптового объекта
+// (в игре это ронял кейс Fields_VectorThroughPointer). Здесь трамплин зовётся так же,
+// как его зовёт движок, — через scan::member_call.
+namespace member_vector {
+
+// Объект — три float: так видно, что трамплин взял this, а не буфер.
+struct Spot : graft::ref<"TestSpot"> {
+    graft::vector Where() const {
+        const auto* p = static_cast<const float*>(ptr);
+        return {p[0], p[1], p[2]};
+    }
+
+    graft::vector Shifted(float by) const { return Where() + graft::vector{by, 0, 0}; }
+};
+
+graft::vector Lifted(const Spot& self, float by) {
+    return self.Where() + graft::vector{0, by, 0};
+}
+
+template <auto F>
+using spot = graft::detail::method_thunk<Spot, F>;
+
+// Ровно функция-член глазами движка: объект, буфер, аргументы; в rax — тот же буфер.
+static_assert(std::is_same_v<decltype(&spot<&Spot::Where>::call),
+                             graft::vector*(__fastcall*)(void*, graft::vector*)>);
+static_assert(std::is_same_v<decltype(&spot<&Spot::Shifted>::call),
+                             graft::vector*(__fastcall*)(void*, graft::vector*, float)>);
+
+template <auto F, class... A>
+graft::vector as_engine_calls(float* object, A... args) {
+    return graft::scan::member_call<graft::vector>(reinterpret_cast<void*>(&spot<F>::call), object, args...);
+}
+
+TEST(MemberVectorNative, TakesTheBufferAfterThis) {
+    float object[3] = {4.0f, 5.0f, 6.0f};
+    EXPECT_EQ(as_engine_calls<&Spot::Where>(object), (graft::vector{4.0f, 5.0f, 6.0f}));
+    EXPECT_EQ(object[0], 4.0f); // результат не лёг поверх объекта
+}
+
+TEST(MemberVectorNative, ArgumentsFollowTheBuffer) {
+    float object[3] = {4.0f, 5.0f, 6.0f};
+    EXPECT_EQ(as_engine_calls<&Spot::Shifted>(object, 10.0f), (graft::vector{14.0f, 5.0f, 6.0f}));
+}
+
+TEST(MemberVectorNative, FreeFunctionBoundAsMethodToo) {
+    float object[3] = {4.0f, 5.0f, 6.0f};
+    EXPECT_EQ(as_engine_calls<&Lifted>(object, 10.0f), (graft::vector{4.0f, 15.0f, 6.0f}));
+}
+
+} // namespace member_vector
 
 // ── Нативные типы C++ в сигнатуре ────────────────────────────────────────────
 // Писать нативы в graft::i32 / graft::str / graft::out не нужно: трамплин переводит

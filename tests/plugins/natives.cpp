@@ -432,6 +432,18 @@ text SeraphGraftEntityName(graft::ref<"Object"> o) {
     return o.call<graft::owned>("GetName");
 }
 
+// Векторный натив движка по имени. Обычный `proto native` объекта (GetPosition,
+// GetDirection) собран функцией-членом C++ и ждёт буфер возврата ПОСЛЕ this, а
+// `external` (GetOrigin, CoordToParent) — свободной функцией, и буфер у него первым.
+// Кейс Entity_VectorNativesFromCpp гоняет обе формы против того же вызова из скрипта.
+vector SeraphGraftEntityVector(graft::ref<"Object"> o, str method) {
+    return o.call<vector>(method.c_str());
+}
+
+vector SeraphGraftEntityVectorOf(graft::ref<"Object"> o, str method, vector arg) {
+    return o.call<vector>(method.c_str(), arg);
+}
+
 // Проверка наличия метода — страховка на случай, если движок переименует API.
 bool SeraphGraftEntityHas(graft::ref<"Object"> o, str method) {
     return o.has(method);
@@ -1197,6 +1209,8 @@ GRAFT_BINDINGS("3_Game") {
         .global<&SeraphGraftEntityOrigin>("SeraphGraftEntityOrigin")
         .global<&SeraphGraftEntityMove>("SeraphGraftEntityMove")
         .global<&SeraphGraftEntityName>("SeraphGraftEntityName")
+        .global<&SeraphGraftEntityVector>("SeraphGraftEntityVector")
+        .global<&SeraphGraftEntityVectorOf>("SeraphGraftEntityVectorOf")
         .global<&SeraphGraftEntityHas>("SeraphGraftEntityHas")
         .global<&SeraphGraftSumHeights>("SeraphGraftSumHeights")
         .global<&SeraphGraftRaiseAll>("SeraphGraftRaiseAll")

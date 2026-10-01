@@ -406,8 +406,15 @@ namespace detail {
 template <class R>
 concept object_return = requires { R::script_class; };
 
+// Возврат больше 8 байт (vector) едет через скрытый буфер, и его место зависит от того,
+// как натив собран. Обычный `proto native` метода — функция-член C++: this, потом буфер
+// (Object.GetPosition, флаги 0xa28). `external` — свободная функция: буфер, потом объект
+// (IEntity.GetOrigin, 0x4a28). Звать по одному правилу значит писать результат поверх
+// объекта — ровно так падал ref::call<vector> на GetPosition (кейс
+// Entity_VectorNativesFromCpp). Возврат в регистре от формы не зависит: this в rcx у обеих.
 template <class R, class... A>
-R call_native(void* impl, void* self, A... args) {
+R call_native(const script::method& fn, void* self, A... args) {
+    void* const impl = fn.impl;
     if constexpr (std::is_void_v<R>) {
         reinterpret_cast<void(__fastcall*)(void*, A...)>(impl)(self, args...);
     } else if constexpr (object_return<R>) {
@@ -416,6 +423,13 @@ R call_native(void* impl, void* self, A... args) {
         out.ptr = script::deref_object(raw);
         return out;
     } else {
+        if constexpr (!script::returned_in_register<R>) {
+            if ((fn.flags & layout::flag_external) == 0) {
+                R out{};
+                reinterpret_cast<void(__fastcall*)(void*, R*, A...)>(impl)(self, &out, args...);
+                return out;
+            }
+        }
         return reinterpret_cast<R(__fastcall*)(void*, A...)>(impl)(self, args...);
     }
 }
@@ -455,7 +469,7 @@ struct ref {
                 return R{};
             }
         }
-        return detail::call_native<R>(fn.impl, ptr, args...);
+        return detail::call_native<R>(fn, ptr, args...);
     }
 
     // То же, но промах виден в типе, а не превращается в ноль.
@@ -472,10 +486,10 @@ struct ref {
             return std::unexpected(miss::not_native);
         }
         if constexpr (std::is_void_v<R>) {
-            detail::call_native<void>(fn.impl, ptr, args...);
+            detail::call_native<void>(fn, ptr, args...);
             return R{};
         } else {
-            return detail::call_native<R>(fn.impl, ptr, args...);
+            return detail::call_native<R>(fn, ptr, args...);
         }
     }
     // Можно ли звать этот метод напрямую (существует и нативный).
@@ -500,7 +514,7 @@ struct ref {
                 return R{};
             }
         }
-        return detail::call_native<R>(fn.impl, ptr, args...);
+        return detail::call_native<R>(fn, ptr, args...);
     }
 
     template <class R, name_t Method, class... A>
@@ -516,10 +530,10 @@ struct ref {
             return std::unexpected(miss::not_native);
         }
         if constexpr (std::is_void_v<R>) {
-            detail::call_native<void>(fn.impl, ptr, args...);
+            detail::call_native<void>(fn, ptr, args...);
             return R{};
         } else {
-            return detail::call_native<R>(fn.impl, ptr, args...);
+            return detail::call_native<R>(fn, ptr, args...);
         }
     }
 

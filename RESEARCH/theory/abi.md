@@ -18,12 +18,22 @@
 
 | Форма | Как движок зовёт C++ |
 |---|---|
-| `proto native R f(A...)` | прямой x64 fastcall по сигнатуре; у метода arg0 = this; `string` = `const char*`; `vector` = 12-байтная структура; `owned string` = возврат `const char*` (движок копирует) |
+| `proto native R f(A...)` | прямой x64 fastcall по сигнатуре; у метода arg0 = this; `string` = `const char*`; `vector` = 12-байтная структура; `owned string` = возврат `const char*` (движок копирует); возврат `vector` — через скрытый буфер, и его место выбирает бит `0x4000` (см. ниже) |
 | `proto R f(A...)` | `int64 f(void*** args, var** ret)`: `(*args)[i]` — указатель на значение i-го аргумента (отсюда out/inout), `*ret` — скриптовая переменная (значение +0, тег типа +16, флаги +20) |
 
 Образцы: `IsCLIParam` (нативная, `bool f(char*)`), `string.IndexOf` (`int f(char*,char*)`),
 `Math.Sqrt` (маршалируемая, `***a1`), `string.Substring` (маршалируемая + буфер возврата),
 `GetHourMinuteSecond` (три out-аргумента через слоты).
+
+**`external` — это форма импла, а не украшение объявления** (2026-10-01, DayZDiag 1.29,
+кейс `Diag_MethodFlags`). Обычный `proto native` метода собран функцией-членом C++:
+`this` в rcx, скрытый буфер под `vector` — в rdx (`Object.GetPosition`, флаги `0xa28`,
+импл `+0x4A2F50`). `proto native external` — свободная функция с объектом аргументом:
+буфер в rcx, объект в rdx (`IEntity.GetOrigin` / `CoordToParent`, `0x4a28`). Движок
+выбирает форму вызова по биту `0x4000`: наш метод класса (`0xa28`) он зовёт как
+функцию-член — трамплин, принимавший буфер первым, писал результат поверх шапки объекта
+и ронял сервер (`Fields_VectorThroughPointer`). Возврату в регистре всё равно: this в rcx
+у обеих форм.
 
 ### Регистрация
 

@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <type_traits>
 
 #include "graft/abi.h"
 
@@ -78,6 +79,12 @@ inline constexpr std::size_t var_context = 24;
 inline constexpr std::uint32_t flag_static = 0x4;
 inline constexpr std::uint32_t flag_native = 0x20;
 inline constexpr std::uint32_t flag_marshalled = 0x40;
+// Как натив собран, и потому — куда ему класть скрытый буфер под возврат больше 8 байт
+// (см. returned_in_register): `external` — свободная функция с объектом аргументом
+// (IEntity.GetOrigin 0x4a28), буфер первым; без него — функция-член C++
+// (Object.GetPosition 0xa28), буфер после this. Движок зовёт по этому же биту,
+// поэтому наши члены (0xa28) он зовёт как функции-члены. Снято в игре, кейсы
+// Entity_VectorNativesFromCpp и Fields_VectorThroughPointer.
 inline constexpr std::uint32_t flag_external = 0x4000;
 
 // Контейнеры и typename
@@ -110,6 +117,16 @@ struct method {
     bool executable = false;
     bool callable() const { return impl != nullptr && executable; }
 };
+
+// Едет ли возврат в регистре. Больше 8 байт (скриптовый vector — 12) в RAX не влезает:
+// под него заводится буфер, адрес которого вызывающая сторона передаёт скрытым
+// аргументом. У ФУНКЦИИ-ЧЛЕНА этот адрес идёт ВТОРЫМ, после this, у свободной —
+// первым; какая форма у натива, говорит layout::flag_external.
+template <class R>
+concept returned_in_register =
+    std::is_void_v<R> || ((sizeof(R) == 1 || sizeof(R) == 2 || sizeof(R) == 4 ||
+                           sizeof(R) == 8) &&
+                          std::is_trivially_copyable_v<R>);
 
 // Теги типов. Тип задаёт СТАРШИЙ ниббл, младшие биты — идентификатор конкретного типа
 // (у Class там номер класса, поэтому array<int> и map<string,int> оба 0x6000xxxx).
