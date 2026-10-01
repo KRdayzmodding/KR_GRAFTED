@@ -144,11 +144,36 @@ C& instance_of(void* self) {
 template <class C, auto F>
 struct method_thunk;
 
-template <class C, class Own, class R, class... A, R (Own::*F)(A...)>
-struct method_thunk<C, F> : abi_check<R, A...> {
+// Вход трамплина — тот, каким его зовёт движок. Флаги у наших членов те же, что у
+// Object.GetPosition (0xa28, без external), и движок зовёт их как функцию-член C++.
+// Пока возврат влезает в регистр, это не отличить от свободной функции: объект в rcx.
+// Возврат больше 8 байт (vector) едет через буфер, и тогда он ВТОРЫМ, после объекта, —
+// примешь его первым, и движок запишет результат поверх шапки скриптового объекта
+// (так падал кейс Fields_VectorThroughPointer). Адрес буфера возвращается в rax, как у
+// функции-члена.
+template <class Thunk, class R, class... A>
+struct member_entry_in_register : abi_check<R, A...> {
     static ret_abi<R> __fastcall call(void* self, arg_abi<A>... args) {
-        return guarded<R>(reinterpret_cast<void*>(&call), [&] { return body(self, args...); });
+        return guarded<R>(reinterpret_cast<void*>(&call),
+                          [&] { return Thunk::body(self, args...); });
     }
+};
+
+template <class Thunk, class R, class... A>
+struct member_entry_in_buffer : abi_check<R, A...> {
+    static ret_abi<R>* __fastcall call(void* self, ret_abi<R>* out, arg_abi<A>... args) {
+        *out = guarded<R>(reinterpret_cast<void*>(&call), [&] { return Thunk::body(self, args...); });
+        return out;
+    }
+};
+
+template <class Thunk, class R, class... A>
+using member_entry = std::conditional_t<script::returned_in_register<ret_abi<R>>,
+                                        member_entry_in_register<Thunk, R, A...>,
+                                        member_entry_in_buffer<Thunk, R, A...>>;
+
+template <class C, class Own, class R, class... A, R (Own::*F)(A...)>
+struct method_thunk<C, F> : member_entry<method_thunk<C, F>, R, A...> {
     static ret_abi<R> body(void* self, arg_abi<A>... args) {
         [[maybe_unused]] arena_scope<R> alive;
         C& object = instance_of<C>(self);
@@ -161,10 +186,7 @@ struct method_thunk<C, F> : abi_check<R, A...> {
 };
 
 template <class C, class Own, class R, class... A, R (Own::*F)(A...) const>
-struct method_thunk<C, F> : abi_check<R, A...> {
-    static ret_abi<R> __fastcall call(void* self, arg_abi<A>... args) {
-        return guarded<R>(reinterpret_cast<void*>(&call), [&] { return body(self, args...); });
-    }
+struct method_thunk<C, F> : member_entry<method_thunk<C, F>, R, A...> {
     static ret_abi<R> body(void* self, arg_abi<A>... args) {
         [[maybe_unused]] arena_scope<R> alive;
         const C& object = instance_of<C>(self);
@@ -177,10 +199,7 @@ struct method_thunk<C, F> : abi_check<R, A...> {
 };
 
 template <class C, class R, class Self, class... A, R (*F)(Self, A...)>
-struct method_thunk<C, F> : abi_check<R, A...> {
-    static ret_abi<R> __fastcall call(void* self, arg_abi<A>... args) {
-        return guarded<R>(reinterpret_cast<void*>(&call), [&] { return body(self, args...); });
-    }
+struct method_thunk<C, F> : member_entry<method_thunk<C, F>, R, A...> {
     static ret_abi<R> body(void* self, arg_abi<A>... args) {
         [[maybe_unused]] arena_scope<R> alive;
         C& object = instance_of<C>(self);

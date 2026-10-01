@@ -547,6 +547,95 @@ TEST(World, BorrowedResetForgetsEverything) {
     EXPECT_FALSE(kept.get().has_value());
 }
 
+// ── Куда движковому нативу класть скрытый буфер ─────────────────────────────
+// Возврат больше 8 байт (vector) едет через скрытый буфер, а его место зависит от того,
+// КАК натив собран. Обычный `proto native` метода — функция-член C++: this, потом буфер
+// (Object.GetPosition). `external` — свободная функция с объектом аргументом: буфер,
+// потом объект (IEntity.GetOrigin). Различает их бит 0x4000 дескриптора; путаница —
+// чтение по мусору и запись результата поверх объекта.
+//
+// Импл здесь — настоящая функция-член и настоящая свободная функция того же компилятора,
+// поэтому сломается правило — покраснеет здесь, а не в игре.
+struct engine_entity {
+    float x = 0, y = 0, z = 0;
+    int   id = 0;
+
+    __declspec(noinline) graft::vector position() const { return {x, y, z}; }
+
+    __declspec(noinline) graft::vector shifted(float by) const { return {x + by, y, z}; }
+
+    __declspec(noinline) int ident() const { return id; }
+};
+
+__declspec(noinline) graft::vector external_origin(const engine_entity* e) {
+    return {e->x, e->y, e->z};
+}
+
+__declspec(noinline) graft::vector external_shifted(const engine_entity* e, float by) {
+    return {e->x + by, e->y, e->z};
+}
+
+__declspec(noinline) int external_ident(const engine_entity* e) {
+    return e->id;
+}
+
+template <class M>
+void* code_of(M fn) {
+    static_assert(sizeof fn == sizeof(void*), "указатель на функцию обязан быть одним адресом");
+    void* raw = nullptr;
+    std::memcpy(&raw, &fn, sizeof raw);
+    return raw;
+}
+
+graft::script::method member_native(void* impl) {
+    return {.impl = impl, .flags = graft::layout::flag_native, .executable = true};
+}
+
+graft::script::method external_native(void* impl) {
+    return {.impl       = impl,
+            .flags      = graft::layout::flag_native | graft::layout::flag_external,
+            .executable = true};
+}
+
+TEST(NativeCall, MemberNativeTakesTheBufferAfterThis) {
+    engine_entity e{1.0f, 2.0f, 3.0f, 7};
+    const auto    got = graft::detail::call_native<graft::vector>(
+        member_native(code_of(&engine_entity::position)), &e);
+    EXPECT_EQ(got, (graft::vector{1.0f, 2.0f, 3.0f}));
+    EXPECT_EQ(e.x, 1.0f); // результат не лёг поверх объекта
+    EXPECT_EQ(e.id, 7);
+}
+
+TEST(NativeCall, MemberNativeArgumentsFollowTheBuffer) {
+    engine_entity e{1.0f, 2.0f, 3.0f, 0};
+    const auto    got = graft::detail::call_native<graft::vector>(
+        member_native(code_of(&engine_entity::shifted)), &e, 10.0f);
+    EXPECT_EQ(got, (graft::vector{11.0f, 2.0f, 3.0f}));
+}
+
+TEST(NativeCall, ExternalNativeTakesTheBufferFirst) {
+    engine_entity e{1.0f, 2.0f, 3.0f, 7};
+    const auto    got =
+        graft::detail::call_native<graft::vector>(external_native(code_of(&external_origin)), &e);
+    EXPECT_EQ(got, (graft::vector{1.0f, 2.0f, 3.0f}));
+    EXPECT_EQ(e.id, 7);
+}
+
+TEST(NativeCall, ExternalNativeArgumentsFollowTheObject) {
+    engine_entity e{1.0f, 2.0f, 3.0f, 0};
+    const auto    got = graft::detail::call_native<graft::vector>(
+        external_native(code_of(&external_shifted)), &e, 10.0f);
+    EXPECT_EQ(got, (graft::vector{11.0f, 2.0f, 3.0f}));
+}
+
+// Возврат в регистре от формы не зависит: this в rcx у обеих.
+TEST(NativeCall, RegisterReturnIsTheSameForBothForms) {
+    engine_entity e{0, 0, 0, 42};
+    EXPECT_EQ(graft::detail::call_native<int>(member_native(code_of(&engine_entity::ident)), &e),
+              42);
+    EXPECT_EQ(graft::detail::call_native<int>(external_native(code_of(&external_ident)), &e), 42);
+}
+
 // ── Защита вызова ────────────────────────────────────────────────────────────
 // В игре это проверяется настоящим падением настоящего натива (кейс Crash_*), но сам
 // механизм — обычный C++ и никакого движка не требует. Здесь он и проверяется целиком:

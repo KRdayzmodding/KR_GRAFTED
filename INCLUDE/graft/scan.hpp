@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "graft/name.hpp"
+#include "graft/script.hpp"
 
 // Поиск движковых точек регистрации нативов в загруженном образе — без единого
 // зашитого адреса. Якоря — имена ванильных нативов и скриптовых классов: они часть
@@ -442,9 +443,9 @@ bool is_code(const void* p);
 std::size_t vtable_slots(void* const* vt);
 
 // ── Позвать НАСТОЯЩИЙ метод C++ движка ───────────────────────────────────────
-// Это НЕ натив: натив зарегистрирован через RegisterMethod, за ним стоит обёртка движка,
-// и зовут его через ref::call. Здесь — метод, найденный по RTTI и таблице (rtti_vtable),
-// то есть обычная функция-член, как её собрал MSVC.
+// Метод, найденный по RTTI и таблице (rtti_vtable), — обычная функция-член, как её
+// собрал MSVC. Натив, зарегистрированный через RegisterMethod, зовут через ref::call:
+// он сам выбирает форму по флагам дескриптора.
 //
 // Разница ровно одна, и она смертельна. Возврат больше 8 байт (скриптовый vector — это
 // 12) в RAX не влезает: под него заводится буфер, адрес которого вызывающая сторона
@@ -458,13 +459,11 @@ std::size_t vtable_slots(void* const* vt);
 // где метод ждёт this, а объект — туда, куда он пишет результат: чтение по мусору и
 // запись поверх чужого объекта. Это и есть 0xC0000005 на ровном месте.
 //
-// Обратное тоже верно и тоже проверено на живом движке: у ЗАРЕГИСТРИРОВАННОГО натива
-// буфер идёт первым — см. graft::position в world.hpp, там разобран импл IEntity.GetOrigin.
+// Нативы бывают обеих форм: обычный `proto native` метода — функция-член
+// (Object.GetPosition), `external` — свободная функция (IEntity.GetOrigin). Различает
+// их layout::flag_external.
 template <class R>
-concept returned_in_register =
-    std::is_void_v<R> || ((sizeof(R) == 1 || sizeof(R) == 2 || sizeof(R) == 4 ||
-                           sizeof(R) == 8) &&
-                          std::is_trivially_copyable_v<R>);
+concept returned_in_register = script::returned_in_register<R>;
 
 template <class R, class... A>
 R member_call(void* fn, void* self, A... args) {

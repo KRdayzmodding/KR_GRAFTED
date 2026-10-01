@@ -499,6 +499,46 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             GetGame().ObjectDelete(obj);
     }
 
+    [KRU_TEST_CASE("Entity_VectorNativesFromCpp").IN(SERAPH_GRAFT_TEST)];
+    void Entity_VectorNativesFromCpp()
+    {
+        // vector из движкового натива едет через скрытый буфер, а место буфера у двух
+        // форм разное: обычный proto native объекта (GetPosition, GetDirection) собран
+        // функцией-членом C++ — буфер после this; external (GetOrigin, CoordToParent) —
+        // свободной функцией, буфер первым. Перепутать — значит записать результат поверх
+        // объекта. Каждая форма — без аргумента и с аргументом, против того же вызова
+        // из скрипта.
+        Object obj = GetGame().CreateObjectEx("Apple", "1000 5 1000", ECE_NONE);
+        string info = "obj=null";
+        int bad = -1;
+        if (obj)
+        {
+            obj.SetOrientation("30 0 0");
+            vector inModel = "0.5 0.25 1";
+            info = "";
+            bad = 0;
+            bad += SameVector(info, "GetPosition", SeraphGraftEntityVector(obj, "GetPosition"), obj.GetPosition());
+            bad += SameVector(info, "GetDirection", SeraphGraftEntityVector(obj, "GetDirection"), obj.GetDirection());
+            bad += SameVector(info, "GetOrientation", SeraphGraftEntityVector(obj, "GetOrientation"), obj.GetOrientation());
+            bad += SameVector(info, "GetGlobalPos", SeraphGraftEntityVectorOf(obj, "GetGlobalPos", inModel), obj.GetGlobalPos(inModel));
+            bad += SameVector(info, "GetOrigin", SeraphGraftEntityVector(obj, "GetOrigin"), obj.GetOrigin());
+            bad += SameVector(info, "CoordToParent", SeraphGraftEntityVectorOf(obj, "CoordToParent", inModel), obj.CoordToParent(inModel));
+        }
+        assert(bad == 0, "все шесть совпали со скриптом", info,
+            "vector-нативы обеих форм вызываются из C++");
+        if (obj)
+            GetGame().ObjectDelete(obj);
+    }
+
+    // 1, если C++ и скрипт разошлись; в info дописывается, что именно.
+    private int SameVector(inout string info, string what, vector fromCpp, vector fromScript)
+    {
+        if (vector.Distance(fromCpp, fromScript) < 0.01)
+            return 0;
+        info += what + ": cpp=" + fromCpp.ToString() + " scr=" + fromScript.ToString() + "; ";
+        return 1;
+    }
+
     [KRU_TEST_CASE("Modern_RangesOverScriptArray").IN(SERAPH_GRAFT_TEST)];
     void Modern_RangesOverScriptArray()
     {
@@ -590,6 +630,12 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         SeraphGraftMethodFlags("SeraphGraft", "SelfTag");
         SeraphGraftMethodFlags("SeraphBox", "Tag");
         SeraphGraftMethodFlags("SeraphHashMap", "Set");
+        // vector-возврат: функция-член против external (Entity_VectorNativesFromCpp)
+        SeraphGraftMethodFlags("Object", "GetPosition");
+        SeraphGraftMethodFlags("Object", "GetGlobalPos");
+        SeraphGraftMethodFlags("IEntity", "GetOrigin");
+        SeraphGraftMethodFlags("IEntity", "CoordToParent");
+        SeraphGraftMethodFlags("SeraphNode", "Pos");
 
         assert(true, "смотри graft.log", "смотри graft.log", "снимок флагов дескрипторов");
     }
