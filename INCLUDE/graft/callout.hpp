@@ -26,8 +26,10 @@
 // Мы делаем ровно то же — и потому не гадаем, что лежит в полях, которых не разобрали:
 // они доезжают до движка байт в байт такими, какими он их сам туда положил.
 //
-// Шаблона нет только у переменной ВОЗВРАТА (дескриптор её не носит) — её собираем по
-// тегу. Если однажды окажется, что этого мало, чинить надо здесь и только здесь.
+// Шаблона нет у переменной ВОЗВРАТА (дескриптор её не носит), у параметра `void` и у
+// глобального `proto` без дескриптора — там переменную собираем по тегу так же, как её
+// размечает компилятор (script::var::of_tag). Если однажды окажется, что этого мало,
+// чинить надо там и только там.
 namespace graft {
 
 // Результат маршалируемого вызова. Аргументы отдаются ПОСЛЕ вызова: у `out`-параметра
@@ -78,60 +80,28 @@ inline const void* param_template_of_tag(const script::method& fn, std::uint32_t
     return nullptr;
 }
 
-// ── Донорские шаблоны ────────────────────────────────────────────────────────
-// Движок НИКОГДА не собирает скриптовую переменную с нуля — он копирует готовый
-// 40-байтный шаблон (sub_1403663B0). Значит и нам собирать нельзя: у переменной есть
-// поля, которых мы не разобрали, и одно из них движку нужно для разрешения типа.
-// Синтезированная переменная с верным тегом, но пустым остатком роняет процесс —
-// проверено падением: в момент разрешения типа rcx = 0, а в rax наш же тег.
-//
-// Параметрам шаблон даёт сама вызываемая функция. А вот возврату его взять неоткуда:
-// дескриптор функции его не носит. Поэтому берём у ЧУЖОГО ПАРАМЕТРА того же типа —
-// функции ниже выбраны за то, что они есть в любой сборке и вместе покрывают все
-// семейства. Не нашлось донора — отказ, а не попытка сочинить.
-struct donor_site {
-    const char* class_name;
-    const char* method;
-};
-
-inline const void* donor_template(std::uint32_t tag) {
-    struct slot {
-        std::uint32_t tag;
-        donor_site from;
-    };
-    // EnScript.GetClassVar(Class inst, string varname, int index, out void result)
-    // Physics.SetMass(float), Physics.SetVelocity(vector)
-    // EnProfiler.GetTimeOfClass(typename clss, bool immediate)
-    //
-    // Параметр ищется ПО ТЕГУ, а не по номеру: Physics.SetMass объявлен `proto external`,
-    // и нулевым параметром в его дескрипторе едет сам объект Physics, а float — первым.
-    // Номер из объявления давал шаблон объекта там, где ждали float или vector.
-    static constexpr slot kDonors[] = {
-        {script::tag_class, {"EnScript", "GetClassVar"}},
-        {script::tag_string, {"EnScript", "GetClassVar"}},
-        {script::tag_int, {"EnScript", "GetClassVar"}},
-        {script::tag_float, {"Physics", "SetMass"}},
-        {script::tag_vector, {"Physics", "SetVelocity"}},
-        {script::tag_typename, {"EnProfiler", "GetTimeOfClass"}},
-        {script::tag_bool, {"EnProfiler", "GetTimeOfClass"}},
-    };
-    static const void* found[std::size(kDonors)]{};
-    for (std::size_t i = 0; i < std::size(kDonors); ++i) {
-        if (kDonors[i].tag != tag) {
-            continue;
-        }
-        if (!found[i]) {
-            // Промах не кэшируем: первый вызов может случиться раньше, чем движок
-            // разобрал нужный модуль.
-            found[i] = param_template_of_tag(
-                script::find_method(kDonors[i].from.class_name, kDonors[i].from.method), tag);
-        }
-        return found[i];
-    }
-    return nullptr;
+// Контекст встроенных типов — туда смотрит +24 всякой переменной int, string, vector, в
+// каком бы модуле её ни объявили. Его носит дескриптор корня иерархии, Class. nullptr —
+// движок ещё не разобрал ядро (или его нет вовсе, как в тестах): тогда собирать переменную
+// не из чего, и вызов получает отказ no_template, а не переменную с нулём в +24 (с ним
+// движок падает на разрешении типа — проверено).
+inline void* builtin_context() {
+    void* root = script::find_class("Class");
+    return root ? *reinterpret_cast<void**>(static_cast<char*>(root) + layout::class_context)
+                : nullptr;
 }
 
-// Флаги, которые донор принёс от параметра, а переменной возврата не нужны: const,
+// Переменная встроенного типа там, где шаблона нет (см. script::var::of_tag).
+inline bool builtin_var(std::uint32_t tag, script::var& out) {
+    void* ctx = tag != 0 ? builtin_context() : nullptr;
+    if (!ctx) {
+        return false;
+    }
+    out = script::var::of_tag(tag, ctx);
+    return true;
+}
+
+// Флаги, которые шаблон чужого параметра принёс, а переменной возврата не нужны: const,
 // «не писать» и out. С 0x40 движок просто молча не запишет результат (проверено в
 // GetModule и Spawn — оба его читают).
 //
@@ -216,8 +186,8 @@ inline std::expected<proto_result, miss> call_proto(const script::method& fn, vo
     // ДЕСКРИПТОРА МОЖЕТ И НЕ БЫТЬ. У метода класса он есть всегда, а вот у ГЛОБАЛЬНОГО
     // `proto` движка (Print, ErrorEx) он живёт в таблице функций скриптового модуля, до
     // которой из C++ хода нет: наружу торчит только импл, и тот — с регистрации, по
-    // имени. Тогда арность знает вызывающая сторона, а шаблоны берутся у доноров, как
-    // они и так берутся для параметров, объявленных `void`.
+    // имени. Тогда арность знает вызывающая сторона, а переменные собираются по тегу,
+    // как и для параметров, объявленных `void` (var::of_tag).
     const bool blind = fn.desc == nullptr;
     // Арность сверяем с дескриптором, а не с надеждой: неполный блок — это кадр, в
     // котором движок прочитает мусор, и разбираться потом придётся по минидампу.
@@ -230,26 +200,27 @@ inline std::expected<proto_result, miss> call_proto(const script::method& fn, vo
     void* block[script::max_proto_args]{};
 
     for (std::size_t i = 0; i < args.size(); ++i) {
-        const void* tpl = blind ? detail::donor_template(detail::tag_of(args[i]))
-                                : script::param_template(fn, i);
-        if (!tpl) {
+        const std::uint32_t want = detail::tag_of(args[i]);
+        if (blind) {
+            if (!detail::builtin_var(want, slots[i])) {
+                return std::unexpected(miss::no_template);
+            }
+        } else if (const void* tpl = script::param_template(fn, i)) {
+            slots[i] = script::var::from_template(tpl);
+        } else {
             return std::unexpected(miss::no_template);
         }
-        slots[i] = script::var::from_template(tpl);
-        const std::uint32_t want = detail::tag_of(args[i]);
         const std::uint32_t have = slots[i].tag() & script::type_family;
         if (have == script::type_any || have == 0) {
             // Параметр объявлен как `void` — это «любой тип», и настоящую переменную
             // движок собирает на месте вызова по фактическому аргументу. Значит и мы
-            // берём готовую переменную нужного типа, а не переписываем тег в чужой:
+            // собираем переменную нужного типа целиком, а не переписываем тег в чужой:
             // от типа зависит не только тег.
             const std::uint32_t keep =
                 *reinterpret_cast<const std::uint32_t*>(slots[i].raw + layout::var_flags);
-            const void* filled = detail::donor_template(want);
-            if (!filled) {
+            if (!detail::builtin_var(want, slots[i])) {
                 return std::unexpected(miss::no_template);
             }
-            slots[i] = script::var::from_template(filled);
             *reinterpret_cast<std::uint32_t*>(slots[i].raw + layout::var_flags) |= keep;
         } else if (want != 0 && (want & script::type_family) != have) {
             // Сигнатура разошлась с движком. Ловим это ЗДЕСЬ, а не падением внутри
@@ -260,7 +231,7 @@ inline std::expected<proto_result, miss> call_proto(const script::method& fn, vo
         // Строку в `out`-параметр не отдаём: ею владеет движок и освободит её сам, а
         // наша живёт в кольце — это порча кучи, тот же запрет, что и на запись char* в
         // array<string>. ponytail: путь наверх есть — подкладывать движковую пустую
-        // строку (ctx+1144, её же освобождение пропускает), но пока такого вызова нет.
+        // строку (как var::of_tag, её же освобождение пропускает), но пока такого вызова нет.
         const std::uint32_t flags =
             *reinterpret_cast<const std::uint32_t*>(slots[i].raw + layout::var_flags);
         if ((flags & 0x80) != 0 &&
@@ -289,20 +260,18 @@ inline std::expected<proto_result, miss> call_proto(const script::method& fn, vo
     }
 
     // Переменная возврата подаётся ВСЕГДА, даже у `proto void`: ванильные имплы её
-    // разыменовывают, лишь проверяя на ноль сам указатель. Для void берём донора int —
-    // это законная переменная, в которую просто никто не запишет.
+    // разыменовывают, лишь проверяя на ноль сам указатель. Для void собираем int — это
+    // законная переменная, в которую просто никто не запишет.
     //
-    // Шаблон ищем сперва у САМОЙ вызываемой функции: если у неё есть параметр того же
-    // типа, это лучший донор какой бывает — он от неё же и ходить никуда не надо.
+    // Шаблон берём сперва у САМОЙ вызываемой функции: параметр того же типа размечен её же
+    // компилятором, и ходить никуда не надо. Нет такого — собираем по тегу.
     const std::uint32_t want_ret = ret_tag != 0 ? ret_tag : script::tag_int;
-    const void*         ret_tpl  = blind ? nullptr : detail::param_template_of_tag(fn, want_ret);
-    if (!ret_tpl) {
-        ret_tpl = detail::donor_template(want_ret);
-    }
-    if (!ret_tpl) {
+    script::var         ret_var;
+    if (const void* own = blind ? nullptr : detail::param_template_of_tag(fn, want_ret)) {
+        ret_var = script::var::from_template(own);
+    } else if (!detail::builtin_var(want_ret, ret_var)) {
         return std::unexpected(miss::no_template);
     }
-    script::var ret_var = script::var::from_template(ret_tpl);
     detail::make_writable(ret_var);
     vector ret_vector{};
     if ((ret_var.tag() & script::type_family) == script::type_vector) {
@@ -337,7 +306,7 @@ inline std::expected<proto_result, miss> call_proto(const script::method& fn, vo
         out.args[i] = detail::read_var(slots[i].raw);
     }
     // У `proto void` переменная возврата была нужна только для того, чтобы движку было
-    // куда не писать. Читать её нечего — иначе наружу поехал бы ноль донора.
+    // куда не писать. Читать её нечего — иначе наружу поехал бы её ноль.
     if (ret_tag != 0) {
         out.ret = detail::read_var(ret_var.raw);
     }

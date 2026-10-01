@@ -134,14 +134,65 @@ std::int64_t __fastcall static_impl(void*** args, void** ret) {
 
 // ── Сама переменная ─────────────────────────────────────────────────────────
 
-TEST(CallOut, SynthesizedVarCarriesTagAndScalarExtent) {
-    const graft::script::var v = graft::script::var::of_tag(graft::script::type_int);
-    EXPECT_EQ(v.tag(), graft::script::type_int);
-    // Подготовка кадра в движке пишет сюда 0x10000: младшее слово — размерность
-    // статического массива (0), старшее — счётчик, который у скаляра равен 1.
-    std::uint32_t extent = 0;
-    std::memcpy(&extent, v.raw + 32, sizeof extent);
-    EXPECT_EQ(extent, 0x10000u);
+// Переменная встроенного типа там, где шаблона нет, собирается так, как компилятор
+// размечает параметр. Ожидания ниже — байты живых шаблонов, снятые в игре
+// (EnScript.GetClassVar, Physics.SetVelocity, EnProfiler.GetTimeOfClass); там же их
+// сверяет кейс Proto_BuiltinVarsMatchCompiler.
+struct fake_strings {
+    std::array<unsigned char, graft::layout::strings_empty + 8>   raw{};
+    std::array<unsigned char, graft::layout::context_strings + 8> ctx{};
+    char                                                          empty[1] = {};
+
+    fake_strings() {
+        const void* e = empty;
+        std::memcpy(raw.data() + graft::layout::strings_empty, &e, sizeof e);
+        const void* s = raw.data();
+        std::memcpy(ctx.data() + graft::layout::context_strings, &s, sizeof s);
+    }
+};
+
+std::uint32_t u32_at(const graft::script::var& v, std::size_t at) {
+    std::uint32_t out = 0;
+    std::memcpy(&out, v.raw + at, sizeof out);
+    return out;
+}
+
+TEST(CallOut, BuiltinVarIsLaidOutLikeACompiledParam) {
+    fake_strings core;
+
+    struct expect {
+        std::uint32_t tag, flags, extent;
+    };
+
+    const expect cases[] = {
+        {graft::script::tag_int, 0x400, 0x10000},
+        {graft::script::tag_float, 0x400, 0x10000},
+        {graft::script::tag_bool, 0x500, 0x10000},
+        {graft::script::tag_string, 0x400, 0x10000},
+        {graft::script::tag_vector, 0x440, 3},
+        {graft::script::tag_class, 0xc00, 0x10000},
+        {graft::script::tag_typename, 0x400, 0x10000},
+    };
+    for (const expect& e : cases) {
+        const auto v = graft::script::var::of_tag(e.tag, core.ctx.data());
+        EXPECT_EQ(v.tag(), e.tag);
+        EXPECT_EQ(u32_at(v, graft::layout::var_flags), e.flags) << std::hex << e.tag;
+        EXPECT_EQ(u32_at(v, graft::layout::var_extent), e.extent) << std::hex << e.tag;
+        void* ctx = nullptr;
+        std::memcpy(&ctx, v.raw + graft::layout::var_context, sizeof ctx);
+        EXPECT_EQ(ctx, core.ctx.data());
+    }
+}
+
+// Строковая переменная начинается с пустой строки движка, как после его же инициализации
+// (sub_140366ED0): её присваивание не освобождает. Остальные — с нуля.
+TEST(CallOut, BuiltinStringStartsAsTheEngineEmptyString) {
+    fake_strings core;
+    void*        value = nullptr;
+    std::memcpy(&value, graft::script::var::of_tag(graft::script::tag_string, core.ctx.data()).raw, sizeof value);
+    EXPECT_EQ(value, core.empty);
+    std::memcpy(&value, graft::script::var::of_tag(graft::script::tag_int, core.ctx.data()).raw, sizeof value);
+    EXPECT_EQ(value, nullptr);
 }
 
 TEST(CallOut, TemplateIsCopiedWholeNotRebuilt) {
@@ -359,7 +410,7 @@ std::int64_t __fastcall receiver_impl(void*** args, void**) {
 std::expected<graft::proto_result, graft::miss> call_external_on(fake_types&   types,
                                                                  fake_entity&  entity,
                                                                  std::uint32_t flags = 0x1000) {
-    // int-параметр — донор переменной возврата: без движка другого взять неоткуда.
+    // int-параметр даёт шаблон переменной возврата: без движка собрать её не из чего.
     static FakeProto fake({fake_types::tag, graft::script::type_int},
                           reinterpret_cast<void*>(&receiver_impl));
     fake.set_param_context(0, types.ctx.data());
@@ -435,7 +486,7 @@ TEST(CallOut, VectorReturnArrivesThroughItsPointer) {
     EXPECT_EQ(r->ret.as<graft::vector>(), (graft::vector{2, 4, 6}));
 }
 
-// Шаблон без 0x40 (донор, чужая сборка) — флаг всё равно ставим: у vector он означает
+// Шаблон без 0x40 (чужая сборка) — флаг всё равно ставим: у vector он означает
 // хранилище по указателю, а не «не писать».
 TEST(CallOut, VectorReturnGetsIndirectFlagEvenFromPlainTemplate) {
     FakeProto          fake({graft::script::tag_vector}, reinterpret_cast<void*>(&vector_twice_impl));
@@ -446,8 +497,9 @@ TEST(CallOut, VectorReturnGetsIndirectFlagEvenFromPlainTemplate) {
     EXPECT_EQ(r->ret.as<graft::vector>(), (graft::vector{2, 0, 0}));
 }
 
-// Донор берётся по ТЕГУ параметра, а не по номеру из объявления: у `proto external`
-// нулевым в дескрипторе едет объект (Physics.SetMass — объект, потом float).
+// Шаблон возврата у самой функции берётся по ТЕГУ параметра, а не по номеру из
+// объявления: у `proto external` нулевым в дескрипторе едет объект (Physics.SetMass —
+// объект, потом float).
 TEST(CallOut, TemplateIsFoundByTagNotByDeclaredIndex) {
     FakeProto                   fake({graft::script::tag_class, graft::script::tag_float},
                    reinterpret_cast<void*>(&noop_impl));

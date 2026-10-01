@@ -572,6 +572,17 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             GetGame().ObjectDelete(obj);
     }
 
+    [KRU_TEST_CASE("Proto_BuiltinVarsMatchCompiler").IN(SERAPH_GRAFT_TEST)];
+    void Proto_BuiltinVarsMatchCompiler()
+    {
+        // Переменную возврата, параметра `void` и аргумент глобали без дескриптора (Print)
+        // graft собирает сам, без шаблона. Она обязана совпасть с той, что размечает
+        // компилятор; что именно разошлось — в журнале graft.
+        int bad = SeraphGraftBuiltinVarsMismatch();
+        assert(bad == 0, "все семь совпали с шаблонами компилятора", "расхождений: " + bad.ToString(),
+            "переменная встроенного типа собирается как у компилятора");
+    }
+
     [KRU_TEST_CASE("Mirror_OutArraysAndStaticsFromCpp").IN(SERAPH_GRAFT_TEST)];
     void Mirror_OutArraysAndStaticsFromCpp()
     {

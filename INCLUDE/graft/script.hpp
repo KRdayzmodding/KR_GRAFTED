@@ -48,6 +48,9 @@ inline constexpr std::size_t class_var_table = 88;   // указатель на 
 inline constexpr std::size_t class_var_count = 100;  // uint32
 inline constexpr std::size_t class_functions = 104;  // массив указателей на дескрипторы
 inline constexpr std::size_t class_var_base = 184;   // uint32: где в объекте начинаются поля
+// Контекст модуля, где класс объявлен. У Class это контекст встроенных типов: туда же
+// смотрит +24 всякой переменной int/string/vector, в каком бы модуле её ни объявили.
+inline constexpr std::size_t class_context  = 24;
 inline constexpr std::size_t var_entry_name = 8;     // const char*
 inline constexpr std::size_t var_entry_slot = 40;    // uint16: номер слота, смещение = slot*4
 
@@ -56,8 +59,7 @@ inline constexpr std::size_t desc_impl = 8;
 inline constexpr std::size_t desc_flags = 80;
 // Нужно, чтобы звать движковые `proto` В ДРУГУЮ СТОРОНУ. Разобрано по подготовке кадра
 // вызова sub_1403663B0 (re/README.md): движок не конструирует скриптовую переменную, а
-// КОПИРУЕТ 40-байтный шаблон из дескриптора вызываемой функции. Значит и нам сочинять
-// нечего — шаблон несёт сама функция.
+// КОПИРУЕТ 40-байтный шаблон из дескриптора вызываемой функции.
 inline constexpr std::size_t desc_params = 32;       // void**: сперва параметры, потом локали
 inline constexpr std::size_t desc_var_count = 44;    // uint32: всего переменных
 inline constexpr std::size_t desc_param_count = 88;  // uint8: сколько из них параметров
@@ -70,12 +72,16 @@ inline constexpr std::size_t var_flags = 20;   // 0x10 const, 0x40 no-write, 0x8
 inline constexpr std::size_t var_extent = 32;  // два uint16: размерность массива и счётчик
 // По этому полю движок находит ДЕСКРИПТОР ТИПА переменной:
 //   type = (*(void**)(var+24))[104][tag & 0xFFFFFFF]      (sub_140367280)
-// Ради него шаблон и копируется целиком: с нулём здесь падает разрешение типа.
+// С нулём здесь падает разрешение типа — так падала первая самосборная переменная.
 inline constexpr std::size_t var_context = 24;
 // Там же, в контексте: дескрипторы типов по номеру из тега. У дескриптора типа класса
 // флаг 0x10 по type_flags значит «переменные держат объект обёрткой» (holds_wrapper).
 inline constexpr std::size_t context_types = 104;
 inline constexpr std::size_t type_flags    = 80;
+// Пустая строка движка: *(*(ctx+136)+1144). Её кладёт в строковую переменную инициализация
+// (sub_140366ED0), и её же присваивание не освобождает.
+inline constexpr std::size_t context_strings = 136;
+inline constexpr std::size_t strings_empty   = 1144;
 
 // Флаги дескриптора функции. Выведены из компилятора (re/README.md) и сверены с
 // ванильными дескрипторами на живом сервере: у member-натива бита static нет
@@ -156,9 +162,8 @@ inline constexpr std::uint32_t type_typename = 0xB0000000;
 inline constexpr std::uint32_t type_any = 0x70000000;
 
 // Полные теги встроенных типов — те самые значения, что снял зонд. Семейством
-// СРАВНИВАЮТ (выше), а вот СИНТЕЗИРОВАТЬ переменную приходится полным тегом: движок
-// хранит в младших битах индекс типа в таблице контекста. Нужно там, где шаблон брать
-// неоткуда, — у переменной возврата (её дескриптор функция не носит).
+// СРАВНИВАЮТ (выше), а вот СОБИРАТЬ переменную приходится полным тегом: движок хранит в
+// младших битах индекс типа в таблице контекста (var::of_tag).
 inline constexpr std::uint32_t tag_int = 0x20000000;
 inline constexpr std::uint32_t tag_bool = 0x20000007;
 inline constexpr std::uint32_t tag_float = 0x30000001;
@@ -410,9 +415,9 @@ inline std::int32_t find_variable(void* instance, const char* name) {
 }
 
 // ── Обратное направление: звать движковые `proto` ────────────────────────────
-// Скриптовая переменная в рантайме — 40 байт. Движок её НЕ конструирует: подготовка
-// кадра (sub_1403663B0) льёт готовый шаблон из дескриптора вызываемой функции. Мы
-// делаем ровно то же, поэтому и не гадаем, что лежит в полях, которых не разобрали.
+// Скриптовая переменная в рантайме — 40 байт. Параметру её даёт шаблон из дескриптора
+// вызываемой функции (так делает подготовка кадра, sub_1403663B0); где шаблона нет, она
+// собирается по тем же правилам, по которым компилятор размечает параметр (of_tag).
 struct var {
     // Ровно 8, а не «побольше на всякий случай»: движок кладёт эти переменные в кадр
     // подряд с шагом 40, и выравнивание пошире сделало бы структуру 48 — блок разъехался
@@ -438,14 +443,35 @@ struct var {
         }
         return out;
     }
-    // Шаблона нет (возврат) — собираем минимально достаточную. Размерности берём такими,
-    // какие движок пишет скаляру сам: младшее слово 0, старшее 1 (в кадре это одна
-    // запись 0x10000 по +32).
-    static var of_tag(std::uint32_t tag) {
+
+    // Переменная ВСТРОЕННОГО типа (теги tag_*) там, где шаблона нет: у возврата, у
+    // параметра `void` и у глобального `proto` без дескриптора. Собрана так, как компилятор
+    // размечает параметр этого типа, — кейс Proto_BuiltinVarsMatchCompiler сверяет её с
+    // живыми шаблонами байт в байт:
+    //   +16 тег; +20 флаги: 0x400 у всякого параметра, 0x40 у vector (значение по указателю
+    //   из +0), 0x100 у bool, 0x800 у Class (объект прямым указателем, не обёрткой);
+    //   +24 контекст встроенных типов (layout::class_context у Class); +32 размерность:
+    //   3 у vector, у скаляра 0x10000 (младшее слово 0, старшее 1 — так пишет и кадр).
+    // Значение — как ставит инициализация (sub_140366ED0): у строки пустая строка движка,
+    // у остальных ноль. Буфер vector подкладывает вызывающий: у шаблона он свой у каждого.
+    static var of_tag(std::uint32_t tag, void* ctx) {
         var out;
         out.set_tag(tag);
-        const std::uint32_t scalar_extent = 0x10000;
-        std::memcpy(out.raw + layout::var_extent, &scalar_extent, sizeof scalar_extent);
+        const std::uint32_t family = tag & type_family;
+        std::uint32_t       flags  = 0x400;
+        flags |= family == type_vector ? 0x40u : 0u;
+        flags |= tag == tag_bool ? 0x100u : 0u;
+        flags |= tag == tag_class ? 0x800u : 0u;
+        std::memcpy(out.raw + layout::var_flags, &flags, sizeof flags);
+        std::memcpy(out.raw + layout::var_context, &ctx, sizeof ctx);
+        const std::uint32_t extent = family == type_vector ? 3u : 0x10000u;
+        std::memcpy(out.raw + layout::var_extent, &extent, sizeof extent);
+        if (family == type_string && ctx) {
+            const auto* strings = *reinterpret_cast<const char* const*>(
+                static_cast<const char*>(ctx) + layout::context_strings);
+            const void* empty = *reinterpret_cast<const void* const*>(strings + layout::strings_empty);
+            std::memcpy(out.raw, &empty, sizeof empty);
+        }
         return out;
     }
 };

@@ -476,6 +476,52 @@ vector SeraphGraftBound(graft::ref<"IEntity"> e, i32 which) {
     return (which == 0 ? mins : maxs) + vector{1000, 1000, 1000};
 }
 
+// Переменную встроенного типа graft собирает сам (возврат, параметр `void`, глобаль без
+// дескриптора) — и она обязана совпасть с тем, как тот же тип размечает компилятор, байт в
+// байт, кроме значения vector (буфер у каждого шаблона свой). Образцы — параметры ванильных
+// методов. Возвращает число расхождений, каждое — в журнал.
+i32 SeraphGraftBuiltinVarsMismatch() {
+    struct sample {
+        std::uint32_t tag;
+        const char*   klass;
+        const char*   method;
+    };
+
+    static constexpr sample kSamples[] = {
+        {graft::script::tag_class, "EnScript", "GetClassVar"},
+        {graft::script::tag_string, "EnScript", "GetClassVar"},
+        {graft::script::tag_int, "EnScript", "GetClassVar"},
+        {graft::script::tag_float, "Physics", "SetMass"},
+        {graft::script::tag_vector, "Physics", "SetVelocity"},
+        {graft::script::tag_typename, "EnProfiler", "GetTimeOfClass"},
+        {graft::script::tag_bool, "EnProfiler", "GetTimeOfClass"},
+    };
+    const auto hex = [](const unsigned char* at) {
+        std::string out;
+        for (std::size_t i = 0; i < graft::layout::var_size; ++i) {
+            out += std::format("{:02x}{}", at[i], i % 8 == 7 ? " " : "");
+        }
+        return out;
+    };
+    i32 bad = 0;
+    for (const sample& s : kSamples) {
+        const auto* real = static_cast<const unsigned char*>(
+            graft::detail::param_template_of_tag(graft::script::find_method(s.klass, s.method), s.tag));
+        graft::script::var made;
+        if (!real || !graft::detail::builtin_var(s.tag, made)) {
+            graft::log(std::format("встроенный {:#x}: нет образца или контекста", s.tag));
+            ++bad;
+            continue;
+        }
+        const std::size_t from = s.tag == graft::script::tag_vector ? 8 : 0;
+        if (std::memcmp(made.raw + from, real + from, graft::layout::var_size - from) != 0) {
+            graft::log(std::format("встроенный {:#x}: собрано {}| движок {}", s.tag, hex(made.raw), hex(real)));
+            ++bad;
+        }
+    }
+    return bad;
+}
+
 // Как переменная i-го параметра держит объект: 1 — обёрткой (holds_wrapper), 2 — у типа
 // стоит флаг 0x10. Для журнала Diag_MethodFlags: по нему снято, что Class и Managed
 // параметры объявлены с 0x800 и держат объект прямым указателем.
@@ -905,7 +951,8 @@ bool SeraphGraftCry(std::string_view line) {
 }
 
 // Проба: нашлась ли по имени глобаль движка и позвалась ли она вслепую. Ею видно, что
-// путь «имя с регистрации -> импл -> кадр по донорам» не отвалился после патча игры.
+// путь «имя с регистрации -> импл -> кадр из собранных переменных» не отвалился после
+// патча игры.
 i32 SeraphGraftSayVia(std::string_view fn, std::string_view line) {
     void* impl = graft::script::find_global(std::string{fn}.c_str());
     if (!impl) {
@@ -1384,6 +1431,7 @@ GRAFT_BINDINGS("3_Game") {
         .global<&SeraphGraftLocalPosition>("SeraphGraftLocalPosition")
         .global<&SeraphGraftBound>("SeraphGraftBound")
         .global<&SeraphGraftParamWrapperBits>("SeraphGraftParamWrapperBits")
+        .global<&SeraphGraftBuiltinVarsMismatch>("SeraphGraftBuiltinVarsMismatch")
         .global<&SeraphGraftYawToVector>("SeraphGraftYawToVector")
         .global<&SeraphGraftCollisionCorner>("SeraphGraftCollisionCorner")
         .global<&SeraphGraftSurfaceRow>("SeraphGraftSurfaceRow")
