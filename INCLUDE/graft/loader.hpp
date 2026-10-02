@@ -24,8 +24,13 @@ struct row {
 };
 
 // Найти и загрузить всё. Звать ПОСЛЕ установки хуков: см. комментарий в loader.cpp.
+// Откуда берутся плагины, решает роль процесса (engine.hpp): сервер ходит по -mod=,
+// -serverMod= и <игра>/grafted, клиент — только в <игра>/grafted/client.
 void load(const std::wstring& game_dir);
 
+// UTF-16 -> UTF-8: так хост держит пути и командную строку. Один перевод на хост, а не
+// копия в каждом файле.
+std::string narrow(const std::wstring& text);
 
 // Объединённый реестр после слияния — по нему идёт регистрация.
 const std::vector<plugins::entry>& registry();

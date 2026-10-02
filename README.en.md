@@ -134,6 +134,31 @@ point for that moment yet — static initialization runs before the host introdu
 and `graft::hook` refuses there — so for now hooks go in from the first tick, and only
 into functions that nothing but the game thread executes.
 
+## Client
+
+The host loads into the client too, but by default it **does nothing there** — no scan, no
+hooks, no thread, no log line; `hid.dll` stays the pass-through it always was. It wakes up
+only if `<game>/grafted/client/` contains at least one DLL.
+
+- The client takes plugins **only** from `<game>/grafted/client/` — never from
+  `@MOD/grafted` or `<game>/grafted`. Server plugins live there and never start on a
+  client. A mod folder on a client is a Workshop item, and a plugin runs with the player's
+  rights, so it must not load from someone else's mod without the player's say-so.
+- Side is set by the folder, not by the DLL: same plugin, same ABI. Needed on both sides —
+  put it in both folders.
+- Role comes from the exe name: `DayZServer_x64.exe` and `DayZDiag_x64.exe -server` are
+  servers, anything else is a client.
+- **BattlEye:** the host does not work under it. Through `DayZ_BE.exe` BattlEye blocks
+  `hid.dll` and the game does not start (measured on 1.29,
+  [RESEARCH/theory/client.md](RESEARCH/theory/client.md)); run `DayZ_x64.exe` directly or
+  `DayZ_BE.exe -noBE`, against a server without BattlEye. If BattlEye does end up in the
+  process after the host (the engine loads `BEClient_x64.dll` lazily, on joining a
+  server), the host **terminates the game** (exit code `0xBE`) and logs why. Hooks cannot
+  be rolled back safely and plugins are never unloaded, so there is no "carry on without".
+- **Known issue:** a client running a mod that declares a plugin native crashes inside the
+  engine when the game exits (minidump; the game has finished its work by then). Cause not
+  established, details in [RESEARCH/theory/client.md](RESEARCH/theory/client.md).
+
 ## License
 
 **GPL-3.0-or-later** ([LICENSE](LICENSE)) plus the **GRAFT plugin exception 1.0**
