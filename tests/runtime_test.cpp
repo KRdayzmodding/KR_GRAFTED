@@ -868,4 +868,41 @@ TEST(Serving, DoesNotMistakeAModNameForTheFlag) {
     EXPECT_FALSE(graft::has_flag(L"", L"-server"));
 }
 
+// ── Роль процесса ───────────────────────────────────────────────────────────
+// От роли зависит, будится ли хост и откуда он берёт плагины, поэтому ошибка здесь —
+// либо клиент, внезапно исполняющий серверный код, либо сервер без плагинов.
+
+TEST(Role, ServerIsToldByTheExecutableName) {
+    EXPECT_EQ(graft::role_of(L"F:\\DayZServer\\DayZServer_x64.exe", L"DayZServer_x64.exe -config=x"),
+              graft::role::server);
+    // регистр имени файла Windows не различает, и мы тоже
+    EXPECT_EQ(graft::role_of(L"f:\\dz\\dayzserver_x64.EXE", L""), graft::role::server);
+}
+
+TEST(Role, DiagIsToldByTheFlag) {
+    EXPECT_EQ(graft::role_of(L"F:\\DayZ\\DayZDiag_x64.exe", L"DayZDiag_x64.exe -server -port=2302"),
+              graft::role::server);
+    EXPECT_EQ(graft::role_of(L"F:\\DayZ\\DayZDiag_x64.exe", L"DayZDiag_x64.exe -mission=x"),
+              graft::role::client);
+}
+
+TEST(Role, RetailClientIsAClient) {
+    EXPECT_EQ(graft::role_of(L"F:\\DayZ\\DayZ_x64.exe", L"DayZ_x64.exe -nolauncher"),
+              graft::role::client);
+}
+
+TEST(Role, ClientInADirectoryNamedServerIsStillAClient) {
+    // Раньше смотрели на путь целиком: такая установка принимала клиент за сервер и
+    // грузила в него всё, что положено серверу.
+    EXPECT_EQ(graft::role_of(L"D:\\MyServerStuff\\DayZ\\DayZ_x64.exe", L"DayZ_x64.exe"),
+              graft::role::client);
+    EXPECT_EQ(graft::role_of(L"D:\\DayZ Server Tools\\DayZ\\DayZDiag_x64.exe", L"DayZDiag_x64.exe"),
+              graft::role::client);
+}
+
+TEST(Role, ModNamedServerDoesNotMakeAClientAServer) {
+    EXPECT_EQ(graft::role_of(L"F:\\DayZ\\DayZ_x64.exe", L"DayZ_x64.exe -mod=@my-server-mod;"),
+              graft::role::client);
+}
+
 }  // namespace

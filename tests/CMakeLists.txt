@@ -71,6 +71,10 @@ add_executable(graft_tests
     # вместе с engine.cpp, а сюда берётся исходником, чтобы проверяться без игры.
     "${PROJECT_SOURCE_DIR}/SRC/graft/defines.cpp"
     defines_test.cpp
+    # Наблюдение за BEClient_x64.dll — тоже код хоста, и тоже берётся исходником: уведомление
+    # загрузчика проверяется настоящей загрузкой настоящей DLL, игра для этого не нужна.
+    "${PROJECT_SOURCE_DIR}/SRC/graft/battleye.cpp"
+    battleye_test.cpp
     hook_test.cpp
     # Инструмент разбора, а не часть библиотеки: watch.hpp целиком inline и в hid.dll не
     # едет. Проверяется здесь потому, что железу всё равно, чья память, — игра не нужна.

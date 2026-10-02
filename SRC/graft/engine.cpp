@@ -1,6 +1,7 @@
 // Copyright (C) 2025-2026 6wingSerap
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "graft/engine.hpp"
+#include "graft/battleye.hpp"
 #include "graft/defines.hpp"
 #include "graft/frame.hpp"
 
@@ -40,27 +41,56 @@ std::wstring exe_path() {
     return std::wstring(buf, n);
 }
 
-// Серверный ли это процесс.
-//
-// ЗАЧЕМ. Нативы пишутся под серверную логику мода, а библиотека, положенная рядом с exe,
-// грузится в ЛЮБОЙ процесс, который импортирует hid, — в том числе в клиент. Клиенту
-// от нас ничего не нужно, а вред мы принести можем: сборки клиента и сервера разные, и
-// то, что скан нашёл в одной, в другой указывает в другое место. Проверено дорого:
-// привязка к кадру, выверенная на сервере, уронила клиент.
-//
-// КАК ОТЛИЧАЕМ. Ровно так же, как отличает сам движок, — по тому, как игру запустили.
-// Отдельному серверному exe хватает имени; диаг-сборка одна на всё и различается флагом
-// -server. Ни на что внутри движка это не опирается и потому работает ещё до того, как
-// он проснулся.
-}  // namespace
-
-bool serving() {
+// Каталог игры: тот, где лежит exe, а с ним и hid.dll.
+std::wstring game_dir() {
     const std::wstring path = exe_path();
-    if (path.find(L"Server") != std::wstring::npos) {
-        return true;
+    const std::size_t  slash = path.find_last_of(L"\\/");
+    return slash == std::wstring::npos ? L"." : path.substr(0, slash);
+}
+
+// Есть ли хоть одна DLL в <игра>/grafted/client. Это и есть согласие человека: клиент
+// грузит только то, что он положил сам.
+bool has_client_plugins() {
+    WIN32_FIND_DATAW   found{};
+    const std::wstring mask = game_dir() + L"\\" + std::wstring{plugins::client_dir} + L"\\*.dll";
+    HANDLE             h    = FindFirstFileW(mask.c_str(), &found);
+    if (h == INVALID_HANDLE_VALUE) {
+        return false;
     }
-    const wchar_t* cmd = GetCommandLineW();
-    return cmd && has_flag(cmd, L"-server");
+    FindClose(h);
+    return true;
+}
+
+// Профиль клиента, когда `-profiles=` не задан: игра кладёт script- и crash-логи в
+// %LOCALAPPDATA%\DayZ, и наш журнал должен лежать с ними, а не рядом с exe. Пусто — не
+// нашли переменную; тогда журнал уйдёт к exe, как на сервере.
+std::string default_client_profile() {
+    wchar_t     buf[MAX_PATH];
+    const DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", buf, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) {
+        return {};
+    }
+    return loader::narrow(std::wstring(buf, n) + L"\\DayZ");
+}
+} // namespace
+
+// Роль и нужда в хосте — по тому, как игру запустили. Ни на что внутри движка это не
+// опирается и потому работает ещё до того, как он проснулся.
+//
+// ЗАЧЕМ РАЗЛИЧАЕМ. Библиотека, положенная рядом с exe, грузится в ЛЮБОЙ процесс, который
+// импортирует hid, а сборки клиента и сервера разные: то, что скан нашёл в одной, в другой
+// указывает в другое место. Проверено дорого: привязка к кадру, выверенная на сервере,
+// уронила клиент. Поэтому клиент без клиентских плагинов хост не будит вовсе, а с ними —
+// только при отсутствии BattlEye (см. battleye.hpp). Скан на розничном клиенте 1.29 все
+// точки находит и по форме совпадает с серверным (RESEARCH/theory/client.md), но это не
+// повод будить хост там, где его никто не звал.
+role process_role() {
+    static const role cached = role_of(exe_path(), GetCommandLineW());
+    return cached;
+}
+
+bool wanted() {
+    return process_role() == role::server || has_client_plugins();
 }
 
 namespace {
@@ -202,18 +232,28 @@ std::uint64_t __fastcall hook_link_check(void* compiler, void* errors) {
 }  // namespace
 
 void install() {
-    const std::wstring path = exe_path();
-    const std::size_t slash = path.find_last_of(L"\\/");
-    const std::wstring dir = (slash == std::wstring::npos) ? L"." : path.substr(0, slash);
-    // пути установок ASCII; ofstream на MSVC трактует narrow-путь как ANSI
-    const std::string exe_dir(dir.begin(), dir.end());
-    // Журналы кладём туда же, куда игра кладёт свои script- и crash-логи: в профиль
-    // сервера. Админ ищет их там, а не рядом с exe, — и относительный путь из
-    // `-profiles=` разрешится от того же каталога, что и у самой игры.
-    const std::wstring cmd = GetCommandLineW();
-    const std::string profile = plugins::profile_dir(std::string(cmd.begin(), cmd.end()));
-    set_log_dir(profile.empty() ? exe_dir : profile);
+    const std::wstring dir  = game_dir();
+    const role         self = process_role();
+    // Журналы кладём туда же, куда игра кладёт свои script- и crash-логи: в профиль.
+    // Админ ищет их там, а не рядом с exe, — и относительный путь из `-profiles=`
+    // разрешится от того же каталога, что и у самой игры. Клиент без ключа — в
+    // %LOCALAPPDATA%\DayZ, где его логи лежат на самом деле. Пути везде UTF-8: у клиента
+    // имя пользователя бывает любым, и обрезка до ASCII оставила бы его без журнала.
+    std::string profile = plugins::profile_dir(loader::narrow(GetCommandLineW()));
+    if (profile.empty() && self == role::client) {
+        profile = default_client_profile();
+    }
+    set_log_dir(profile.empty() ? loader::narrow(dir) : profile);
     say_banner();
+    log(std::format("роль процесса: {}", self == role::server ? "сервер" : "клиент"));
+
+    // Клиент: ПЕРВЫМ делом — наблюдение за BattlEye, до скана, врезок и плагинов. Под BE
+    // хост не работает; не сумев встать на наблюдение, клиентом не продолжаем: BE мог бы
+    // прийти позже, а мы об этом не узнали бы (см. battleye.hpp).
+    if (self == role::client && !battleye::watch(&battleye::kill)) {
+        log("! наблюдение за BattlEye не встало — клиент без него не запускаем");
+        return;
+    }
 
     const std::vector<scan::view> sections = scan::sections_of(GetModuleHandleW(nullptr));
     g_api = scan::discover(sections);

@@ -143,6 +143,7 @@ set_target_properties(graft_hook PROPERTIES FOLDER graft)
 add_library(graft_proxy SHARED
     dll/proxy.cpp
     graft/engine.cpp
+    graft/battleye.cpp
     graft/loader.cpp
     graft/frame.cpp
     graft/defines.cpp
