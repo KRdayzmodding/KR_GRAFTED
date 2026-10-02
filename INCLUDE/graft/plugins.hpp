@@ -49,6 +49,13 @@ std::vector<entry> merge(const std::vector<entry>& all, std::vector<collision>& 
 
 std::string describe(const collision& c);
 
+// Класс так и не появился, и его методы остались без привязки: ОДНА строка-жалоба на
+// класс — «!», имя, сколько методов и первые из них. Раньше было по строке на метод:
+// плагин с двумя десятками методов отсутствующего класса засыпал журнал, а `graft doctor`
+// считал каждую строку отдельной жалобой.
+std::string describe_unbound(std::string_view                     class_name,
+                             const std::vector<std::string_view>& methods);
+
 // Почему плагин не загружен — строка для журнала: какие числа разошлись (свои и хоста),
 // у кого они старее и что с этим делать. code — итог entry либо check.
 std::string reason(const graft_plugin_info& info, std::uint32_t code);

@@ -7,9 +7,11 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cstring>
 #include <expected>
 #include <format>
+#include <iterator>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -105,8 +107,7 @@ namespace {
 
 // Общая часть: зарегистрировать метод на уже найденном классе и привести флаги к
 // member-виду (движок, создавая функцию раньше разбора мода, метит её static|external).
-void register_on_class(void* ctx, void* cls, const char* owner, const char* class_name,
-                       const char* name, void* impl, bool is_static, bool marshalled) {
+void register_on_class(void* ctx, void* cls, std::string_view owner, const char* class_name, const char* name, void* impl, bool is_static, bool marshalled) {
     void* desc = g_api.register_method(ctx, cls, name, impl, 0, 1);
     std::uint32_t before = 0;
     std::uint32_t after = 0;
@@ -136,14 +137,25 @@ void register_on_class(void* ctx, void* cls, const char* owner, const char* clas
 std::vector<plugins::entry> g_pending;
 bool g_retrying = false;
 
+// Хост стоит в том же реестре под этим именем (loader.cpp).
+constexpr std::string_view kHostOwner = "graft";
+
 void register_all(void* ctx) {
+    // Служебные нативы самого хоста — одни и те же шестнадцать строк в каждом журнале,
+    // поэтому одной строкой в конце. Нативы плагинов перечисляются поимённо: по ним
+    // видно, дошла ли до движка регистрация именно твоего натива.
+    std::size_t host_globals = 0;
     for (const plugins::entry& e : loader::registry()) {
         const graft_native_desc& n = *e.desc;
-        const char* owner = e.owner ? e.owner : "?";
+        const std::string_view   owner = e.owner ? e.owner : "?";
         if (!n.class_name) {
             // через трамплин, иначе рекурсия в собственный хук
             g_orig(ctx, n.name, n.impl, 0);
-            log(std::format("+ [{}] global {}", owner, n.name));
+            if (owner == kHostOwner) {
+                ++host_globals;
+            } else {
+                log(std::format("+ [{}] global {}", owner, n.name));
+            }
             continue;
         }
         void* cls = g_api.find_class(ctx, n.class_name);
@@ -160,6 +172,9 @@ void register_all(void* ctx) {
         // бита 0x4 нет (string.Length = 0x4a28, map.Count = 0xc08).
         register_on_class(ctx, cls, owner, n.class_name, n.name, n.impl, n.is_static != 0,
                           n.marshalled != 0);
+    }
+    if (host_globals) {
+        log(std::format("+ [{}] globals: {} (the host's own Graft* and IsGrafted)", kHostOwner, host_globals));
     }
 }
 
@@ -251,6 +266,9 @@ void install() {
     }
     set_log_dir(profile.empty() ? loader::narrow(dir) : profile);
     say_banner();
+    // Баннер несёт версию рисунком; для отчёта об ошибке нужна строка, где есть и числа
+    // контракта: плагин другого ABI хост не загрузит.
+    log(std::format("versions: host {}, ABI {}, LAYOUT {}", GRAFT_VERSION, GRAFT_ABI_VERSION, GRAFT_LAYOUT_VERSION));
     log(std::format("process role: {}", self == role::server ? "server" : "client"));
 
     // Клиент: ПЕРВЫМ делом — наблюдение за BattlEye, до скана, врезок и плагинов. Под BE
@@ -278,7 +296,7 @@ void install() {
     hook(g_api.register_method, &hook_register_method, &g_orig_method);
 
     if (!hook(g_api.register_global, &hook_register_global, &g_orig)) {
-        log("! hook failed");
+        log("! RegisterGlobal hook failed - the host is not working");
         return;
     }
 
@@ -301,8 +319,8 @@ void install() {
         return reinterpret_cast<std::uintptr_t>(p) -
                reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
     };
-    log(std::format("graft armed: RegisterGlobal={:#x} RegisterMethod={:#x} FindClass={:#x} "
-                    "FindFunction={:#x}",
+    log(std::format("engine points found: RegisterGlobal={:#x} RegisterMethod={:#x} "
+                    "FindClass={:#x} FindFunction={:#x}",
                     rva(reinterpret_cast<void*>(g_api.register_global)),
                     rva(reinterpret_cast<void*>(g_api.register_method)),
                     rva(reinterpret_cast<void*>(g_api.find_class)),
@@ -323,15 +341,27 @@ void install() {
     // ТОЛЬКО ТЕПЕРЬ грузим плагины: LoadLibrary — это десятки миллисекунд на каждый,
     // а маяк движка может прийти в любой момент. Хуки уже стоят, поэтому опоздать
     // некуда: обработчик маяка просто увидит готовый реестр.
+    // Итог загрузки печатает сам загрузчик (таблица плагинов), а этап «встала врезка,
+    // плагины загружены» — лестница; третья строка о том же ничего бы не добавила.
     loader::load(dir);
-    loader::mark("plugins loaded");
     stage::detail::reach(stage::step::armed);
 }
 
 void bind_pending() {
     retry_pending();
+    // Одна жалоба на класс, а не на метод: методов у одного класса бывает два десятка.
+    std::vector<std::pair<std::string_view, std::vector<std::string_view>>> by_class;
     for (const plugins::entry& e : g_pending) {
-        log(std::format("! class {} was never found (method {})", e.desc->class_name, e.desc->name));
+        const std::string_view cls = e.desc->class_name;
+        auto                   it  = std::ranges::find(by_class, cls, &decltype(by_class)::value_type::first);
+        if (it == by_class.end()) {
+            by_class.emplace_back(cls, std::vector<std::string_view>{});
+            it = std::prev(by_class.end());
+        }
+        it->second.push_back(e.desc->name);
+    }
+    for (const auto& [cls, methods] : by_class) {
+        log(plugins::describe_unbound(cls, methods));
     }
 }
 

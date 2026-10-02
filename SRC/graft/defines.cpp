@@ -183,7 +183,7 @@ void* __fastcall hook_add_path(void* addon, const char* path) {
             std::string said;
             ::graft::detail::guarded<void>(reinterpret_cast<void*>(&hook_add_path),
                                            [&said, addon] { said = inject(addon); });
-            log(std::format("addon defines: {}", said.empty() ? "none" : said));
+            log(std::format("addon defines injected: {}", said.empty() ? "none" : said));
         }
     }
     return result;
@@ -283,7 +283,7 @@ void install(const std::vector<scan::view>& sections) {
         return reinterpret_cast<std::uintptr_t>(p) -
                reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
     };
-    log(std::format("addon defines: AddScriptModulePath={:#x} AddDefine={:#x}",
+    log(std::format("engine points for defines found: AddScriptModulePath={:#x} AddDefine={:#x}",
                     rva(reinterpret_cast<void*>(g_api.add_path)),
                     rva(reinterpret_cast<void*>(g_api.add_define))));
 }
