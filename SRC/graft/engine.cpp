@@ -8,6 +8,7 @@
 #include <windows.h>
 
 #include <cstring>
+#include <expected>
 #include <format>
 #include <string>
 #include <string_view>
@@ -33,7 +34,14 @@ scan::reg_global_fn g_orig = nullptr;
 bool g_busy = false;
 // Поиск функции класса по имени: у него нет своей строки-маяка, но он — первый вызов
 // внутри линковщика, а тот — первый вызов внутри RegisterMethod (re/.../sub_140352DB0.c).
-std::uintptr_t g_find_index = 0;
+// Не нашёлся — работаем без него: script::bind понимает нуль как «поиска нет».
+std::expected<std::uintptr_t, miss> g_find_index = std::unexpected(miss::not_found);
+
+// Сколько байт от начала функции смотреть в поисках её первого `call`. И у RegisterMethod, и
+// у линковщика он стоит сразу за прологом и сборкой аргументов; число эмпирическое — по
+// декомпиляции 1.29 — и взято с запасом на пролог. Дальше пошли бы уже другие вызовы, и
+// «первый» перестал бы быть тем самым.
+constexpr std::size_t kFirstCallWindow = 0x60;
 
 std::wstring exe_path() {
     wchar_t buf[MAX_PATH];
@@ -118,8 +126,7 @@ void register_on_class(void* ctx, void* cls, const char* owner, const char* clas
         }
         after = *flags;
     }
-    log(std::format("+ [{}] {}.{} ({}, флаги {:#x} -> {:#x})", owner, class_name, name,
-                    is_static ? "static" : "member", before, after));
+    log(std::format("+ [{}] {}.{} ({}, flags {:#x} -> {:#x})", owner, class_name, name, is_static ? "static" : "member", before, after));
 }
 
 // Классы, которых в момент врезки ещё нет. Таких два вида: игровые (Object объявлен в
@@ -142,7 +149,7 @@ void register_all(void* ctx) {
         void* cls = g_api.find_class(ctx, n.class_name);
         if (!cls) {
             g_pending.push_back(e);
-            log(std::format("~ отложено: [{}] {}.{} (класса ещё нет)", owner, n.class_name, n.name));
+            log(std::format("~ deferred: [{}] {}.{} (class not there yet)", owner, n.class_name, n.name));
             continue;
         }
         // Регистрация возвращает дескриптор функции. Если объявления в скрипте ещё нет
@@ -175,7 +182,7 @@ void retry_pending() {
             still.push_back(e);
             continue;
         }
-        log(std::format("+ [{}] {}.{} (отложенный)", e.owner ? e.owner : "?", n.class_name, n.name));
+        log(std::format("+ [{}] {}.{} (deferred)", e.owner ? e.owner : "?", n.class_name, n.name));
     }
     g_pending.swap(still);
     g_retrying = false;
@@ -203,12 +210,11 @@ void* __fastcall hook_register_global(void* ctx, const char* name, void* impl,
     // движок когда-то начнёт гонять его на каждый ctx — подсядем в каждый.
     if (!g_busy && name && std::strcmp(name, kAnchor) == 0) {
         g_busy = true;  // свои же вызовы идут через этот хук — не зациклиться
-        loader::mark("маяк пойман, регистрируем");
+        loader::mark("anchor caught, registering");
         // Сначала оживляем доступ к методам классов: он нужен уже самой регистрации,
         // чтобы понять, есть ли для натива объявление в скрипте.
         script::set_register_method(reinterpret_cast<void*>(g_api.register_method));
-        script::bind(ctx, reinterpret_cast<void*>(g_api.find_class),
-                     reinterpret_cast<void*>(g_find_index));
+        script::bind(ctx, reinterpret_cast<void*>(g_api.find_class), reinterpret_cast<void*>(g_find_index.value_or(0)));
         register_all(ctx);
         // Дальше движок начнёт разбирать модули; лестница поймает это сама.
         stage::pump();
@@ -245,24 +251,27 @@ void install() {
     }
     set_log_dir(profile.empty() ? loader::narrow(dir) : profile);
     say_banner();
-    log(std::format("роль процесса: {}", self == role::server ? "сервер" : "клиент"));
+    log(std::format("process role: {}", self == role::server ? "server" : "client"));
 
     // Клиент: ПЕРВЫМ делом — наблюдение за BattlEye, до скана, врезок и плагинов. Под BE
     // хост не работает; не сумев встать на наблюдение, клиентом не продолжаем: BE мог бы
     // прийти позже, а мы об этом не узнали бы (см. battleye.hpp).
     if (self == role::client && !battleye::watch(&battleye::kill)) {
-        log("! наблюдение за BattlEye не встало — клиент без него не запускаем");
+        log("! BattlEye watch failed to install - not starting the client without it");
         return;
     }
 
-    const std::vector<scan::view> sections = scan::sections_of(GetModuleHandleW(nullptr));
-    g_api = scan::discover(sections);
-    if (!g_api) {
+    const std::vector<scan::view>& sections = scan::image();
+    const auto                     api      = scan::discover(sections);
+    if (!api) {
         return;  // в процессе нет движка Enforce — просто уходим
     }
-    const std::uintptr_t linker =
-        scan::first_call(sections, reinterpret_cast<std::uintptr_t>(g_api.register_method));
-    g_find_index = linker ? scan::first_call(sections, linker) : 0;
+    g_api             = *api;
+    const auto linker = scan::first_call(
+        sections, reinterpret_cast<std::uintptr_t>(g_api.register_method), kFirstCallWindow);
+    if (linker) {
+        g_find_index = scan::first_call(sections, *linker, kFirstCallWindow);
+    }
 
     // Через тот же сервис, что отдаётся плагинам: механика врезки в процессе одна, и хост
     // не исключение — иначе «одна копия» держалась бы на честном слове.
@@ -276,11 +285,12 @@ void install() {
     // Привязка к кадру: хук на движковую точку входа скриптового OnUpdate.
     frame::install(sections);
 
-    const std::uintptr_t link_check = scan::function_referencing(sections, kLinkCheck);
+    const auto link_check = scan::function_referencing(sections, kLinkCheck);
     if (!link_check ||
-        !hook(reinterpret_cast<link_check_fn>(link_check), &hook_link_check, &g_orig_link_check)) {
-        log("! проверка линковки не найдена: методы классов мода встанут позже неё, "
-            "в script-логе будет «Method not linked» (работать они будут)");
+        !hook(reinterpret_cast<link_check_fn>(*link_check), &hook_link_check, &g_orig_link_check)) {
+        log(std::format("! link check not found ({}): mod class methods will bind after it, "
+                        "the script log will show 'Method not linked' (they will work)",
+                        link_check ? "hook failed" : to_string(link_check.error())));
     }
 
     // Дефайн на каждый загруженный плагин: врезка ДО загрузчика (плагины грузятся ниже),
@@ -296,8 +306,8 @@ void install() {
                     rva(reinterpret_cast<void*>(g_api.register_global)),
                     rva(reinterpret_cast<void*>(g_api.register_method)),
                     rva(reinterpret_cast<void*>(g_api.find_class)),
-                    g_find_index ? rva(reinterpret_cast<void*>(g_find_index)) : 0));
-    loader::mark("хуки установлены");
+                    g_find_index ? rva(reinterpret_cast<void*>(*g_find_index)) : 0));
+    loader::mark("hooks installed");
 
     // Кто чего ждёт — записано здесь, одним списком, а не размазано по врезкам.
     //
@@ -314,14 +324,14 @@ void install() {
     // а маяк движка может прийти в любой момент. Хуки уже стоят, поэтому опоздать
     // некуда: обработчик маяка просто увидит готовый реестр.
     loader::load(dir);
-    loader::mark("плагины загружены");
+    loader::mark("plugins loaded");
     stage::detail::reach(stage::step::armed);
 }
 
 void bind_pending() {
     retry_pending();
     for (const plugins::entry& e : g_pending) {
-        log(std::format("! так и не найден класс {} (метод {})", e.desc->class_name, e.desc->name));
+        log(std::format("! class {} was never found (method {})", e.desc->class_name, e.desc->name));
     }
 }
 

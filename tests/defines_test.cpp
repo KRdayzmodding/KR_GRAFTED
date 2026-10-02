@@ -78,19 +78,21 @@ fake_image make_image() {
 }
 
 TEST(Defines, FindsBothAddonEntryPoints) {
-    fake_image                img = make_image();
-    const graft::defines::api api = graft::defines::find(img.sections());
+    fake_image img = make_image();
+    const auto api = graft::defines::find(img.sections());
 
-    ASSERT_TRUE(static_cast<bool>(api));
-    EXPECT_EQ(reinterpret_cast<std::uintptr_t>(api.add_path), kAddPath);
-    EXPECT_EQ(reinterpret_cast<std::uintptr_t>(api.add_define), kAddDefine);
+    ASSERT_TRUE(api.has_value());
+    EXPECT_EQ(reinterpret_cast<std::uintptr_t>(api->add_path), kAddPath);
+    EXPECT_EQ(reinterpret_cast<std::uintptr_t>(api->add_define), kAddDefine);
 }
 
 TEST(Defines, NoAnchorNoSearch) {
     fake_image img = make_image();
     img.strings.assign(img.strings.size(), 0); // строки-якоря в образе нет
 
-    EXPECT_FALSE(static_cast<bool>(graft::defines::find(img.sections())));
+    const auto api = graft::defines::find(img.sections());
+    ASSERT_FALSE(api.has_value());
+    EXPECT_EQ(api.error(), graft::miss::not_found);
 }
 
 // Массив со счётчиком не на своём месте — не наша функция. Иначе под врезку попало бы
@@ -99,16 +101,21 @@ TEST(Defines, IgnoresForeignArrayShape) {
     fake_image img = make_image();
     img.put(0x2000, {0x8B, 0x41, 0x40}); // счётчик не на array+12
 
-    EXPECT_FALSE(static_cast<bool>(graft::defines::find(img.sections())));
+    const auto api = graft::defines::find(img.sections());
+    ASSERT_FALSE(api.has_value());
+    EXPECT_EQ(api.error(), graft::miss::not_found);
 }
 
-// Две разные функции одной формы в окне — отказ целиком, а не выбор наугад.
+// Две разные функции одной формы в окне — отказ целиком, а не выбор наугад. И отказ
+// называет именно это: «нашлось две» и «нет вовсе» чинятся по-разному.
 TEST(Defines, AmbiguityRefuses) {
     fake_image img = make_image();
     img.put_appender(0x2800, 0x28, true);
     img.put_call(kParser - kCodeBase + 0x60, kCodeBase + 0x2800);
 
-    EXPECT_FALSE(static_cast<bool>(graft::defines::find(img.sections())));
+    const auto api = graft::defines::find(img.sections());
+    ASSERT_FALSE(api.has_value());
+    EXPECT_EQ(api.error(), graft::miss::ambiguous);
 }
 
 // Шапка строки движка: [-6] ёмкость, [-4] длина, [-2] счётчик ссылок, дальше символы с

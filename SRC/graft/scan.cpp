@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstring>
 #include <iterator>
+#include <optional>
 #include <ranges>
 #include <span>
 
@@ -28,11 +29,11 @@ std::uintptr_t rip_target(std::uintptr_t insn_end, std::int32_t disp) {
 }
 
 // Все вхождения там, где поиск по образу отдаёт по одному: `step(from)` — «следующее
-// начиная с from», ноль — больше нет.
+// начиная с from», отказ — больше нет.
 std::vector<std::uintptr_t> find_all(auto step) {
     std::vector<std::uintptr_t> all;
-    for (std::uintptr_t at = step(0); at != 0; at = step(at + 1)) {
-        all.push_back(at);
+    for (auto at = step(0); at; at = step(*at + 1)) {
+        all.push_back(*at);
     }
     return all;
 }
@@ -51,19 +52,49 @@ struct unwind_info {
     std::uint8_t frame;
 };
 
+// Куска функции, в котором лежит ea: начало ОСНОВНОЙ функции и конец ИМЕННО ЭТОГО куска.
+// Они разные у вынесенного компилятором холодного хвоста: у него своя запись раскрутки,
+// сцепленная с основной, и дальше его края идти нельзя — за ним лежит чужое.
+struct extent {
+    std::uintptr_t start;
+    std::uintptr_t end;
+};
+
+// Единственное место, которое читает .pdata: и function_start, и find_in_function берут
+// границы отсюда. Нет записи (не код или лист без кадра) — пусто.
+std::optional<extent> extent_of(std::uintptr_t ea) {
+    // Флаги записи лежат в старших битах первого байта — туда же сдвигаем и константу.
+    constexpr std::uint8_t  kChained = UNW_FLAG_CHAININFO << 3;
+    DWORD64                 image    = 0;
+    const RUNTIME_FUNCTION* piece    = RtlLookupFunctionEntry(ea, &image, nullptr);
+    const RUNTIME_FUNCTION* fe       = piece;
+    while (fe != nullptr) {
+        const auto* info = reinterpret_cast<const unwind_info*>(image + fe->UnwindData);
+        if ((info->version_flags & kChained) == 0) {
+            const auto base = static_cast<std::uintptr_t>(image);
+            return extent{base + fe->BeginAddress, base + piece->EndAddress};
+        }
+        // За заголовком — коды раскрутки по слову, числом до чётного; дальше запись
+        // основной функции: у куска, вынесенного компилятором, своей она и является.
+        const std::span codes{reinterpret_cast<const std::uint16_t*>(info + 1), (info->codes + 1u) & ~1u};
+        fe = reinterpret_cast<const RUNTIME_FUNCTION*>(codes.data() + codes.size());
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
-std::uintptr_t view::find_cstr(const char* text, std::uintptr_t from) const {
+std::expected<std::uintptr_t, miss> view::find_cstr(const char* text, std::uintptr_t from) const {
     const std::size_t n = std::strlen(text) + 1; // вместе с терминатором
     if (bytes.size() < n) {
-        return 0;
+        return std::unexpected(miss::not_found);
     }
     std::size_t i = (from > base) ? static_cast<std::size_t>(from - base) : 0;
     while (i + n <= bytes.size()) {
         const auto* hit = static_cast<const std::uint8_t*>(
             std::memchr(bytes.data() + i, static_cast<unsigned char>(text[0]), bytes.size() - n - i + 1));
         if (!hit) {
-            return 0;
+            return std::unexpected(miss::not_found);
         }
         i = static_cast<std::size_t>(hit - bytes.data());
         // строка должна быть целой, а не хвостом другой строки
@@ -72,13 +103,13 @@ std::uintptr_t view::find_cstr(const char* text, std::uintptr_t from) const {
         }
         ++i;
     }
-    return 0;
+    return std::unexpected(miss::not_found);
 }
 
-std::uintptr_t view::find_rip(pattern_view insn, std::uintptr_t target, std::uintptr_t from) const {
+std::expected<std::uintptr_t, miss> view::find_rip(pattern_view insn, std::uintptr_t target, std::uintptr_t from) const {
     const std::size_t len = insn.value.size();
     if (insn.hole_size != 4 || bytes.size() < len) {
-        return 0; // без дырки под disp32 ссылку на target не посчитать
+        return std::unexpected(miss::not_found); // без дырки под disp32 ссылку на target не посчитать
     }
     // Перебирать побайтово всю секцию дорого (в образе игры это десятки мегабайт, а зовут
     // отсюда в цикле по якорям), поэтому сначала memchr по первому ПОЛНОСТЬЮ сверяемому
@@ -94,7 +125,7 @@ std::uintptr_t view::find_rip(pattern_view insn, std::uintptr_t target, std::uin
             const auto* hit = static_cast<const std::uint8_t*>(
                 std::memchr(bytes.data() + i + pivot, insn.value[pivot], bytes.size() - len - i + 1));
             if (!hit) {
-                return 0;
+                return std::unexpected(miss::not_found);
             }
             i = static_cast<std::size_t>(hit - bytes.data()) - pivot;
         }
@@ -108,7 +139,7 @@ std::uintptr_t view::find_rip(pattern_view insn, std::uintptr_t target, std::uin
         }
         ++i;
     }
-    return 0;
+    return std::unexpected(miss::not_found);
 }
 
 std::vector<std::uintptr_t> view::rel32_after(std::uintptr_t ea, std::size_t span, std::uint8_t opcode) const {
@@ -141,7 +172,13 @@ std::vector<std::uintptr_t> view::rel32_before(std::uintptr_t ea, std::size_t sp
     return out;
 }
 
-std::uintptr_t vote(const std::vector<view>& sections, pattern_view insn, const char* const* anchors, bool before, const std::uintptr_t* reject, std::size_t reject_n) {
+std::expected<std::uintptr_t, miss> vote(const std::vector<view>& sections, pattern_view insn, const char* const* anchors, bool before, const std::uintptr_t* reject, std::size_t reject_n) {
+    // Сколько байт от ссылки на имя до вызова регистрации: между ними стоит только сборка
+    // остальных аргументов, несколько `mov`/`lea`. Число эмпирическое — то же, что в эталонном
+    // RESEARCH/scripts/discover.py, и сверено его сухим прогоном по exe, — а от случайного
+    // `call` в окне оберегает не оно, а голосование: чужая цель у трёх якорей не совпадёт.
+    constexpr std::size_t kNearCall = 0x40;
+
     struct tally {
         std::uintptr_t ea;
         int            votes;
@@ -160,7 +197,8 @@ std::uintptr_t vote(const std::vector<view>& sections, pattern_view insn, const 
             auto code = std::ranges::find_if(code_sections, [&](const view& s) { return s.contains(site); });
             // из всех call'ов рядом берём ближайший настоящий: 0xE8 внутри
             // чужого смещения даст цель вне кода и будет отброшен
-            std::vector<std::uintptr_t> cands = before ? code->calls_before(site) : code->calls_after(site);
+            std::vector<std::uintptr_t> cands =
+                before ? code->calls_before(site, kNearCall) : code->calls_after(site, kNearCall);
             if (before) {
                 std::reverse(cands.begin(), cands.end());
             }
@@ -183,10 +221,13 @@ std::uintptr_t vote(const std::vector<view>& sections, pattern_view insn, const 
     }
 
     const auto best = std::ranges::max_element(tallies, {}, &tally::votes);
-    return best == tallies.end() ? 0 : best->ea;
+    if (best == tallies.end()) {
+        return std::unexpected(miss::not_found);
+    }
+    return best->ea;
 }
 
-std::uintptr_t first_call(const std::vector<view>& sections, std::uintptr_t fn, std::size_t span) {
+std::expected<std::uintptr_t, miss> first_call(const std::vector<view>& sections, std::uintptr_t fn, std::size_t span) {
     for (const view& code : sections) {
         if (!code.exec || !code.contains(fn)) {
             continue;
@@ -199,7 +240,7 @@ std::uintptr_t first_call(const std::vector<view>& sections, std::uintptr_t fn, 
             }
         }
     }
-    return 0;
+    return std::unexpected(miss::not_found);
 }
 
 std::vector<std::uintptr_t> rip_refs(const std::vector<view>& sections, const char* text, pattern_view insn) {
@@ -215,37 +256,32 @@ std::vector<std::uintptr_t> rip_refs(const std::vector<view>& sections, const ch
     return out;
 }
 
-std::uintptr_t function_start(std::uintptr_t ea) {
-    // Флаги записи лежат в старших битах первого байта — туда же сдвигаем и константу.
-    constexpr std::uint8_t  kChained = UNW_FLAG_CHAININFO << 3;
-    DWORD64                 image    = 0;
-    const RUNTIME_FUNCTION* fe       = RtlLookupFunctionEntry(ea, &image, nullptr);
-    while (fe != nullptr) {
-        const auto* info = reinterpret_cast<const unwind_info*>(image + fe->UnwindData);
-        if ((info->version_flags & kChained) == 0) {
-            return static_cast<std::uintptr_t>(image) + fe->BeginAddress;
-        }
-        // За заголовком — коды раскрутки по слову, числом до чётного; дальше запись
-        // основной функции: у куска, вынесенного компилятором, своей она и является.
-        const std::span codes{reinterpret_cast<const std::uint16_t*>(info + 1), (info->codes + 1u) & ~1u};
-        fe = reinterpret_cast<const RUNTIME_FUNCTION*>(codes.data() + codes.size());
+std::expected<std::uintptr_t, miss> function_start(std::uintptr_t ea) {
+    const std::optional<extent> at = extent_of(ea);
+    if (!at) {
+        return std::unexpected(miss::not_found);
     }
-    return 0;
+    return at->start;
 }
 
-std::uintptr_t function_referencing(const std::vector<view>& sections, const char* text) {
-    auto starts = rip_refs(sections, text, code<"lea reg64,[rip+disp32]">) |
-                  std::views::transform(function_start) |
-                  std::views::filter([](std::uintptr_t start) { return start != 0; });
-
-    std::uintptr_t found = 0;
-    for (const std::uintptr_t start : starts) {
-        if (found != 0 && found != start) {
-            return 0; // две разные функции — угадывать не будем
+std::expected<std::uintptr_t, miss> function_referencing(const std::vector<view>& sections, const char* text) {
+    // Ссылка не из функции (нет записи раскрутки) не в счёт: она не говорит ни за одну из них.
+    std::expected<std::uintptr_t, miss> only = std::unexpected(miss::not_found);
+    for (const std::uintptr_t site : rip_refs(sections, text, code<"lea reg64,[rip+disp32]">)) {
+        const auto start = function_start(site);
+        if (!start) {
+            continue;
         }
-        found = start;
+        if (only && *only != *start) {
+            return std::unexpected(miss::ambiguous); // две разные функции — угадывать не будем
+        }
+        only = *start;
     }
-    return found;
+    return only;
+}
+
+std::expected<std::uintptr_t, miss> function_referencing(const char* text) {
+    return function_referencing(image(), text);
 }
 
 std::vector<std::uintptr_t> rel32_targets(const std::vector<view>& sections, std::uintptr_t ea, std::size_t span, std::uint8_t opcode) {
@@ -272,7 +308,7 @@ std::vector<std::uintptr_t> rel32_targets(const std::vector<view>& sections, std
     return out;
 }
 
-frame_entry find_frame_entry(const std::vector<view>& sections) {
+std::expected<frame_entry, miss> find_frame_entry(const std::vector<view>& sections) {
     // Идём по байтам ОДНИМ проходом от якоря: цели вызовов тут не годятся, нужны сами
     // места вызовов — между ними и лежат приметы (маркер float, запись кэша).
     constexpr std::size_t  kWindow = 0x60;
@@ -283,7 +319,7 @@ frame_entry find_frame_entry(const std::vector<view>& sections) {
     constexpr auto kIndexCache = sig<"89 05 [disp32]">; // mov [rip+disp32],eax
 
     for (const view& data : sections) {
-        const std::uintptr_t text = data.find_cstr("OnUpdate");
+        const auto text = data.find_cstr("OnUpdate");
         if (!text) {
             continue;
         }
@@ -291,10 +327,8 @@ frame_entry find_frame_entry(const std::vector<view>& sections) {
             if (!code.exec) {
                 continue;
             }
-            std::uintptr_t at = 0;
-            while ((at = code.find_rip(lea_rdx, text, at)) != 0) {
-                const std::size_t site = static_cast<std::size_t>(at - code.base);
-                at += 1;
+            for (auto at = code.find_rip(lea_rdx, *text); at; at = code.find_rip(lea_rdx, *text, *at + 1)) {
+                const std::size_t site = static_cast<std::size_t>(*at - code.base);
                 if (site + kWindow > code.bytes.size()) {
                     continue;
                 }
@@ -311,7 +345,7 @@ frame_entry find_frame_entry(const std::vector<view>& sections) {
                 // 2) float-аргумент: cvtss2sd. Байт modrm не сверяем — какой регистр
                 //    выберет компилятор игры, нас не касается. Без этой приметы перед нами
                 //    одноимённое событие виджета или техники, а не кадр.
-                const std::optional<found> float_arg =
+                const auto float_arg =
                     code.find(code.base + site + call1 + 5, kWindow - call1 - 5, kCvtss2sd);
                 if (!float_arg) {
                     continue;
@@ -328,7 +362,7 @@ frame_entry find_frame_entry(const std::vector<view>& sections) {
                 // 4) кэш индекса: `mov [rip+disp32],eax` между двумя вызовами. Адрес
                 //    считается от КОНЦА инструкции, а её конец — это длина сигнатуры:
                 //    дырка под смещение входит в неё, поэтому руками складывать нечего.
-                const std::optional<found> cache =
+                const auto cache =
                     code.find(code.base + site + call1 + 5, call2 - call1 - 5, kIndexCache);
                 if (!cache) {
                     continue;
@@ -347,31 +381,39 @@ frame_entry find_frame_entry(const std::vector<view>& sections) {
                 if (!sane) {
                     continue;
                 }
-                return {code.base + site + call2,
-                        reinterpret_cast<frame_entry::prepare_fn>(prepare),
-                        cached};
+                return frame_entry{code.base + site + call2,
+                                   reinterpret_cast<frame_entry::prepare_fn>(prepare),
+                                   cached};
             }
         }
     }
-    return {};
+    return std::unexpected(miss::not_found);
 }
 
-api discover(const std::vector<view>& sections) {
+std::expected<api, miss> discover(const std::vector<view>& sections) {
     // Якоря — имена ванильных нативов/классов из RegisterCoreNatives. Их регистрация
     // есть в любом билде: это публичный script-API (EnScript.c, EnMath.c, EnSystem.c).
     static const char* const kGlobals[] = {"MemoryValidation", "KillThread", "ThreadFunction", nullptr};
     // Первые методы своих классов: перед ними в коде стоит вызов FindClass.
     static const char* const kMethods[] = {"GetNumberOfSetBits", "GetClassVar", "AsciiToString", nullptr};
 
-    api out{};
-    out.register_global = reinterpret_cast<reg_global_fn>(vote(sections, lea_rdx, kGlobals));
-    out.register_method = reinterpret_cast<reg_method_fn>(vote(sections, lea_r8, kMethods));
-
-    const std::uintptr_t reject[] = {reinterpret_cast<std::uintptr_t>(out.register_global),
-                                     reinterpret_cast<std::uintptr_t>(out.register_method)};
-    out.find_class                = reinterpret_cast<find_class_fn>(
-        vote(sections, lea_r8, kMethods, /*before=*/true, reject, std::size(reject)));
-    return out;
+    const auto global = vote(sections, lea_rdx, kGlobals);
+    const auto method = vote(sections, lea_r8, kMethods);
+    if (!global) {
+        return std::unexpected(global.error());
+    }
+    if (!method) {
+        return std::unexpected(method.error());
+    }
+    // FindClass лежит перед регистрацией метода, а не после; сами регистрации — не он.
+    const std::uintptr_t reject[] = {*global, *method};
+    const auto           cls      = vote(sections, lea_r8, kMethods, /*before=*/true, reject, std::size(reject));
+    if (!cls) {
+        return std::unexpected(cls.error());
+    }
+    return api{reinterpret_cast<reg_global_fn>(*global),
+               reinterpret_cast<reg_method_fn>(*method),
+               reinterpret_cast<find_class_fn>(*cls)};
 }
 
 // ── Секции образа и сверка байтов ────────────────────────────────────────────
@@ -398,6 +440,11 @@ std::vector<view> sections_of(void* module) {
                        (sec->Characteristics & IMAGE_SCN_MEM_EXECUTE) != 0});
     }
     return out;
+}
+
+const std::vector<view>& image() {
+    static const std::vector<view> sections = sections_of(GetModuleHandleW(nullptr));
+    return sections;
 }
 
 // Читать по чужому адресу можно только убедившись, что страница есть: кандидат мог
@@ -463,14 +510,14 @@ std::int64_t hole_value(const std::uint8_t* at, unsigned bytes) {
 // Общий ход поиска: по буферу, адреса считаются от base_ea. Через него идут и свободная
 // find (буфер — чужая память, её читаемость спрошена заранее), и view::find (буфер — байты
 // самой секции, спрашивать нечего).
-std::optional<found> find_in(const std::uint8_t* body,
-                             std::size_t         span,
-                             std::uintptr_t      base_ea,
-                             pattern_view        sig,
-                             unsigned            nth) {
+std::expected<found, miss> find_in(const std::uint8_t* body,
+                                   std::size_t         span,
+                                   std::uintptr_t      base_ea,
+                                   pattern_view        sig,
+                                   unsigned            nth) {
     const std::size_t n = sig.value.size();
     if (n == 0 || nth == 0 || n > span) {
-        return std::nullopt;
+        return std::unexpected(miss::not_found);
     }
     for (std::size_t i = 0; i + n <= span; ++i) {
         if (!same(body + i, sig) || --nth != 0) {
@@ -478,7 +525,7 @@ std::optional<found> find_in(const std::uint8_t* body,
         }
         return found{base_ea + i, sig.hole_size != 0 ? hole_value(body + i + sig.hole, sig.hole_size) : 0};
     }
-    return std::nullopt;
+    return std::unexpected(miss::not_found);
 }
 
 } // namespace
@@ -488,16 +535,16 @@ bool matches(std::uintptr_t ea, pattern_view sig) {
            same(reinterpret_cast<const std::uint8_t*>(ea), sig);
 }
 
-std::optional<found> find(std::uintptr_t ea, std::size_t span, pattern_view sig, unsigned nth) {
+std::expected<found, miss> find(std::uintptr_t ea, std::size_t span, pattern_view sig, unsigned nth) {
     if (!readable(ea, span)) {
-        return std::nullopt;
+        return std::unexpected(miss::unreadable);
     }
     return find_in(reinterpret_cast<const std::uint8_t*>(ea), span, ea, sig, nth);
 }
 
-std::optional<found> view::find(std::uintptr_t ea, std::size_t span, pattern_view sig, unsigned nth) const {
+std::expected<found, miss> view::find(std::uintptr_t ea, std::size_t span, pattern_view sig, unsigned nth) const {
     if (!contains(ea)) {
-        return std::nullopt;
+        return std::unexpected(miss::unreadable);
     }
     // Без std::min: windows.h в этой TU приносит макрос min, и вызов через него не собрать.
     const std::size_t off  = static_cast<std::size_t>(ea - base);
@@ -505,11 +552,19 @@ std::optional<found> view::find(std::uintptr_t ea, std::size_t span, pattern_vie
     return find_in(bytes.data() + off, span < left ? span : left, ea, sig, nth);
 }
 
+std::expected<found, miss> find_in_function(std::uintptr_t ea, pattern_view sig, unsigned nth) {
+    const std::optional<extent> at = extent_of(ea);
+    if (!at) {
+        return std::unexpected(miss::not_found);
+    }
+    return find(ea, at->end - ea, sig, nth);
+}
+
 namespace {
 
 // Таблица, перед которой лежит указатель на locator: линковщик кладёт его последним
 // элементом перед первым слотом, поэтому сам слот — это `место указателя + 8`.
-std::uintptr_t table_after(const std::vector<view>& sections, std::uintptr_t locator) {
+std::expected<std::uintptr_t, miss> table_after(const std::vector<view>& sections, std::uintptr_t locator) {
     for (const view& v : sections) {
         if (v.exec) {
             continue;
@@ -523,7 +578,7 @@ std::uintptr_t table_after(const std::vector<view>& sections, std::uintptr_t loc
             }
         }
     }
-    return 0;
+    return std::unexpected(miss::not_found);
 }
 
 } // namespace
@@ -558,7 +613,7 @@ std::size_t vtable_slots(void* const* vt) {
     return n;
 }
 
-std::uintptr_t rtti_vtable(const std::vector<view>& sections, std::uintptr_t image_base, const char* mangled) {
+std::expected<std::uintptr_t, miss> rtti_vtable(const std::vector<view>& sections, std::uintptr_t image_base, const char* mangled) {
     // 1. ВСЕ места, где лежит это имя, а не первое попавшееся. Их в образе несколько:
     //    одно — в дескрипторе типа, остальные — обычные строковые литералы. И первым
     //    почти всегда оказывается литерал ТОГО, КТО ИЩЕТ: имя приезжает сюда как
@@ -573,14 +628,14 @@ std::uintptr_t rtti_vtable(const std::vector<view>& sections, std::uintptr_t ima
         if (v.exec) {
             continue;
         }
-        for (std::uintptr_t at = v.find_cstr(mangled); at; at = v.find_cstr(mangled, at + 1)) {
+        for (const std::uintptr_t at : find_all([&](std::uintptr_t from) { return v.find_cstr(mangled, from); })) {
             if (at >= image_base + 16) {
                 wanted.push_back(static_cast<std::uint32_t>(at - 16 - image_base));
             }
         }
     }
     if (wanted.empty()) {
-        return 0;
+        return std::unexpected(miss::not_found);
     }
     // 2. Локатор, который на один из них ссылается. Один проход на всех кандидатов сразу:
     //    проход стоит куда дороже сверки, а кандидатов единицы.
@@ -603,16 +658,21 @@ std::uintptr_t rtti_vtable(const std::vector<view>& sections, std::uintptr_t ima
                 continue;
             }
             // 3. Указатель на локатор. Он лежит ровно перед таблицей — она и есть ответ.
-            if (const std::uintptr_t vt = table_after(sections, v.base + o)) {
-                return vt;
+            if (const auto vt = table_after(sections, v.base + o)) {
+                return *vt;
             }
         }
     }
-    return 0;
+    return std::unexpected(miss::not_found);
 }
 
-std::uintptr_t rtti_vtable(void* module, const char* mangled) {
+std::expected<std::uintptr_t, miss> rtti_vtable(void* module, const char* mangled) {
     return rtti_vtable(sections_of(module), reinterpret_cast<std::uintptr_t>(module), mangled);
+}
+
+std::expected<std::uintptr_t, miss> rtti_vtable(const char* mangled) {
+    const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+    return rtti_vtable(image(), base, mangled);
 }
 
 } // namespace graft::scan

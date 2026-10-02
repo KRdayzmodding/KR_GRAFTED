@@ -91,17 +91,17 @@ void note_fault(void* impl, std::uint32_t code, const void* at, const char* what
     const std::string who =
         class_name ? std::format("{}.{}", class_name, name) : std::string{name};
     std::string line =
-        what ? std::format("[{}] {}: исключение — {}", owner, who, what)
-             : std::format("[{}] {}: сбой {:#x} по адресу {}", owner, who, code, at);
+        what ? std::format("[{}] {}: exception - {}", owner, who, what)
+             : std::format("[{}] {}: fault {:#x} at {}", owner, who, code, at);
 
     const std::scoped_lock held{g_fault_lock};
     ++g_faults;
     g_last_fault           = std::move(line);
     const std::size_t said = g_fault_lines[impl]++;
     if (said < kMaxLinesPerNative) {
-        graft::log("! " + g_last_fault + " — вызов отменён, игра продолжает работу");
+        graft::log("! " + g_last_fault + " - call cancelled, the game keeps running");
     } else if (said == kMaxLinesPerNative) {
-        graft::log("! " + who + ": падает постоянно — дальше молча, счётчик в GraftFaultCount()");
+        graft::log("! " + who + ": keeps faulting - silent from here on, count in GraftFaultCount()");
     }
 }
 

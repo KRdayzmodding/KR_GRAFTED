@@ -66,11 +66,11 @@ void dispatch(const std::vector<Fn>& subscribers, const Args&... args) {
 const char* name_of(step at) {
     switch (at) {
         case step::armed:
-            return "врезка встала, плагины загружены";
+            return "hooks installed, plugins loaded";
         case step::linked:
-            return "движок зовётся: классы, шаблоны переменных и глобали на месте";
+            return "engine is being called: classes, variable templates and globals are in place";
         case step::running:
-            return "пошли кадры, корень объектного графа есть";
+            return "frames are running, the object graph root is available";
         default:
             return "?";
     }
@@ -86,9 +86,7 @@ void close_layer() {
         return;
     }
     g_open = false;
-    log(std::format("слой {}: конец ({} -> {})", g_layer.index,
-                    g_layer.first_class ? g_layer.first_class : "?",
-                    g_layer.last_class ? g_layer.last_class : "?"));
+    log(std::format("layer {}: end ({} -> {})", g_layer.index, g_layer.first_class ? g_layer.first_class : "?", g_layer.last_class ? g_layer.last_class : "?"));
     dispatch(on_end(), g_layer);
 }
 
@@ -96,7 +94,7 @@ void open_layer(void* context, const char* class_name) {
     g_context = context;
     g_layer = layer{g_layer.index + 1, class_name, class_name};
     g_open = true;
-    log(std::format("слой {}: начало ({})", g_layer.index, class_name ? class_name : "?"));
+    log(std::format("layer {}: begin ({})", g_layer.index, class_name ? class_name : "?"));
     dispatch(on_begin(), g_layer);
 }
 
@@ -169,7 +167,7 @@ void reach(step at) {
     }
     // Лестница монотонная: перескакивать ступени можно, возвращаться — нет.
     g_at = at;
-    log(std::format("этап: {}", name_of(at)));
+    log(std::format("stage: {}", name_of(at)));
     // Копия списка: подписчик вправе подписаться на следующий этап прямо отсюда.
     const std::vector<waiter> now = waiters();
     for (const waiter& w : now) {

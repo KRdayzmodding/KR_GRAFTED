@@ -57,8 +57,8 @@ void scan_players() {
         // Молчать тут нельзя: «известно игроков: 0» в логе мода ничем не отличается от
         // пустого сервера, и разбираться будет не с чем. Системный журнал для того и
         // есть — он про библиотеку, а не про мод.
-        graft::log(world ? "[EXAMPLE_PLAYERS] нет array<Man> — сканировать нечем"
-                         : "[EXAMPLE_PLAYERS] корень объектного графа ещё не пришёл");
+        graft::log(world ? "[EXAMPLE_PLAYERS] no array<Man> - nothing to scan"
+                         : "[EXAMPLE_PLAYERS] object graph root has not arrived yet");
         return;
     }
     players.clear();
@@ -83,7 +83,7 @@ void scan_players() {
             // Строка уходит в SCRIPT-ЛОГ игры — это Print самой игры, только позванный
             // из C++. print(), а не log(), потому что читать её будет админ мода, а не
             // тот, кто разбирает библиотеку.
-            graft::print(format("новый игрок: {} ({})", row.name, steam));
+            graft::print(format("new player: {} ({})", row.name, steam));
         }
     }
 
@@ -94,8 +94,7 @@ void scan_players() {
     const int seen = static_cast<int>(players.size());
     if (seen != said) {
         said = seen;
-        graft::log(format("[EXAMPLE_PLAYERS] движок отдал {} игроков, без identity {}", seen,
-                          without_identity));
+        graft::log(format("[EXAMPLE_PLAYERS] the engine returned {} players, {} without identity", seen, without_identity));
     }
 }
 
@@ -125,11 +124,10 @@ int ExamplePlayersKnown() {
 string ExamplePlayerReport(string_view steam_id) {
     const auto found = g_players.find(steam_id);
     if (found == g_players.end()) {
-        return "неизвестен";
+        return "unknown";
     }
     const player_row& row = found->second;
-    return format("{} @ {:.0f} {:.0f} {:.0f}, тиков {}", row.name, row.position.x,
-                       row.position.y, row.position.z, row.seen_ticks);
+    return format("{} @ {:.0f} {:.0f} {:.0f}, ticks {}", row.name, row.position.x, row.position.y, row.position.z, row.seen_ticks);
 }
 
 // Поле движкового объекта — синтаксисом sol2, но имя живёт в типе, поэтому номер слота

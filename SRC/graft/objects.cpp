@@ -91,7 +91,7 @@ patched* copy_of(void** vt) {
     made.table()[0] = reinterpret_cast<void*>(&on_destroy);
     by_original().emplace(vt, &made);
     by_original().emplace(made.table(), &made);  // повторную подмену узнаём по копии
-    log(std::format("объекты: таблица {} скопирована ({} слотов)", static_cast<void*>(vt), count));
+    log(std::format("objects: table {} copied ({} slots)", static_cast<void*>(vt), count));
     return &made;
 }
 

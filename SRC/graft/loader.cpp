@@ -241,8 +241,7 @@ void load(const std::wstring& game_dir) {
         for (const graft_native_desc& d : own_natives()) {
             all.push_back({&d, self});
         }
-        detail::rows_ref().push_back({self, 0, "(хост)", GRAFT_OK,
-                                      static_cast<std::uint32_t>(own_natives().size())});
+        detail::rows_ref().push_back({self, 0, "(host)", GRAFT_OK, static_cast<std::uint32_t>(own_natives().size())});
     }
 
     for (const std::wstring& path : candidates(game_dir)) {
@@ -253,9 +252,9 @@ void load(const std::wstring& game_dir) {
             const DWORD err = GetLastError();
             r.name          = file_name(r.path);
             r.status = GRAFT_ERR_INTERNAL;
-            r.why           = std::format("LoadLibrary отказал, код {} (нет зависимостей или не x64)",
+            r.why           = std::format("LoadLibrary refused, code {} (missing dependencies or not x64)",
                                 err);
-            graft::log("! не загрузилась " + r.path + ": " + r.why);
+            graft::log("! failed to load " + r.path + ": " + r.why);
             detail::rows_ref().push_back(r);
             continue;
         }
@@ -275,7 +274,7 @@ void load(const std::wstring& game_dir) {
         r.count = info.count;
         if (r.status != GRAFT_OK) {
             r.why = plugins::reason(info, r.status);
-            graft::log(std::format("! плагин {} v{} отклонён: {} ({})", r.name, r.version, r.why, r.path));
+            graft::log(std::format("! plugin {} v{} rejected: {} ({})", r.name, r.version, r.why, r.path));
             detail::rows_ref().push_back(r);
             continue;
         }
@@ -291,11 +290,10 @@ void load(const std::wstring& game_dir) {
     for (const plugins::collision& c : collisions()) {
         graft::log(plugins::describe(c));
     }
-    mark(std::format("плагинов: {}, нативов: {}, коллизий: {}", rows().size(), registry().size(),
-                     collisions().size())
+    mark(std::format("plugins: {}, natives: {}, collisions: {}", rows().size(), registry().size(), collisions().size())
              .c_str());
     for (const row& r : rows()) {
-        graft::log(std::format("  {:<20} v{:<4} {:>4} нативов  {}", r.name, r.version, r.count, r.why));
+        graft::log(std::format("  {:<20} v{:<4} {:>4} natives  {}", r.name, r.version, r.count, r.why));
     }
 }
 

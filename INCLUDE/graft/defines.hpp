@@ -3,10 +3,12 @@
 // Мод на GRAFT ничего не обязан — даже закрытый и платный. См. LICENSE-EXCEPTION.
 #pragma once
 #include <cstdint>
+#include <expected>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "graft/miss.hpp"
 #include "graft/scan.hpp"
 
 // Дефайн на каждый загруженный плагин: `#ifdef GRAFTED_<ИМЯ>` в скрипте мода.
@@ -20,11 +22,11 @@ struct api {
 
     add_path_fn   add_path   = nullptr; // куда врезаемся: аддон приходит первым аргументом
     add_define_fn add_define = nullptr; // что зовём: она и кладёт дефайн в аддон
-
-    explicit operator bool() const { return add_path != nullptr && add_define != nullptr; }
 };
 
-api find(const std::vector<scan::view>& sections);
+// Обе точки или причина: нет якоря или одной из функций — `not_found`; в окне две разные
+// функции одной формы — `ambiguous` (врезаться в угаданное из двух хуже, чем остаться без).
+std::expected<api, miss> find(const std::vector<scan::view>& sections);
 
 // Строка в формате движка (шапка из трёх u16 перед символами). Живёт до конца процесса.
 const char* engine_string(std::string_view text);

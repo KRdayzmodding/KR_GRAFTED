@@ -69,8 +69,8 @@ graft::watch::disarm();
 IDA, чужой модуль помечен:
 
 ```
-[МОЙ_МОД] [watch] ЧУЖАЯ ЗАПИСЬ dest -> 0x0 | 0x3a1b7c/f0x3a1b40 <- 0x2c5d11/f0x2c5c80 <- ... | после команды
-[МОЙ_МОД] [watch] итог: ЧУЖАЯ dest — 417 раз | 0x3a1b7c/f0x3a1b40
+[МОЙ_МОД] [watch] FOREIGN WRITE dest -> 0x0 | 0x3a1b7c/f0x3a1b40 <- 0x2c5d11/f0x2c5c80 <- ... | после команды
+[МОЙ_МОД] [watch] total: FOREIGN dest - 417 times | 0x3a1b7c/f0x3a1b40
 ```
 
 `f0x...` — начало функции: оно берётся через сцепленную запись раскрутки

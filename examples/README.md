@@ -79,7 +79,7 @@ DayZ.exe
 | зеркало движкового API | [players](players/src/main.cpp) | `graft::dayz::CGame`, `man.GetIdentity()` |
 | поле движкового объекта | [players](players/src/main.cpp) | `world["m_DebugMonitorEnabled"_f]` |
 | буфер под `out` движка | [players](players/src/main.cpp) | `graft::scratch<graft::array<Man>>()` |
-| строка в script-лог игры из C++ | [players](players/src/main.cpp) | `graft::print("новый игрок: ...")` |
+| строка в script-лог игры из C++ | [players](players/src/main.cpp) | `graft::print("new player: ...")` |
 | строка в crash-лог игры из C++ | [minimal](minimal/src/natives.cpp) | `graft::error(...)` — это `Error2` самой игры |
 
 Чего в примерах нет намеренно: матрица ABI по каждому типу, поля объектов на любую

@@ -30,7 +30,7 @@ modded class MissionBase
             int value = kills.Get(key);
             line = line + key + "=" + value.ToString() + " ";
         }
-        Print("[EXAMPLE_HASHMAP] обход: " + line);
+        Print("[EXAMPLE_HASHMAP] walk: " + line);
 
         // Другая пара типов — ДРУГАЯ инстанциация того же шаблона C++. Ни строчки
         // нового кода: ни в C++, ни здесь.
@@ -46,6 +46,6 @@ modded class MissionBase
         delete kills;
         CppHashMap<string, int> fresh = new CppHashMap<string, int>;
         int empty = fresh.Count();
-        Print("[EXAMPLE_HASHMAP] после delete: count=" + empty.ToString());
+        Print("[EXAMPLE_HASHMAP] after delete: count=" + empty.ToString());
     }
 }
