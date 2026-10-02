@@ -125,7 +125,9 @@ from your debugger, written as assembly lines (`scan::code` from `graft/asm.hpp`
 included separately), and read field offsets out of the signature's holes; hook it one by
 one or as a batch (`graft::hook`, `graft::hook_all`, a guarded detour via
 `graft::hook<&detour>`); call real C++ engine methods (`scan::member_call`) and read world
-positions (`graft::position`). A complete example is in the Russian README, section
+positions (`graft::position`). Every search answers with `std::expected<T, graft::miss>`: a
+miss names its reason (`not_found`, `ambiguous`, `unreadable`) instead of coming back as a
+zero address. A complete example is in the Russian README, section
 [«Привязка к ассемблерному коду»](README.md#привязка-к-ассемблерному-коду); the reference
 is [docs/engine-access.md](docs/engine-access.md).
 
