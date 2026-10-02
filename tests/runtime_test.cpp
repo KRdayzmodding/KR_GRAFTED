@@ -18,14 +18,16 @@
 #include <malloc.h>
 
 #include <iostream>
+#include <regex>
+#include <sstream>
 #include <string>
 #include <vector>
 
 #include "graft/engine.hpp"
 #include "graft/guard.hpp"
 #include "graft/loader.hpp"
-#include "graft/stages.hpp"
 #include "graft/native.hpp"
+#include "graft/stages.hpp"
 
 namespace {
 
@@ -241,6 +243,29 @@ TEST(Logs, UserChannelFallsBackToTheSystemJournal) {
     const std::string text = text_of(only_file_like(dir, "graft_"));
     EXPECT_NE(text.find("~ [graft] мод сказал"), std::string::npos);
     EXPECT_NE(text.find("! [graft] мод пожаловался"), std::string::npos);
+}
+
+// Строка начинается «ЧЧ:ММ:СС.ммм | »: на запуске десятки событий укладываются в одну
+// секунду, и без миллисекунд не видно, что чего ждало. Всё, что читает `graft doctor`,
+// стоит после «| », поэтому признак жалобы остаётся там же.
+TEST(Logs, LineStartsWithTimeToTheMillisecondThenBar) {
+    const std::filesystem::path dir = log_sandbox();
+    const log_dir_guard         guard{dir};
+
+    graft::log("первая");
+    graft::log("! вторая");
+
+    std::istringstream       in{text_of(only_file_like(dir, "graft_"))};
+    std::vector<std::string> lines;
+    for (std::string line; std::getline(in, line);) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        lines.push_back(line);
+    }
+    ASSERT_EQ(lines.size(), 2u);
+    EXPECT_TRUE(std::regex_match(lines[0], std::regex{R"(\d\d:\d\d:\d\d\.\d{3} \| первая)"}));
+    EXPECT_TRUE(std::regex_match(lines[1], std::regex{R"(\d\d:\d\d:\d\d\.\d{3} \| ! вторая)"}));
 }
 
 // Пока каталог не задан, журнал молчит — так живёт генератор объявлений, который

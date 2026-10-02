@@ -154,11 +154,26 @@ std::string describe(const collision& c) {
                        c.second);
 }
 
+std::string describe_unbound(std::string_view                     class_name,
+                             const std::vector<std::string_view>& methods) {
+    // Шесть имён — чтобы по строке было видно, о чём речь; весь список лежит в плагине.
+    constexpr std::size_t kShown = 6;
+    std::string           names;
+    for (std::size_t i = 0; i < methods.size() && i < kShown; ++i) {
+        names += (i ? ", " : "");
+        names += methods[i];
+    }
+    if (methods.size() > kShown) {
+        names += std::format(", ... {} more", methods.size() - kShown);
+    }
+    return std::format("! class {} was never found - {} natives left unbound ({})", class_name, methods.size(), names);
+}
+
 namespace {
 
 // Одно разошедшееся число: чьё старее, то и чинить. Старее плагин — пересобрать его под
 // текущий graft; старее хост — пересборка плагина не поможет, обновлять надо хост.
-std::string mismatch(const char* what, std::uint32_t plugin, std::uint32_t host, const char* meaning) {
+std::string mismatch(std::string_view what, std::uint32_t plugin, std::uint32_t host, std::string_view meaning) {
     return std::format("{}: plugin {} {}, host {} {} - {}; {}", meaning, what, plugin, what, host, plugin < host ? "plugin is older than the host" : "host is older than the plugin", plugin < host ? "rebuild the plugin against the current graft" : "update the host (graft install)");
 }
 

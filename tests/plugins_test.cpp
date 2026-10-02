@@ -260,4 +260,33 @@ TEST(Describe, MentionsBothPluginsAndTheName) {
     EXPECT_NE(text.find("two"), std::string::npos);
 }
 
+// Класс так и не появился: одна строка на класс, а не по строке на метод. Плагин с двумя
+// десятками методов отсутствующего класса засыпал журнал, а `graft doctor` считал каждую
+// строку отдельной жалобой.
+TEST(DescribeUnbound, OneComplaintLineNamesTheClassAndCountsTheMethods) {
+    const std::vector<std::string_view> methods{"PathState", "Mind", "Target"};
+    const std::string                   line = graft::plugins::describe_unbound("CreatureAI", methods);
+    EXPECT_TRUE(line.starts_with("!")); // жалоба: так её находит graft doctor
+    EXPECT_NE(line.find("CreatureAI"), std::string::npos);
+    EXPECT_NE(line.find(" 3 "), std::string::npos);
+    for (const std::string_view m : methods) {
+        EXPECT_NE(line.find(m), std::string::npos) << m;
+    }
+    EXPECT_EQ(line.find('\n'), std::string::npos);
+}
+
+TEST(DescribeUnbound, LongListIsCutAndSaysHowManyMoreThereAre) {
+    std::vector<std::string> storage;
+    for (int i = 0; i < 10; ++i) {
+        storage.push_back("m" + std::to_string(i));
+    }
+    const std::vector<std::string_view> methods(storage.begin(), storage.end());
+    const std::string                   line = graft::plugins::describe_unbound("Big", methods);
+    EXPECT_NE(line.find("m0"), std::string::npos);
+    EXPECT_NE(line.find("m5"), std::string::npos);
+    EXPECT_EQ(line.find("m6"), std::string::npos); // дальше шестого не перечисляем
+    EXPECT_NE(line.find("4 more"), std::string::npos);
+    EXPECT_NE(line.find(" 10 "), std::string::npos);
+}
+
 }  // namespace

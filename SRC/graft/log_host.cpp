@@ -1,5 +1,6 @@
 // Copyright (C) 2025-2026 6wingSerap
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include <chrono>
 #include <ctime>
 #include <filesystem>
 #include <format>
@@ -48,11 +49,20 @@ void write(const std::string& stem, std::string_view line) {
     if (g_dir.empty()) {
         return;
     }
-    // Час:минута:секунда в начале строки — как в script-логах игры: без метки две записи
-    // из разных мест не составить в один рассказ.
-    const std::tm t = local_now();
+    // Час:минута:секунда.миллисекунда в начале строки: без метки две записи из разных мест
+    // не составить в один рассказ, а на запуске десятки событий укладываются в одну
+    // секунду, и без миллисекунд не видно, что чего ждало. Всё, что читает `graft doctor`
+    // (признак жалобы «!»), стоит после «| », и формат этого не трогает.
+    const auto        now  = std::chrono::system_clock::now();
+    const std::time_t secs = std::chrono::system_clock::to_time_t(now);
+    const auto        ms   = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) %
+                    std::chrono::seconds{1};
+    std::tm t{};
+    localtime_s(&t, &secs);
+    // Строка собирается целиком и уходит одной записью.
+    const std::string text = std::format("{:02}:{:02}:{:02}.{:03} | {}\n", t.tm_hour, t.tm_min, t.tm_sec, ms.count(), line);
     std::ofstream out(as_path(g_dir) / (stem + "_" + stamp() + ".log"), std::ios::app);
-    out << std::format("{:02}:{:02}:{:02} | ", t.tm_hour, t.tm_min, t.tm_sec) << line << '\n';
+    out.write(text.data(), static_cast<std::streamsize>(text.size()));
 }
 
 }  // namespace
