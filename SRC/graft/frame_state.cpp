@@ -17,7 +17,7 @@ namespace {
 
 std::atomic<std::size_t> g_frames{0};
 std::atomic<float> g_last_dt{0.0f};
-const char* g_state = "не ставилась";
+const char*              g_state = "not installed";
 std::atomic<std::size_t> g_rejected_class{0};
 std::atomic<std::size_t> g_rejected_unresolved{0};
 
@@ -33,10 +33,7 @@ void note_frame(float dt) {
     // журналу ничего не стоит.
     constexpr std::size_t kEvery = 512;
     if (n > 0 && n % kEvery == 0) {
-        graft::log(std::format("[кадры] {}, dt {:.4f}, отсев: чужой класс {}, индекс -1 {}", n,
-                               static_cast<double>(dt),
-                               g_rejected_class.load(std::memory_order_relaxed),
-                               g_rejected_unresolved.load(std::memory_order_relaxed)));
+        graft::log(std::format("[frames] {}, dt {:.4f}, dropped: foreign class {}, index -1 {}", n, static_cast<double>(dt), g_rejected_class.load(std::memory_order_relaxed), g_rejected_unresolved.load(std::memory_order_relaxed)));
     }
 }
 

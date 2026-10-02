@@ -679,7 +679,7 @@ TEST(Guard, CatchesStdExceptionAndKeepsItsText) {
 TEST(Guard, CatchesForeignThrowToo) {
     const int got = graft::detail::guarded<int>(nullptr, []() -> int { throw 42; });
     EXPECT_EQ(got, 0);
-    EXPECT_NE(graft::loader::last_fault().find("неизвестного типа"), std::string::npos);
+    EXPECT_NE(graft::loader::last_fault().find("unknown type"), std::string::npos);
 }
 
 TEST(Guard, CatchesHardwareFault) {

@@ -132,9 +132,9 @@ shape shape_of(const scan::view& code, std::uintptr_t fn) {
     }
     // Окно НЕ больше короткой из двух целей (0x60), иначе в ответ попали бы байты соседней
     // функции: там `shl rax,4` есть у кого угодно, и путь для модулей стал бы «дефайнами».
-    constexpr std::size_t            kBody = 0x60;
-    const std::optional<scan::found> count = code.find(fn, kBody, kCount);
-    const std::optional<scan::found> array = code.find(fn, kBody, kArray);
+    constexpr std::size_t kBody = 0x60;
+    const auto            count = code.find(fn, kBody, kCount);
+    const auto            array = code.find(fn, kBody, kArray);
     // Тройка {указатель, ёмкость, счёт} лежит подряд: счётчик на 12 байт дальше массива.
     // Это и отличает наши две функции от любого другого вызова, попавшего в окно.
     if (!count || !array || count->value != array->value + 12) {
@@ -175,7 +175,7 @@ void* __fastcall hook_add_path(void* addon, const char* path) {
         if (!stage::reached(stage::step::armed)) {
             if (!g_warned) {
                 g_warned = true;
-                log("дефайны аддонов: движок дошёл до CfgMods раньше загрузчика — ждём");
+                log("addon defines: the engine reached CfgMods before the loader - waiting");
             }
         } else if (!g_done.exchange(true, std::memory_order_relaxed)) {
             // Захват по ссылке — указатель, и лямбда остаётся тривиально разрушаемой:
@@ -183,7 +183,7 @@ void* __fastcall hook_add_path(void* addon, const char* path) {
             std::string said;
             ::graft::detail::guarded<void>(reinterpret_cast<void*>(&hook_add_path),
                                            [&said, addon] { said = inject(addon); });
-            log(std::format("дефайны аддонов: {}", said.empty() ? "ни одного" : said));
+            log(std::format("addon defines: {}", said.empty() ? "none" : said));
         }
     }
     return result;
@@ -211,30 +211,27 @@ const char* engine_string(std::string_view text) {
     return reinterpret_cast<const char*>(raw + 6);
 }
 
-api find(const std::vector<scan::view>& sections) {
-    std::uintptr_t anchor = 0;
+std::expected<api, miss> find(const std::vector<scan::view>& sections) {
+    std::expected<std::uintptr_t, miss> anchor = std::unexpected(miss::not_found);
     for (const scan::view& s : sections) {
-        if (!s.exec) {
-            anchor = s.find_cstr(kAnchor);
-            if (anchor) {
-                break;
-            }
+        if (!s.exec && (anchor = s.find_cstr(kAnchor))) {
+            break;
         }
     }
     if (!anchor) {
-        return {};
+        return std::unexpected(anchor.error());
     }
     api out;
     for (const scan::view& code : sections) {
         if (!code.exec) {
             continue;
         }
-        const std::uintptr_t site = code.find_rip(kRipLea, anchor);
+        const auto site = code.find_rip(kRipLea, *anchor);
         if (!site) {
             continue;
         }
-        std::vector<std::uintptr_t>       targets = code.calls_before(site, kWindow);
-        const std::vector<std::uintptr_t> after   = code.calls_after(site, kWindow);
+        std::vector<std::uintptr_t>       targets = code.calls_before(*site, kWindow);
+        const std::vector<std::uintptr_t> after   = code.calls_after(*site, kWindow);
         targets.insert(targets.end(), after.begin(), after.end());
         for (std::uintptr_t t : targets) {
             // Двусмысленность — отказ целиком: врезаться в угаданное из двух место хуже,
@@ -243,7 +240,7 @@ api find(const std::vector<scan::view>& sections) {
                 case shape::path: {
                     const auto found = reinterpret_cast<api::add_path_fn>(t);
                     if (out.add_path && out.add_path != found) {
-                        return {};
+                        return std::unexpected(miss::ambiguous);
                     }
                     out.add_path = found;
                     break;
@@ -251,7 +248,7 @@ api find(const std::vector<scan::view>& sections) {
                 case shape::define: {
                     const auto found = reinterpret_cast<api::add_define_fn>(t);
                     if (out.add_define && out.add_define != found) {
-                        return {};
+                        return std::unexpected(miss::ambiguous);
                     }
                     out.add_define = found;
                     break;
@@ -261,19 +258,24 @@ api find(const std::vector<scan::view>& sections) {
             }
         }
     }
+    if (!out.add_path || !out.add_define) {
+        return std::unexpected(miss::not_found);
+    }
     return out;
 }
 
 void install(const std::vector<scan::view>& sections) {
-    g_api = find(sections);
-    if (!g_api) {
-        log("! дефайны аддонов: разбор CfgMods не найден — #ifdef GRAFTED_* не будет");
+    const auto entry = find(sections);
+    if (!entry) {
+        log(std::format("! addon defines: CfgMods parser not found ({}) - there will be no #ifdef GRAFTED_*",
+                        to_string(entry.error())));
         return;
     }
+    g_api        = *entry;
     void* target = reinterpret_cast<void*>(g_api.add_path);
     void* detour = reinterpret_cast<void*>(&hook_add_path);
     if (!hook(target, detour, reinterpret_cast<void**>(&g_orig_add_path))) {
-        log("! дефайны аддонов: врезка не встала");
+        log("! addon defines: hook failed");
         g_api = {};
         return;
     }
@@ -281,7 +283,7 @@ void install(const std::vector<scan::view>& sections) {
         return reinterpret_cast<std::uintptr_t>(p) -
                reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
     };
-    log(std::format("дефайны аддонов: AddScriptModulePath={:#x} AddDefine={:#x}",
+    log(std::format("addon defines: AddScriptModulePath={:#x} AddDefine={:#x}",
                     rva(reinterpret_cast<void*>(g_api.add_path)),
                     rva(reinterpret_cast<void*>(g_api.add_define))));
 }

@@ -139,8 +139,8 @@ TEST(Reason, OlderPluginAbiNamesBothNumbersAndAsksToRebuildPlugin) {
         make_info(GRAFT_ABI_VERSION - 1, GRAFT_LAYOUT_VERSION), GRAFT_ERR_ABI);
     EXPECT_TRUE(has(text, "ABI " + num(GRAFT_ABI_VERSION - 1))) << text;
     EXPECT_TRUE(has(text, "ABI " + num(GRAFT_ABI_VERSION))) << text;
-    EXPECT_TRUE(has(text, "пересобрать плагин")) << text;
-    EXPECT_FALSE(has(text, "обновить хост")) << text;
+    EXPECT_TRUE(has(text, "rebuild the plugin")) << text;
+    EXPECT_FALSE(has(text, "update the host")) << text;
 }
 
 // Плагин новее хоста: пересборка плагина не поможет, отстал хост.
@@ -148,8 +148,8 @@ TEST(Reason, NewerPluginAbiAsksToUpdateHost) {
     const auto text = graft::plugins::reason(
         make_info(GRAFT_ABI_VERSION + 1, GRAFT_LAYOUT_VERSION), GRAFT_ERR_ABI);
     EXPECT_TRUE(has(text, "ABI " + num(GRAFT_ABI_VERSION + 1))) << text;
-    EXPECT_TRUE(has(text, "обновить хост")) << text;
-    EXPECT_FALSE(has(text, "пересобрать плагин")) << text;
+    EXPECT_TRUE(has(text, "update the host")) << text;
+    EXPECT_FALSE(has(text, "rebuild the plugin")) << text;
 }
 
 TEST(Reason, OlderPluginLayoutNamesBothNumbers) {
@@ -157,13 +157,13 @@ TEST(Reason, OlderPluginLayoutNamesBothNumbers) {
         make_info(GRAFT_ABI_VERSION, GRAFT_LAYOUT_VERSION - 1), GRAFT_ERR_LAYOUT);
     EXPECT_TRUE(has(text, "LAYOUT " + num(GRAFT_LAYOUT_VERSION - 1))) << text;
     EXPECT_TRUE(has(text, "LAYOUT " + num(GRAFT_LAYOUT_VERSION))) << text;
-    EXPECT_TRUE(has(text, "пересобрать плагин")) << text;
+    EXPECT_TRUE(has(text, "rebuild the plugin")) << text;
 }
 
 TEST(Reason, NewerPluginLayoutAsksToUpdateHost) {
     const auto text = graft::plugins::reason(
         make_info(GRAFT_ABI_VERSION, GRAFT_LAYOUT_VERSION + 1), GRAFT_ERR_LAYOUT);
-    EXPECT_TRUE(has(text, "обновить хост")) << text;
+    EXPECT_TRUE(has(text, "update the host")) << text;
 }
 
 // Разошлось оба числа — показать оба, а не только первое попавшееся.
@@ -181,8 +181,8 @@ TEST(Reason, SilentRefusalStillNamesHostNumbers) {
     const auto        text = graft::plugins::reason(info, GRAFT_ERR_ABI);
     EXPECT_TRUE(has(text, "ABI " + num(GRAFT_ABI_VERSION))) << text;
     EXPECT_TRUE(has(text, "LAYOUT " + num(GRAFT_LAYOUT_VERSION))) << text;
-    EXPECT_TRUE(has(text, "не сообщил")) << text;
-    EXPECT_TRUE(has(text, "пересобрать плагин")) << text;
+    EXPECT_TRUE(has(text, "did not report")) << text;
+    EXPECT_TRUE(has(text, "rebuild the plugin")) << text;
 }
 
 TEST(Reason, TruncatedStructNamesSizes) {

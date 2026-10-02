@@ -140,21 +140,24 @@ bool retarget_call(std::uintptr_t site, void* to) {
 
 // Звать после того, как образ разобран сканом.
 void install(const std::vector<scan::view>& sections) {
-    g_entry = scan::find_frame_entry(sections);
-    if (!g_entry) {
-        detail::note_state("точка входа кадра не найдена");
-        log("! привязка к кадру: точка входа не найдена — тика не будет, "
-            "зовите GraftTick(dt, GetGame()) из мода");
+    const auto entry = scan::find_frame_entry(sections);
+    if (!entry) {
+        detail::note_state("frame entry point not found");
+        log(std::format("! frame binding: entry point not found ({}) - no tick, "
+                        "call GraftTick(dt, GetGame()) from the mod",
+                        to_string(entry.error())));
         return;
     }
+    g_entry        = *entry;
     g_orig_prepare = g_entry.prepare;
     const bool ok = retarget_call(g_entry.site, reinterpret_cast<void*>(&hook_prepare));
-    detail::note_state(ok ? "движковая точка входа кадра" : "перенаправление не удалось");
+    detail::note_state(ok ? "engine frame entry point" : "redirect failed");
     const auto rva = [](std::uintptr_t p) {
         return p - reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
     };
-    log(std::format("привязка к кадру: {} место_вызова={:#x} кэш_индекса={:#x}",
-                    ok ? "встала" : "НЕ ВСТАЛА", rva(g_entry.site),
+    log(std::format("frame binding: {} call_site={:#x} index_cache={:#x}",
+                    ok ? "installed" : "NOT INSTALLED",
+                    rva(g_entry.site),
                     rva(reinterpret_cast<std::uintptr_t>(g_entry.index))));
 }
 

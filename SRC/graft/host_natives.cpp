@@ -111,11 +111,15 @@ float GraftFrameDt() {
 // Состояние привязки к кадру одной строкой.
 std::string GraftLoopProbe() {
     return std::format(
-        "кадров {} dt {} | поток {} | корень {} | отсев: чужой класс {}, индекс -1 {} | "
-        "привязка: {}",
-        graft::frame::frames(), graft::frame::last_dt(), GetCurrentThreadId(),
-        graft::loader::script_root(), graft::frame::rejected_class(),
-        graft::frame::rejected_unresolved(), graft::frame::state());
+        "frames {} dt {} | thread {} | root {} | dropped: foreign class {}, index -1 {} | "
+        "binding: {}",
+        graft::frame::frames(),
+        graft::frame::last_dt(),
+        GetCurrentThreadId(),
+        graft::loader::script_root(),
+        graft::frame::rejected_class(),
+        graft::frame::rejected_unresolved(),
+        graft::frame::state());
 }
 
 // Тот ли объект приезжает первым аргументом движковой точки входа кадра, что скрипт

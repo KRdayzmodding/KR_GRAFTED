@@ -85,66 +85,108 @@ script-API Enforce (оно переживает патч игры), либо и�
 
 ## Поиск: `scan.hpp`
 
+### Если не нашлось
+
+Всякий поиск отвечает `std::expected<T, graft::miss>`: находка или причина отказа. Нулевого
+адреса в роли «нет» нигде нет: его можно не проверить, а выглядит он как ответ.
+
+| Причина | Что случилось | Что делать |
+|---|---|---|
+| `miss::not_found` | такого нет: после патча игры маяк пропал или сменил форму | открыть функцию в IDA и сверить с листингом |
+| `miss::ambiguous` | таких несколько, и выбирать из них нельзя: маяк раздвоился | искать маяк точнее |
+| `miss::unreadable` | по адресу нечего читать: он не из образа или мусорный | искать, откуда взялся адрес |
+
+`graft::to_string(miss)` — причина словами, для журнала. Не нашлось — это «нет», а не повод
+взять ближайшее подходящее: плагин выключает свою ветку и пишет причину в журнал. Цепочка
+поисков передаёт отказ дальше как есть, и причина доезжает до журнала первой:
+
+```cpp
+std::expected<graft::scan::found, graft::miss> find_field() {
+    const auto fn = graft::scan::function_referencing("текст ассерта");
+    if (!fn) {
+        return std::unexpected(fn.error());
+    }
+    return graft::scan::find_in_function(*fn, listing);
+}
+```
+
+Коллекция (`rip_refs`, `rel32_targets`) в этом смысле не отказывает: «ничего» — пустой
+`std::vector`. Предикат (`matches`, `is_code`, `readable`) — `bool`: у вопроса «ровно это?»
+два ответа, и причина третьего ему не нужна.
+
+**Окно в байтах — это число, которое кто-то должен знать.** «Искать в первых N байтах»
+значит гадать N: мало — не дотянешься, много — окно перелезет в соседнюю функцию и
+подхватит чужое. Поэтому в теле функции ищут без числа — `find_in_function` берёт конец
+из таблиц раскрутки (`.pdata`). Окно задаётся только там, где границ нет вовсе: у куска
+образа, у места вызова, у переходника без записи раскрутки. Там оно — число вызывающего:
+безымянного дефолта у `calls_after`, `calls_before` и `first_call` нет, а в вашем коде
+оно должно быть именованной константой с причиной рядом.
+
 ### Секции образа
 
 ```cpp
-std::vector<view> sections_of(void* module);
+const std::vector<view>& image();                    // образ игры
+std::vector<view>        sections_of(void* module);  // любой другой модуль
 ```
 
-Секции загруженного модуля: байты, адрес и признак «исполняемая». Одна на всех — и хосту
-для поиска регистрации, и плагину для чего угодно. Держите результат в статике: он не
-меняется, а перечисление стоит прохода по заголовку PE.
+Секции загруженного образа: байты, адрес и признак «исполняемая». Одна на всех — и хосту
+для поиска регистрации, и плагину для чего угодно.
+
+`image()` — образ игры, главный модуль процесса, в котором живёт движок. Плагину почти
+всегда нужен он, и ни модуль у системы брать не нужно, ни держать результат в своей
+статике: секции считаются при первом обращении и дальше не меняются, ссылка живёт до конца
+процесса. `sections_of(module)` — для чужого модуля (другой DLL); результат такого вызова
+держите сами: перечисление стоит прохода по заголовку PE.
 
 ```cpp
-const std::vector<graft::scan::view>& sections() {
-    static const auto s = graft::scan::sections_of(GetModuleHandleW(nullptr));
-    return s;
-}
+const auto& sections = graft::scan::image();
 ```
 
 `view` умеет искать внутри себя: `find_cstr(text)` — адрес целой C-строки (не хвоста
 чужой), `find_rip(insn, target)` — инструкцию, которая через `rip` смотрит на адрес,
-`find(ea, span, sig)` — сигнатуру в окне, `rel32_after/rel32_before(ea, span, opcode)` —
-цели переходов, `contains(ea)`.
+`find(ea, span, sig)` — сигнатуру в окне (все три — `std::expected`),
+`rel32_after/rel32_before(ea, span, opcode)` — цели переходов, `contains(ea)`.
 
 ### Функция по строке-маяку
 
 ```cpp
-std::uintptr_t function_referencing(const std::vector<view>& sections, const char* text);
+std::expected<std::uintptr_t, miss> function_referencing(const char* text);   // по образу игры
+std::expected<std::uintptr_t, miss> function_referencing(const std::vector<view>& sections,
+                                                         const char* text);
 std::vector<std::uintptr_t> rip_refs(const std::vector<view>& sections, const char* text,
                                      pattern_view insn);
-std::uintptr_t function_start(std::uintptr_t ea);
+std::expected<std::uintptr_t, miss> function_start(std::uintptr_t ea);
 ```
 
 Для кода, у которого есть строка — текст ассерта, формат журнала, — но нет натива.
 `function_referencing` отдаёт начало функции, которая берёт адрес ровно этой C-строки
-(`lea reg,[rip+строка]`). Ноль — не нашлось или на строку ссылаются РАЗНЫЕ функции:
-угадывать из двух нельзя. Так хост находит проверку линковки модуля — по строке
+(`lea reg,[rip+строка]`). Нет такой — `not_found`; на строку ссылаются РАЗНЫЕ функции —
+`ambiguous`: угадывать из двух нельзя. Так хост находит проверку линковки модуля — по строке
 `Method not linked '%s.%s'`.
 
 Под ней две вещи, которые нужны и сами по себе: `rip_refs` — все места, где инструкция вида
 `insn` смотрит на строку через `rip`, и `function_start` — начало функции, в которой лежит
 адрес, по таблицам раскрутки `.pdata`. Записи идут сцепленными: у куска, который компилятор
-вынес из функции, запись своя, и без сцепки «началом» оказался бы он. Ноль — у адреса
-записи нет (не код или лист без кадра).
+вынес из функции, запись своя, и без сцепки «началом» оказался бы он. У адреса записи нет
+(не код или лист без кадра) — `not_found`.
 
 ### Таблица класса по имени из RTTI
 
 ```cpp
-std::uintptr_t rtti_vtable(void* module, const char* mangled);
-std::uintptr_t rtti_vtable(const std::vector<view>& sections,
-                           std::uintptr_t image_base, const char* mangled);
+std::expected<std::uintptr_t, miss> rtti_vtable(const char* mangled);   // по образу игры
+std::expected<std::uintptr_t, miss> rtti_vtable(void* module, const char* mangled);
+std::expected<std::uintptr_t, miss> rtti_vtable(const std::vector<view>& sections,
+                                                std::uintptr_t image_base, const char* mangled);
 ```
 
 Чистая механика MSVC, про DayZ не знает ничего. Так берётся класс, у которого нет ни
 одного натива, — а от таблицы уже идут его методы.
 
 ```cpp
-const std::uintptr_t vt = graft::scan::rtti_vtable(
-    GetModuleHandleW(nullptr), ".?AVAIBehaviourGoToTarget@@");
+const auto vt = graft::scan::rtti_vtable(".?AVAIBehaviourGoToTarget@@");
 ```
 
-Ноль — не нашли; это отказ, а не повод идти дальше по догадке.
+Не нашли — `not_found`; это отказ, а не повод идти дальше по догадке.
 
 > **Буква после `.?A` — это вид типа**, и перепутать её легко: `V` у `class`, `U` у
 > `struct`, `W` у `enum`. Самый частый способ «ничего не найти».
@@ -180,13 +222,15 @@ template <name_t S> inline constexpr auto sig;   // байтами: scan::sig<"4
 
 bool matches(std::uintptr_t ea, pattern_view sig);          // на этом адресе — ровно это?
 struct found { std::uintptr_t site; std::int64_t value; };
-std::optional<found> find(std::uintptr_t ea, std::size_t span, pattern_view sig,
-                          unsigned nth = 1);                // в окне чужой памяти
+std::expected<found, miss> find(std::uintptr_t ea, std::size_t span, pattern_view sig,
+                                unsigned nth = 1);          // в окне чужой памяти
+std::expected<found, miss> find_in_function(std::uintptr_t ea, pattern_view sig,
+                                            unsigned nth = 1);  // до конца функции, без окна
 // и то же по байтам секции — у неё они уже есть:
-std::optional<found> view::find(std::uintptr_t ea, std::size_t span, pattern_view sig,
-                                unsigned nth = 1) const;
-std::uintptr_t view::find_rip(pattern_view insn, std::uintptr_t target,
-                              std::uintptr_t from = 0) const;
+std::expected<found, miss> view::find(std::uintptr_t ea, std::size_t span, pattern_view sig,
+                                      unsigned nth = 1) const;
+std::expected<std::uintptr_t, miss> view::find_rip(pattern_view insn, std::uintptr_t target,
+                                                   std::uintptr_t from = 0) const;
 ```
 
 > **Внутри секции ищите `view::find`, а не свободную `find`.** Свободная спрашивает у
@@ -270,14 +314,20 @@ constexpr auto prologue = scan::sig<"48 89 5C 24 ?? 57">;   // mov [rsp+?],rbx; 
 constexpr auto field    = scan::sig<"48 8B 81 [disp32]">;   // mov rax,[rcx+disp32]
 
 if (!scan::matches(fn, prologue)) { return; }                 // тот ли это код
-const auto at = scan::find(fn, 0x30, field);                  // где и что в дырке
+const auto at = scan::find_in_function(fn, field);            // где и что в дырке
 if (at) { offsets.field = static_cast<unsigned>(at->value); }
 ```
 
 `matches` сверяет по точному адресу, `find` ищет `nth`-е вхождение в `[ea, ea+span)` и
-отдаёт адрес инструкции вместе с содержимым дырки. Нечитаемый адрес — отказ, а не падение:
-кандидат мог приехать из мусорного смещения. Дырка читается **со знаком**, как её понимает
-процессор: `disp8` `0x80` — это −128, а не +128.
+отдаёт адрес инструкции вместе с содержимым дырки. `find_in_function` — то же от `ea` и до
+конца функции, в которой он лежит: конец берётся из `.pdata`, числа в вызове нет. Холодный
+хвост, который компилятор вынес из функции, — отдельный кусок со своей записью, и окно
+кончается на его краю. У адреса записи раскрутки нет — `not_found`: конца функции тут не
+определить, а окно с потолка брать нельзя.
+
+Нечитаемый адрес — `unreadable`, а не падение: кандидат мог приехать из мусорного смещения,
+и «читать нечего» — не то же самое, что «искомого в памяти нет» (`not_found`). Дырка читается
+**со знаком**, как её понимает процессор: `disp8` `0x80` — это −128, а не +128.
 
 Строка разбирается на **компиляции**: лишние пробелы законны, регистр цифр не важен, а
 опечатка (`"4"` вместо `"48"`, `???`, `[disp]` без ширины, две дырки) — ошибка сборки, а не
@@ -301,13 +351,15 @@ std::vector<std::uintptr_t> rel32_targets(const std::vector<view>& sections,
 лежать в исполняемой секции. Окно кончается ровно там, где сказано, — иначе разбор одной
 функции цепляет соседнюю.
 
-Рядом: `first_call(sections, fn, span)` — цель первого вызова. Смещения полей структур и
-адреса глобалей достаются из тех же байт — дыркой в сигнатуре, см. [Сигнатуры](#сигнатуры).
+Рядом: `first_call(sections, fn, span)` — цель первого вызова в окне `span`; вызова с целью
+в исполняемой секции нет — `not_found`. Смещения полей структур и адреса глобалей достаются
+из тех же байт — дыркой в сигнатуре, см. [Сигнатуры](#сигнатуры).
 
 `view::find_rip(insn, target)` — адрес инструкции, которая через `rip` ссылается на `target`
-(`lea reg,[rip+d]`, `mov [rip+d],reg` — любая). Сигнатура берётся **целиком**, вместе с
-дыркой под смещение: `rip` смотрит за конец инструкции, поэтому нужна и её длина. Это
-единственная реализация такого поиска на весь проект.
+(`lea reg,[rip+d]`, `mov [rip+d],reg` — любая); следующую ссылку ищут с `from`, больше нет —
+`not_found`. Сигнатура берётся **целиком**, вместе с дыркой под смещение: `rip` смотрит за
+конец инструкции, поэтому нужна и её длина. Это единственная реализация такого поиска на
+весь проект.
 
 ### Чтение по чужому адресу
 
@@ -501,31 +553,31 @@ const graft::vector at = graft::position(player);
 
 namespace {
 
-const std::vector<graft::scan::view>& sections() {
-    static const auto s = graft::scan::sections_of(GetModuleHandleW(nullptr));
-    return s;
-}
+// Окна — числа вызывающего, и у каждого своя причина (здесь — по листингу метода в IDA).
+constexpr std::size_t kThunk = 0x20;   // переходник слота: `jmp rel32` и ничего больше
+constexpr std::size_t kBody  = 0x140;  // сколько тела метода разбираем; дальше — уже сосед
 
 bool resolve() {
-    // 1. Класс -> его таблица.
-    const std::uintptr_t vt =
-        graft::scan::rtti_vtable(GetModuleHandleW(nullptr), ".?AVAIBehaviourGoToTarget@@");
-    if (!vt || graft::scan::vtable_slots(reinterpret_cast<void* const*>(vt)) <= 10) {
+    const auto& sections = graft::scan::image();
+
+    // 1. Класс -> его таблица. В настоящем плагине причину отказа пишут в журнал.
+    const auto vt = graft::scan::rtti_vtable(".?AVAIBehaviourGoToTarget@@");
+    if (!vt || graft::scan::vtable_slots(reinterpret_cast<void* const*>(*vt)) <= 10) {
         return false;
     }
 
     // 2. Виртуальный метод -> его тело. У слота бывает переходник, поэтому берём цель
     //    хвостового jmp, а не сам слот.
     std::uintptr_t entry = 0;
-    std::memcpy(&entry, reinterpret_cast<const void*>(vt + 10 * 8), sizeof entry);
+    std::memcpy(&entry, reinterpret_cast<const void*>(*vt + 10 * 8), sizeof entry);
 
-    for (std::uintptr_t body : graft::scan::rel32_targets(sections(), entry, 0x60, 0xE9)) {
+    for (std::uintptr_t body : graft::scan::rel32_targets(sections, entry, kThunk, 0xE9)) {
         // 3. Сверка: кандидат становится ответом только когда совпал пролог.
         if (!graft::scan::matches(body, graft::scan::sig<"48 89 5C 24 10 57 48 83 EC 20">)) {
             continue;
         }
         // 4. Его собственные вызовы — то, ради чего всё и затевалось.
-        for (std::uintptr_t callee : graft::scan::rel32_targets(sections(), body, 0x140)) {
+        for (std::uintptr_t callee : graft::scan::rel32_targets(sections, body, kBody)) {
             ...
         }
         return true;
@@ -553,7 +605,7 @@ bool resolve() {
 | установка врезки со снятием | ~0.02 мс (`Hook.InstallCostIsMeasured`) | старт |
 | пачка | столько же на каждую врезку: пачка — ради «целиком или никак», не ради цены | старт |
 | `rtti_vtable` на образе игры | ~3 мс (~20 ГБ/с × 61 МБ данных) | один раз, мемоизируйте |
-| `matches`, `rel32_targets` на окне 0x140 | наносекунды | разбор функции |
+| `matches`, `find_in_function`, `rel32_targets` на одной функции | наносекунды | разбор функции |
 | `member_call`, `position` | как обычный вызов натива | — |
 
 Ничего из этого не место на горячем пути. Разбор — на старте (или лениво, но один раз),

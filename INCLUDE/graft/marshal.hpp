@@ -127,8 +127,8 @@ inline void write_var(void* var, const value& v, var_kind kind = var_kind::retur
     const auto tag = *reinterpret_cast<const std::uint32_t*>(at + 16);
     auto* slot = reinterpret_cast<std::uint64_t*>(at);
     if (kind == var_kind::out && (tag & script::type_family) == script::type_string) {
-        log("graft: строку через out-аргумент вернуть нельзя — строкой владеет движок; "
-            "отдавай её возвратом");
+        log("graft: a string cannot be returned through an out argument - the engine owns the string; "
+            "return it instead");
         return;
     }
     if (tag == script::type_bool) {

@@ -184,7 +184,7 @@ inline bool set_registers(DWORD target, void* const a[k_spots], std::uint64_t dr
 // Отказ — не повод продолжать: не взведено ничего, и в журнале написано почему.
 inline bool arm(std::initializer_list<spot> all) {
     if (all.size() > k_spots) {
-        print(std::format("[watch] точек у железа {}, просят {}", k_spots, all.size()));
+        print(std::format("[watch] hardware breakpoints {}, requested {}", k_spots, all.size()));
         return false;
     }
     // Проверяем ВСЁ до первой записи в регистры: половина взведённых точек — это ответ,
@@ -192,15 +192,15 @@ inline bool arm(std::initializer_list<spot> all) {
     for (const spot& s : all) {
         const auto at = reinterpret_cast<std::uintptr_t>(s.at);
         if (!at) {
-            print(std::format("[watch] {}: адрес нулевой", s.name));
+            print(std::format("[watch] {}: address is null", s.name));
             return false;
         }
         if (s.bytes != 1 && s.bytes != 2 && s.bytes != 4 && s.bytes != 8) {
-            print(std::format("[watch] {}: длина {} — бывает 1, 2, 4 или 8", s.name, s.bytes));
+            print(std::format("[watch] {}: length {} - must be 1, 2, 4 or 8", s.name, s.bytes));
             return false;
         }
         if (at % s.bytes) { // правило 2: невыровненная точка молча не срабатывает
-            print(std::format("[watch] {}: адрес {:#x} не кратен {}", s.name, at, s.bytes));
+            print(std::format("[watch] {}: address {:#x} is not a multiple of {}", s.name, at, s.bytes));
             return false;
         }
     }
@@ -228,13 +228,13 @@ inline bool arm(std::initializer_list<spot> all) {
     }
     watched = GetCurrentThreadId();
     if (!detail::set_registers(watched, addrs, dr7)) {
-        print("[watch] регистры не встали");
+        print("[watch] registers were not set");
         watched = 0;
         return false;
     }
-    std::string line = "[watch] смотрю за записью:";
+    std::string line = "[watch] watching writes:";
     for (const spot& s : all) {
-        line += std::format(" {} {} ({}б)", s.name, s.at, s.bytes);
+        line += std::format(" {} {} ({}b)", s.name, s.at, s.bytes);
     }
     print(line);
     return true;
@@ -262,10 +262,10 @@ inline std::string where(std::uintptr_t rip) {
     PVOID      image = nullptr;
     RtlPcToFileHeader(reinterpret_cast<PVOID>(rip), &image);
     if (reinterpret_cast<std::uintptr_t>(image) != base) {
-        return std::format("{:#x}(не игра)", rip);
+        return std::format("{:#x}(not the game)", rip);
     }
-    const std::uintptr_t start = scan::function_start(rip);
-    return std::format("{:#x}/f{:#x}", rip - base, start ? start - base : 0);
+    const auto start = scan::function_start(rip);
+    return std::format("{:#x}/f{:#x}", rip - base, start ? *start - base : 0);
 }
 
 // Правило 5: по строке на ЦЕПОЧКУ, остальное — счётчиком к ней.
@@ -306,7 +306,7 @@ inline void drain(std::string_view context = {}) {
             frames += (frames.empty() ? "" : " <- ") + where(f);
         }
         print(std::format("[watch] {} {} -> {:#x} | {} | {}",
-                          h.ours ? "СВОЯ запись" : "ЧУЖАЯ ЗАПИСЬ",
+                          h.ours ? "OWN WRITE" : "FOREIGN WRITE",
                           spots[h.which].name,
                           h.value,
                           frames,
@@ -318,7 +318,7 @@ inline void drain(std::string_view context = {}) {
 // считается заново.
 inline void report() {
     for (int i = 0; i < chains_n; ++i) {
-        print(std::format("[watch] итог: {} {} — {} раз | {}", chains[i].ours ? "своя" : "ЧУЖАЯ", spots[chains[i].which].name, chains[i].count, where(chains[i].at)));
+        print(std::format("[watch] total: {} {} - {} times | {}", chains[i].ours ? "own" : "FOREIGN", spots[chains[i].which].name, chains[i].count, where(chains[i].at)));
     }
     chains_n = 0;
 }

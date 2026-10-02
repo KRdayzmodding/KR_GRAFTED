@@ -13,7 +13,7 @@ modded class MissionBase
 
         // Поле движкового объекта, прочитанное из C++ по имени: game["m_DebugMonitorEnabled"_f].
         int flag = ExampleDebugMonitor();
-        Print("[EXAMPLE_PLAYERS] debug monitor (поле CGame из C++) = " + flag.ToString());
+        Print("[EXAMPLE_PLAYERS] debug monitor (CGame field from C++) = " + flag.ToString());
 
         if (GetGame().IsServer())
             GetGame().GetCallQueue(CALL_CATEGORY_SYSTEM).CallLater(this.GraftPlayersReport, 10000, true);
@@ -25,7 +25,7 @@ modded class MissionBase
         // Секунды считает C++ у себя в тике — скрипт его об этом не просит.
         float uptime = ExampleUptime();
         int known = ExamplePlayersKnown();
-        Print("[EXAMPLE_PLAYERS] тик C++ работает " + uptime.ToString() + " с, известно игроков: " + known.ToString());
+        Print("[EXAMPLE_PLAYERS] C++ tick running " + uptime.ToString() + " s, known players: " + known.ToString());
 
         array<Man> players = new array<Man>;
         GetGame().GetPlayers(players);

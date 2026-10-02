@@ -363,6 +363,12 @@ text SeraphGraftProbeCall(graft::ref<"Object"> o, str method) {
             return text::from("wrong-type");
         case graft::miss::no_template:
             return text::from("no-template");
+        // И причины поиска в образе (scan.hpp): try_call ничего не ищет, но switch по `miss`
+        // обязан быть полным — иначе новая причина молча падает в «?».
+        case graft::miss::ambiguous:
+            return text::from("ambiguous");
+        case graft::miss::unreadable:
+            return text::from("unreadable");
     }
     return text::from("?");
 }
@@ -509,13 +515,13 @@ i32 SeraphGraftBuiltinVarsMismatch() {
             graft::detail::param_template_of_tag(graft::script::find_method(s.klass, s.method), s.tag));
         graft::script::var made;
         if (!real || !graft::detail::builtin_var(s.tag, made)) {
-            graft::log(std::format("встроенный {:#x}: нет образца или контекста", s.tag));
+            graft::log(std::format("builtin {:#x}: no sample or context", s.tag));
             ++bad;
             continue;
         }
         const std::size_t from = s.tag == graft::script::tag_vector ? 8 : 0;
         if (std::memcmp(made.raw + from, real + from, graft::layout::var_size - from) != 0) {
-            graft::log(std::format("встроенный {:#x}: собрано {}| движок {}", s.tag, hex(made.raw), hex(real)));
+            graft::log(std::format("builtin {:#x}: built {}| engine {}", s.tag, hex(made.raw), hex(real)));
             ++bad;
         }
     }

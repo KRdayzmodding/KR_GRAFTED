@@ -146,8 +146,12 @@ std::vector<entry> merge(const std::vector<entry>& all, std::vector<collision>& 
 }
 
 std::string describe(const collision& c) {
-    return std::format("! коллизия имён: {}{}{} занято плагином '{}', плагину '{}' отказано",
-                       c.class_name, c.class_name.empty() ? "" : ".", c.name, c.first, c.second);
+    return std::format("! name collision: {}{}{} is taken by plugin '{}', plugin '{}' refused",
+                       c.class_name,
+                       c.class_name.empty() ? "" : ".",
+                       c.name,
+                       c.first,
+                       c.second);
 }
 
 namespace {
@@ -155,7 +159,7 @@ namespace {
 // Одно разошедшееся число: чьё старее, то и чинить. Старее плагин — пересобрать его под
 // текущий graft; старее хост — пересборка плагина не поможет, обновлять надо хост.
 std::string mismatch(const char* what, std::uint32_t plugin, std::uint32_t host, const char* meaning) {
-    return std::format("{}: плагин {} {}, хост {} {} — {}; {}", meaning, what, plugin, what, host, plugin < host ? "плагин старее хоста" : "хост старее плагина", plugin < host ? "пересобрать плагин под текущий graft" : "обновить хост (graft install)");
+    return std::format("{}: plugin {} {}, host {} {} - {}; {}", meaning, what, plugin, what, host, plugin < host ? "plugin is older than the host" : "host is older than the plugin", plugin < host ? "rebuild the plugin against the current graft" : "update the host (graft install)");
 }
 
 } // namespace
@@ -165,20 +169,20 @@ std::string reason(const graft_plugin_info& info, std::uint32_t code) {
         return "ok";
     }
     if (code != GRAFT_ERR_ABI && code != GRAFT_ERR_LAYOUT) {
-        return std::format("внутренняя ошибка плагина (код {})", code);
+        return std::format("internal plugin error (code {})", code);
     }
     // Нулевой заголовок: плагин отказал сам и описание не заполнил. Так ведут себя
     // плагины, собранные до того, как отказ стал сообщать свои числа, — то есть старые.
     if (info.size == 0 && info.abi == 0 && info.layout == 0) {
         return std::format(
-            "плагин отказал хосту (ABI {}, LAYOUT {}) и своих версий не сообщил — собран под "
-            "старый graft; пересобрать плагин под текущий graft",
+            "plugin refused the host (ABI {}, LAYOUT {}) and did not report its own versions - built against an "
+            "old graft; rebuild the plugin against the current graft",
             GRAFT_ABI_VERSION,
             GRAFT_LAYOUT_VERSION);
     }
     if (info.size < sizeof(graft_plugin_info)) {
-        return std::format("описание плагина обрезано: {} байт вместо {} — собран под другой "
-                           "graft; пересобрать плагин под текущий graft (ABI {}, LAYOUT {})",
+        return std::format("plugin description truncated: {} bytes instead of {} - built against a different "
+                           "graft; rebuild the plugin against the current graft (ABI {}, LAYOUT {})",
                            info.size,
                            sizeof(graft_plugin_info),
                            GRAFT_ABI_VERSION,
@@ -186,14 +190,14 @@ std::string reason(const graft_plugin_info& info, std::uint32_t code) {
     }
     std::string out;
     if (info.abi != GRAFT_ABI_VERSION) {
-        out = mismatch("ABI", info.abi, GRAFT_ABI_VERSION, "интерфейс хост↔плагин");
+        out = mismatch("ABI", info.abi, GRAFT_ABI_VERSION, "host-plugin interface");
     }
     if (info.layout != GRAFT_LAYOUT_VERSION) {
         out += out.empty() ? "" : "; ";
-        out += mismatch("LAYOUT", info.layout, GRAFT_LAYOUT_VERSION, "раскладка движка");
+        out += mismatch("LAYOUT", info.layout, GRAFT_LAYOUT_VERSION, "engine layout");
     }
     // Числа сошлись, а отказ есть: противоречие, его и показываем как есть.
-    return out.empty() ? std::format("отказ с кодом {} при совпавших версиях (ABI {}, LAYOUT {})",
+    return out.empty() ? std::format("refused with code {} although the versions match (ABI {}, LAYOUT {})",
                                      code,
                                      GRAFT_ABI_VERSION,
                                      GRAFT_LAYOUT_VERSION)

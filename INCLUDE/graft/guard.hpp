@@ -98,7 +98,7 @@ ret_abi<R> catch_cpp(void* impl, std::size_t depth_was, Body body) {
     } catch (const std::exception& oops) {
         note_fault(impl, 0, nullptr, oops.what());
     } catch (...) {
-        note_fault(impl, 0, nullptr, "исключение неизвестного типа");
+        note_fault(impl, 0, nullptr, "exception of unknown type");
     }
     // Здесь деструкторы как раз отработали (раскрутка C++ их зовёт), но уровень всё равно
     // выставляем явно: так путь исключения и путь аппаратного сбоя чинят одно и то же.

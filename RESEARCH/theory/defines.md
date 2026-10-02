@@ -118,5 +118,5 @@ python RESEARCH\scripts\pe.py "<игра>\DayZDiag_x64.exe" str "[CfgMods::Defin
 ```
 
 Признак, что форма уехала: в журнале `graft` вместо строки
-`дефайны аддонов: AddScriptModulePath=... AddDefine=...` стоит
-`! дефайны аддонов: разбор CfgMods не найден`.
+`addon defines: AddScriptModulePath=... AddDefine=...` стоит
+`! addon defines: CfgMods parser not found (...)`.

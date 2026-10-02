@@ -5,12 +5,13 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <optional>
+#include <expected>
 #include <span>
 #include <string_view>
 #include <type_traits>
 #include <vector>
 
+#include "graft/miss.hpp"
 #include "graft/name.hpp"
 #include "graft/script.hpp"
 
@@ -25,6 +26,28 @@
 //
 // Алгоритм 1:1 повторён в re/scripts/discover.py — сухой прогон по exe в IDA
 // сверяет результат с частотным анализом natives.py (обе цели, 1.29: совпало).
+//
+// ── Если не нашлось ──────────────────────────────────────────────────────────
+// Всякий поиск здесь отвечает `std::expected<T, miss>`: либо находка, либо причина отказа.
+// Нулевого адреса в роли «нет» нигде нет: его можно не проверить, и выглядит он как ответ.
+// Причин три, и чинятся они по-разному:
+//
+//   miss::not_found    такого нет: после патча игры маяк пропал или сменил форму
+//   miss::ambiguous    таких несколько, и выбирать из них нельзя: маяк раздвоился
+//   miss::unreadable   по этому адресу нечего читать: он не из образа или мусорный
+//
+// Не нашлось — это «нет», а не повод взять ближайшее подходящее: врезка в угаданное место
+// не падает сразу, а портит чужой вызов через час на живом сервере. Плагин выключает свою
+// ветку и пишет причину в журнал.
+//
+// Коллекция — пустой `std::vector`, предикат — `bool`: у них «ничего» и есть ответ.
+//
+// ── Окна ─────────────────────────────────────────────────────────────────────
+// Искать «в первых N байтах» значит гадать N: мало — не дотянешься, много — окно перелезет
+// в соседнюю функцию и подхватит чужое. Поэтому в теле ФУНКЦИИ ищут без числа
+// (`find_in_function`: конец берётся из .pdata), а окно в байтах — `span` — есть только там,
+// где границ нет вовсе: у куска образа, у места вызова, у переходника без записи раскрутки.
+// Там число обязано быть именованным и с причиной рядом, а не безымянным дефолтом.
 namespace graft::scan {
 
 // ── Сверка найденного: сигнатура так, как её показывает отладчик ──────────────
@@ -263,13 +286,17 @@ struct found {
     std::int64_t   value = 0; // содержимое дырки; 0, если дырки в сигнатуре не было
 };
 
-// `nth`-е вхождение сигнатуры в [ea, ea+span). Пусто — не нашлось, и это отказ, а не повод
-// идти дальше по догадке.
+// `nth`-е вхождение сигнатуры в [ea, ea+span). Нет вхождения — `not_found`; память по ea не
+// отображена (в том числе ноль) — `unreadable`: это не то же самое, что искомого в ней нет.
+// И то и другое — отказ, а не повод идти дальше по догадке.
+//
+// Окно `span` задаёт вызывающий и обязан знать, откуда оно. Когда ищут в теле функции,
+// число не нужно вовсе — см. find_in_function ниже.
 //
 // Дырка читается СО ЗНАКОМ, как её понимает процессор: disp8 0x80 — это -128, а не +128.
 // Поля движка, которыми мы пользуемся, все положительные и короткие, но читать их
 // неправильно нельзя и в этом случае.
-std::optional<found> find(std::uintptr_t ea, std::size_t span, pattern_view sig, unsigned nth = 1);
+std::expected<found, miss> find(std::uintptr_t ea, std::size_t span, pattern_view sig, unsigned nth = 1);
 
 // Секция отображённого образа: байты + адрес, по которому они лежат в памяти.
 struct view {
@@ -277,21 +304,23 @@ struct view {
     std::uintptr_t                base = 0;     // адрес bytes[0]
     bool                          exec = false; // исполняемая: в таких ищем инструкции
 
-    // Адрес C-строки ровно text (не подстроки), начиная с ea. 0 — нет.
-    std::uintptr_t find_cstr(const char* text, std::uintptr_t from = 0) const;
+    // Адрес C-строки ровно text (не подстроки), начиная с `from`. Нет — `not_found`.
+    std::expected<std::uintptr_t, miss> find_cstr(const char* text, std::uintptr_t from = 0) const;
     // `nth`-е вхождение сигнатуры в [ea, ea+span) ЭТОЙ секции. То же, что свободная
     // scan::find, но по своим байтам: у секции они уже есть, и спрашивать у системы,
-    // отображена ли страница, незачем. Окно обрезается концом секции.
+    // отображена ли страница, незачем. Окно обрезается концом секции; адрес не из секции —
+    // `unreadable`.
     //
     // Это не удобство: `base` у секции бывает и синтетическим (так собраны фикстуры
     // сьюты), и тогда свободная find честно отвечает «адрес не читается».
-    std::optional<struct found> find(std::uintptr_t ea, std::size_t span, pattern_view sig, unsigned nth = 1) const;
+    std::expected<found, miss> find(std::uintptr_t ea, std::size_t span, pattern_view sig, unsigned nth = 1) const;
 
     // Адрес инструкции, которая через rip ссылается на target: `lea reg,[rip+d]`,
     // `mov [rip+d],reg` — любая. Сигнатура берётся ЦЕЛИКОМ, вместе с дыркой под смещение:
     // rip смотрит за конец инструкции, поэтому нужна и её длина, и само смещение.
-    // Единственная реализация этого поиска на весь проект.
-    std::uintptr_t find_rip(pattern_view insn, std::uintptr_t target, std::uintptr_t from = 0) const;
+    // Единственная реализация этого поиска на весь проект. Следующую ссылку ищут с `from`;
+    // больше нет — `not_found`.
+    std::expected<std::uintptr_t, miss> find_rip(pattern_view insn, std::uintptr_t target, std::uintptr_t from = 0) const;
     // Цели всех rel32-переходов с таким опкодом после/до ea в пределах span байт, по
     // порядку адресов: 0xE8 — call, 0xE9 — хвостовой jmp. Их несколько, потому что байт
     // опкода может встретиться и внутри чужого смещения — отсеивает уже вызывающий код
@@ -299,16 +328,28 @@ struct view {
     std::vector<std::uintptr_t> rel32_after(std::uintptr_t ea, std::size_t span, std::uint8_t opcode) const;
     std::vector<std::uintptr_t> rel32_before(std::uintptr_t ea, std::size_t span, std::uint8_t opcode) const;
 
-    std::vector<std::uintptr_t> calls_after(std::uintptr_t ea, std::size_t span = 0x40) const {
+    // Вызовы (0xE8) в окне. Окно — всегда число вызывающего: безымянного дефолта у него
+    // нет, потому что «сколько байт вокруг» зависит от места, а не от библиотеки.
+    std::vector<std::uintptr_t> calls_after(std::uintptr_t ea, std::size_t span) const {
         return rel32_after(ea, span, 0xE8);
     }
 
-    std::vector<std::uintptr_t> calls_before(std::uintptr_t ea, std::size_t span = 0x40) const {
+    std::vector<std::uintptr_t> calls_before(std::uintptr_t ea, std::size_t span) const {
         return rel32_before(ea, span, 0xE8);
     }
 
     bool contains(std::uintptr_t ea) const { return ea >= base && ea - base < bytes.size(); }
 };
+
+// Сигнатура в теле функции — от ea и до конца функции, в которой ea лежит. Конец берётся из
+// таблиц раскрутки образа (.pdata), поэтому числа в вызове нет и окно не может ни не
+// дотянуться до нужной инструкции, ни перелезть в соседнюю функцию. Обычно ea — начало
+// функции (то, что отдали function_referencing); с середины ищут «после пролога».
+//
+// Кусок, вынесенный компилятором («холодный» хвост), — отдельная запись: окно кончается на
+// его краю, а не на краю основной функции. У адреса записи раскрутки нет (не код или лист
+// без кадра) — `not_found`: конца функции тут не определить, а окно с потолка брать нельзя.
+std::expected<found, miss> find_in_function(std::uintptr_t ea, pattern_view sig, unsigned nth = 1);
 
 // Чем движок передаёт имя в регистрацию: 2-й аргумент fastcall — rdx, 3-й — r8. Записаны
 // байтами, а не строчками ассемблера, только из-за слоёв: кодировщик (graft/asm.hpp) стоит
@@ -323,19 +364,20 @@ using reg_global_fn = void*(__fastcall*)(void* ctx, const char* name, void* impl
 using reg_method_fn = void*(__fastcall*)(void* ctx, void* cls, const char* name, void* impl, unsigned ret_buf, char create);
 using find_class_fn = void*(__fastcall*)(void* ctx, const char* name);
 
+// Три точки регистрации целиком: у `api` из `discover` заполнены все три, неполной не бывает.
 struct api {
     reg_global_fn register_global = nullptr;
     reg_method_fn register_method = nullptr;
     find_class_fn find_class      = nullptr;
-
-    explicit operator bool() const { return register_global && register_method && find_class; }
 };
 
 // Голосование нескольких якорей: случайный байт 0xE8 в чужом смещении может дать
-// ложный call, но совпасть у трёх разных якорей он не может.
-std::uintptr_t vote(const std::vector<view>& sections, pattern_view insn, const char* const* anchors, bool before = false, const std::uintptr_t* reject = nullptr, std::size_t reject_n = 0);
+// ложный call, но совпасть у трёх разных якорей он не может. Ни один якорь не дал вызова —
+// `not_found`.
+std::expected<std::uintptr_t, miss> vote(const std::vector<view>& sections, pattern_view insn, const char* const* anchors, bool before = false, const std::uintptr_t* reject = nullptr, std::size_t reject_n = 0);
 
-api discover(const std::vector<view>& sections);
+// Все три точки или причина, по которой хоть одной нет: с двумя из трёх регистрировать нечего.
+std::expected<api, miss> discover(const std::vector<view>& sections);
 
 // ── Точка входа кадра ────────────────────────────────────────────────────────
 // Движок раз в кадр зовёт скриптовый `DayZGame.OnUpdate(bool doSim, float timeslice)`.
@@ -372,32 +414,41 @@ struct frame_entry {
     std::uintptr_t      site    = 0;       // адрес самой инструкции `call` в CGame::Update
     prepare_fn          prepare = nullptr; // куда она ведёт сейчас
     const std::int32_t* index   = nullptr; // движковый кэш индекса OnUpdate
-
-    explicit operator bool() const { return site && prepare && index; }
 };
 
-frame_entry find_frame_entry(const std::vector<view>& sections);
+// Нет места с четырьмя приметами подряд — `not_found`: кадра тут нет, а не «почти есть».
+std::expected<frame_entry, miss> find_frame_entry(const std::vector<view>& sections);
 
-// Цель первого `call rel32` внутри функции — так добираемся до внутренностей
-// движка, у которых нет своих строк-маяков (линковщик, поиск функции по имени).
-std::uintptr_t first_call(const std::vector<view>& sections, std::uintptr_t fn, std::size_t span = 0x60);
+// Цель первого `call rel32` в [fn, fn+span) — так добираемся до внутренностей движка, у
+// которых нет своих строк-маяков (линковщик, поиск функции по имени). Окно — число
+// вызывающего: у функции без записи раскрутки границ нет, и откуда окно, знает он один.
+// Вызова с целью в исполняемой секции в окне нет — `not_found`.
+std::expected<std::uintptr_t, miss> first_call(const std::vector<view>& sections, std::uintptr_t fn, std::size_t span);
 
 // Все места, где инструкция вида insn ссылается через rip на C-строку ровно text.
 std::vector<std::uintptr_t> rip_refs(const std::vector<view>& sections, const char* text, pattern_view insn);
 
 // Начало функции, в которой лежит ea, — по таблицам раскрутки загруженного образа (.pdata),
-// через сцепленные записи: у куска, вынесенного компилятором, запись своя. Ноль — у адреса
-// записи нет (не код или лист без кадра).
-std::uintptr_t function_start(std::uintptr_t ea);
+// через сцепленные записи: у куска, вынесенного компилятором, запись своя. У адреса записи
+// нет (не код или лист без кадра) — `not_found`.
+std::expected<std::uintptr_t, miss> function_start(std::uintptr_t ea);
 
 // Начало функции, которая берёт адрес C-строки ровно text (`lea reg,[rip+d]`). Для
-// движковых функций, у которых есть строка, но нет натива. Ноль — не нашлось или
-// ссылаются РАЗНЫЕ функции: угадывать из двух нельзя.
-std::uintptr_t function_referencing(const std::vector<view>& sections, const char* text);
+// движковых функций, у которых есть строка, но нет натива. Не нашлось — `not_found`;
+// ссылаются РАЗНЫЕ функции — `ambiguous`: угадывать из двух нельзя.
+std::expected<std::uintptr_t, miss> function_referencing(const std::vector<view>& sections, const char* text);
+// То же по образу игры (`image()`): секции плагину брать не нужно.
+std::expected<std::uintptr_t, miss> function_referencing(const char* text);
 
 // Секции загруженного образа. Одна на всех: и хосту для поиска регистрации, и
 // плагину для поиска внутренностей движка.
 std::vector<view> sections_of(void* module);
+
+// Секции образа ИГРЫ — главного модуля процесса, того, где живёт движок. Для плагина это «весь
+// образ»: ни модуль у системы брать не нужно, ни держать результат в своей статике. Считается
+// при первом обращении и дальше не меняется, поэтому ссылка живёт до конца процесса.
+// `sections_of` остаётся для чужого модуля (другой DLL).
+const std::vector<view>& image();
 
 // Цели всех rel32-переходов с этим опкодом в [ea, ea+span). Мусорные отброшены: 0xE8/0xE9
 // встречается и внутри чужого смещения, а настоящая цель обязана лежать в исполняемой
@@ -417,11 +468,13 @@ std::vector<std::uintptr_t> rel32_targets(const std::vector<view>& sections, std
 // mangled — имя как его пишет компилятор. Буква после `.?A` — это ВИД типа, и перепутать
 // её легко: `V` у class, `U` у struct, `W` у enum. ".?AVAIBehaviourGoToTarget@@".
 //
-// Ноль — не нашли; это отказ, а не повод идти дальше по догадке.
-std::uintptr_t rtti_vtable(const std::vector<view>& sections, std::uintptr_t image_base, const char* mangled);
+// Не нашли — `not_found`; это отказ, а не повод идти дальше по догадке.
+std::expected<std::uintptr_t, miss> rtti_vtable(const std::vector<view>& sections, std::uintptr_t image_base, const char* mangled);
 // То же от модуля: базу и секции берёт сам. Столько же работы, на одну ошибку меньше —
 // перепутать базу с базой первой секции нечем.
-std::uintptr_t rtti_vtable(void* module, const char* mangled);
+std::expected<std::uintptr_t, miss> rtti_vtable(void* module, const char* mangled);
+// То же по образу игры (`image()`): модуль плагину брать не нужно.
+std::expected<std::uintptr_t, miss> rtti_vtable(const char* mangled);
 
 // Отображены ли n байт по адресу. Спрашивается у системы, а не пробным чтением под SEH:
 // движок ставит свой фильтр исключений и рапортует о падении раньше, чем сработал бы

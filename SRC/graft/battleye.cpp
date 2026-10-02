@@ -86,7 +86,7 @@ void unwatch() {
 }
 
 void kill() {
-    log("! BattlEye в процессе (BEClient_x64.dll) — завершаю игру: graft под BattlEye не работает");
+    log("! BattlEye in the process (BEClient_x64.dll) - terminating the game: graft does not work under BattlEye");
     TerminateProcess(GetCurrentProcess(), kExitCode);
     for (;;) { // TerminateProcess не возвращается; цикл — для [[noreturn]]
     }
