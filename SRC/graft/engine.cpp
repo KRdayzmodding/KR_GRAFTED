@@ -58,19 +58,6 @@ std::wstring game_dir() {
     return slash == std::wstring::npos ? L"." : path.substr(0, slash);
 }
 
-// Есть ли хоть одна DLL в <игра>/grafted/client. Это и есть согласие человека: клиент
-// грузит только то, что он положил сам.
-bool has_client_plugins() {
-    WIN32_FIND_DATAW   found{};
-    const std::wstring mask = game_dir() + L"\\" + std::wstring{plugins::client_dir} + L"\\*.dll";
-    HANDLE             h    = FindFirstFileW(mask.c_str(), &found);
-    if (h == INVALID_HANDLE_VALUE) {
-        return false;
-    }
-    FindClose(h);
-    return true;
-}
-
 // Профиль клиента, когда `-profiles=` не задан: игра кладёт script- и crash-логи в
 // %LOCALAPPDATA%\DayZ, и наш журнал должен лежать с ними, а не рядом с exe. Пусто — не
 // нашли переменную; тогда журнал уйдёт к exe, как на сервере.
@@ -84,23 +71,13 @@ std::string default_client_profile() {
 }
 } // namespace
 
-// Роль и нужда в хосте — по тому, как игру запустили. Ни на что внутри движка это не
-// опирается и потому работает ещё до того, как он проснулся.
-//
-// ЗАЧЕМ РАЗЛИЧАЕМ. Библиотека, положенная рядом с exe, грузится в ЛЮБОЙ процесс, который
-// импортирует hid, а сборки клиента и сервера разные: то, что скан нашёл в одной, в другой
-// указывает в другое место. Проверено дорого: привязка к кадру, выверенная на сервере,
-// уронила клиент. Поэтому клиент без клиентских плагинов хост не будит вовсе, а с ними —
-// только при отсутствии BattlEye (см. battleye.hpp). Скан на розничном клиенте 1.29 все
-// точки находит и по форме совпадает с серверным (RESEARCH/theory/client.md), но это не
-// повод будить хост там, где его никто не звал.
+// Роль — по тому, как игру запустили. Ни на что внутри движка это не опирается и потому
+// работает ещё до того, как он проснулся. Клиенту хост нужен тоже: скан на розничном
+// клиенте 1.29 находит все точки и по форме совпадает с серверным
+// (RESEARCH/theory/client.md); не нужен он только под BattlEye (см. battleye.hpp).
 role process_role() {
     static const role cached = role_of(exe_path(), GetCommandLineW());
     return cached;
-}
-
-bool wanted() {
-    return process_role() == role::server || has_client_plugins();
 }
 
 namespace {

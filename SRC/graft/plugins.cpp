@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cstring>
 #include <format>
+#include <optional>
 #include <ranges>
 
 namespace graft::plugins {
@@ -23,34 +24,43 @@ bool same_ci(std::string_view a, std::string_view b) {
     return std::ranges::equal(a, b, {}, lower, lower);
 }
 
-// Ключ начинается либо в начале строки, либо после пробела: иначе `-profiles=x-mod=@A`
-// подсунул бы нам чужой путь.
-bool at_boundary(std::string_view cmdline, std::size_t at) {
-    return at == 0 || std::isspace(static_cast<unsigned char>(cmdline[at - 1]));
-}
-
-std::size_t find_switch(std::string_view cmdline, std::string_view key, std::size_t from) {
-    for (std::size_t at = from; at + key.size() <= cmdline.size(); ++at) {
-        if (!at_boundary(cmdline, at)) {
-            continue;
-        }
-        if (same_ci(cmdline.substr(at, key.size()), key)) {
-            return at;
+// Командная строка по аргументам: пробел вне кавычек разделяет, кавычки снимаются. Так
+// читаются обе записи — `-mod="@My Mod;@B"` (руками) и `"-mod=@My Mod;@B"` (лаунчер берёт
+// в кавычки весь аргумент). Обратная косая перед кавычкой кавычку не экранирует: путь,
+// оканчивающийся на `\`, в `-profiles="C:\prof\"` всё равно закрывается.
+std::vector<std::string> split_args(std::string_view cmdline) {
+    std::vector<std::string> out;
+    std::string              arg;
+    bool                     quoted = false;
+    bool                     open   = false; // аргумент начат, пусть и пустой: `""`
+    for (const char c : cmdline) {
+        if (c == '"') {
+            quoted = !quoted;
+            open   = true;
+        } else if (!quoted && std::isspace(static_cast<unsigned char>(c))) {
+            if (open) {
+                out.push_back(std::move(arg));
+                arg.clear();
+                open = false;
+            }
+        } else {
+            arg += c;
+            open = true;
         }
     }
-    return std::string_view::npos;
+    if (open) {
+        out.push_back(std::move(arg));
+    }
+    return out;
 }
 
-// Значение ключа: до пробела, а если открылась кавычка — до закрывающей (в пути мода
-// пробел законен: `-mod="@My Mod;@B"`).
-std::string_view value_at(std::string_view cmdline, std::size_t at) {
-    if (at < cmdline.size() && cmdline[at] == '"') {
-        const std::size_t end = cmdline.find('"', at + 1);
-        return cmdline.substr(at + 1, (end == std::string_view::npos ? cmdline.size() : end) -
-                                          at - 1);
+// Значение ключа, если аргумент им начинается. Ключ — только в начале аргумента: иначе
+// `-profiles=x-mod=@A` подсунул бы нам чужой путь.
+std::optional<std::string_view> value_of(std::string_view arg, std::string_view key) {
+    if (arg.size() < key.size() || !same_ci(arg.substr(0, key.size()), key)) {
+        return std::nullopt;
     }
-    const std::size_t end = cmdline.find(' ', at);
-    return cmdline.substr(at, end == std::string_view::npos ? std::string_view::npos : end - at);
+    return arg.substr(key.size());
 }
 
 // `@A;@B;` -> {"@A", "@B"}. Пустые куски (хвостовая точка с запятой — норма для DayZ)
@@ -68,13 +78,6 @@ void append_list(std::string_view list, std::vector<std::string>& out) {
     }
 }
 
-void collect(std::string_view cmdline, std::string_view key, std::vector<std::string>& out) {
-    for (std::size_t at = find_switch(cmdline, key, 0); at != std::string_view::npos;
-         at = find_switch(cmdline, key, at + key.size())) {
-        append_list(value_at(cmdline, at + key.size()), out);
-    }
-}
-
 const char* text_or(const char* s, const char* fallback) {
     return s ? s : fallback;
 }
@@ -83,23 +86,30 @@ const char* text_or(const char* s, const char* fallback) {
 
 std::vector<std::string> mod_dirs(std::string_view cmdline) {
     std::vector<std::string> out;
-    collect(cmdline, "-mod=", out);
-    collect(cmdline, "-serverMod=", out);
+    const auto               args = split_args(cmdline);
+    // Сначала все `-mod=`, потом все `-serverMod=`: порядок прежний, от положения ключей
+    // в строке победитель коллизии не зависит.
+    for (const std::string_view key : {"-mod=", "-serverMod="}) {
+        for (const std::string& arg : args) {
+            if (const auto list = value_of(arg, key)) {
+                append_list(*list, out);
+            }
+        }
+    }
     return out;
 }
 
 std::string profile_dir(std::string_view cmdline) {
-    constexpr std::string_view key = "-profiles=";
-    const std::size_t at = find_switch(cmdline, key, 0);
-    if (at == std::string_view::npos) {
-        return {};
+    for (const std::string& arg : split_args(cmdline)) {
+        if (auto path = value_of(arg, "-profiles=")) {
+            // `-profiles=X\` — законная запись, а мы к пути дописываем своё имя файла.
+            while (!path->empty() && (path->back() == '\\' || path->back() == '/')) {
+                path->remove_suffix(1);
+            }
+            return std::string{*path};
+        }
     }
-    std::string_view path = value_at(cmdline, at + key.size());
-    // `-profiles=X\\` — законная запись, а мы к пути дописываем своё имя файла.
-    while (!path.empty() && (path.back() == '\\' || path.back() == '/')) {
-        path.remove_suffix(1);
-    }
-    return std::string{path};
+    return {};
 }
 
 std::uint32_t check(const graft_plugin_info& info) {

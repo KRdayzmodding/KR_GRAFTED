@@ -181,14 +181,6 @@ void list_dlls(const std::wstring& dir, std::vector<std::wstring>& out) {
 
 std::vector<std::wstring> candidates(const std::wstring& game_dir) {
     std::vector<std::wstring> out;
-    // Клиент берёт плагины только оттуда, куда их положил человек: <игра>/grafted/client.
-    // Папки модов и общая grafted/ для него закрыты — иначе включение хоста на клиенте
-    // запускало бы на машине игрока все серверные плагины из любого мода, который у него
-    // есть, а мод приходит из Workshop.
-    if (process_role() == role::client) {
-        list_dlls(game_dir + L"\\" + std::wstring{plugins::client_dir}, out);
-        return out;
-    }
     // Плагин едет вместе со своим модом: @МОД/grafted/*.dll, по соседству с addons.
     // Порядок — как в -mod=, то есть тот же, в каком движок разбирает скрипты.
     for (const std::string& mod : plugins::mod_dirs(narrow(GetCommandLineW()))) {
