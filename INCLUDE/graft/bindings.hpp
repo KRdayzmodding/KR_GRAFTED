@@ -304,6 +304,18 @@ std::vector<std::string> proto_modules(const std::vector<const graft_native_desc
         &GRAFT_CAT(graft_tick_, id)};                                            \
     static void GRAFT_CAT(graft_tick_, id)(float dt)
 
+// Загрузка: место, где плагин может ставить врезки в движок (graft::hook). Зовётся из
+// graft_plugin_entry, когда хост уже представился, а движок ещё не создал потоков.
+//
+//   GRAFT_ON_LOAD() { graft::hook(&Engine_Foo, &my_foo, &g_foo); }
+#define GRAFT_ON_LOAD()    GRAFT_ON_LOAD_(__COUNTER__)
+#define GRAFT_ON_LOAD_(id) GRAFT_ON_LOAD__(id)
+#define GRAFT_ON_LOAD__(id)                                                    \
+    static void                               GRAFT_CAT(graft_load_, id)();    \
+    static const ::graft::detail::load_binder GRAFT_CAT(graft_load_bind_, id){ \
+        &GRAFT_CAT(graft_load_, id)};                                          \
+    static void GRAFT_CAT(graft_load_, id)()
+
 #define GRAFT_BINDINGS(script_module)      GRAFT_BINDINGS_(script_module, __COUNTER__)
 #define GRAFT_BINDINGS_(script_module, id) GRAFT_BINDINGS__(script_module, id)
 #define GRAFT_BINDINGS__(script_module, id)                                              \

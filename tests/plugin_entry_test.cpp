@@ -10,6 +10,7 @@
 #include <iterator>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "graft/abi.h"
 
@@ -74,6 +75,24 @@ TEST(PluginEntry, RefusingTruncatedHostReportsOwnHeader) {
     graft_plugin_info info{};
     EXPECT_EQ(entry(&host, &info), GRAFT_ERR_ABI);
     expect_header_filled(info);
+}
+
+std::vector<std::string> g_host_log;
+
+void capture_log(const char* line) {
+    g_host_log.emplace_back(line);
+}
+
+// GRAFT_ON_LOAD зовут из graft_plugin_entry, когда хост уже представился: graft::log из
+// обработчика доходит до журнала хоста. Статический хост — плагин помнит указатель на него.
+TEST(PluginEntry, OnLoadRunsOnceTheHostHasIntroduced) {
+    const auto entry = fixture_entry();
+    ASSERT_NE(entry, nullptr);
+    static auto host = foreign_host(GRAFT_ABI_VERSION, GRAFT_LAYOUT_VERSION);
+    host.log         = &capture_log;
+    graft_plugin_info info{};
+    EXPECT_EQ(entry(&host, &info), GRAFT_OK);
+    EXPECT_EQ(g_host_log, std::vector<std::string>{"fixture: on_load"});
 }
 
 // Объявления, которые сборка напечатала рядом с фикстурами (graft.exe protogen, POST_BUILD).
