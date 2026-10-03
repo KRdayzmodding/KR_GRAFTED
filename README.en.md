@@ -101,7 +101,7 @@ The whole mod project is a single CMakeLists:
 file(DOWNLOAD https://raw.githubusercontent.com/KRdayzmodding/KR_GRAFTED/main/cmake/graft.boot.cmake
      "${CMAKE_BINARY_DIR}/graft.boot.cmake")
 include("${CMAKE_BINARY_DIR}/graft.boot.cmake")
-graft_import(graft https://github.com/KRdayzmodding/KR_GRAFTED TAG v0.3.0)
+graft_import(graft https://github.com/KRdayzmodding/KR_GRAFTED TAG v0.3.1)
 
 graft_plugin(mymod NAME MYMOD VERSION 1 SOURCES src/plugin.cpp MODULES 3_Game)
 ```
