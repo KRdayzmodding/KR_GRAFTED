@@ -174,6 +174,13 @@ std::vector<void (*)(float)>& pending_ticks() {
     static std::vector<void (*)(float)> all;
     return all;
 }
+
+// Обработчики GRAFT_ON_LOAD. Те же причины, что у pending_ticks: регистрируются
+// статическими инициализаторами, а отдать их есть кому только в graft_plugin_entry.
+std::vector<void (*)()>& pending_loads() {
+    static std::vector<void (*)()> all;
+    return all;
+}
 }  // namespace
 
 namespace graft {
@@ -192,9 +199,22 @@ void on_tick(void (*fn)(float)) {
     pending_ticks().push_back(fn);
 }
 
+// Копим всегда: звать обработчики есть кому только в graft_plugin_entry, а статическая
+// инициализация идёт раньше — хоста нет, graft::hook откажет. Подписка уже после входа
+// в плагин не сработает: окно, ради которого точка входа и нужна, к тому времени закрыто.
+void on_load(void (*fn)()) {
+    if (fn) {
+        pending_loads().push_back(fn);
+    }
+}
+
 namespace detail {
 tick_binder::tick_binder(void (*fn)(float)) {
     on_tick(fn);
+}
+
+load_binder::load_binder(void (*fn)()) {
+    on_load(fn);
 }
 }  // namespace detail
 
@@ -269,6 +289,12 @@ extern "C" __declspec(dllexport) uint32_t __cdecl graft_plugin_entry(const graft
             }
         }
         pending_ticks().clear();
+        // GRAFT_ON_LOAD: хост представился, значит, graft::hook и graft::log теперь живые.
+        // Только при настоящем хосте — генератор объявлений (host == nullptr) движка не имеет.
+        for (void (*fn)() : pending_loads()) {
+            fn();
+        }
+        pending_loads().clear();
     }
 
     const std::vector<graft_native_desc>& all = flatten();

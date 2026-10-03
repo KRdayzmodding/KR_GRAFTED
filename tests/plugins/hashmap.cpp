@@ -54,4 +54,10 @@ GRAFT_BINDINGS("1_Core") {
         .method(GRAFT_METHOD(KeyAt));
 }
 
+// Сторож GRAFT_ON_LOAD: plugin_entry_test ждёт эту строку в журнале хоста — она доходит
+// туда, только если обработчик позван ПОСЛЕ знакомства с хостом.
+GRAFT_ON_LOAD() {
+    graft::log("fixture: on_load");
+}
+
 }  // namespace
