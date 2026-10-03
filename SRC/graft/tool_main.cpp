@@ -259,8 +259,7 @@ void note_battleye(const fs::path& game) {
     }
     std::println("graft: клиент: через DayZ_BE.exe игра с этим хостом не запустится — BattlEye");
     std::println("       блокирует hid.dll. Запускай DayZ_x64.exe напрямую или DayZ_BE.exe -noBE.");
-    std::println("       Клиентские плагины ({}) завершат игру, если она загрузит BattlEye.",
-                 (game / fs::path{graft::plugins::client_dir}).string());
+    std::println("       Хост завершит игру, если она всё же загрузит BattlEye.");
 }
 
 int cmd_install(int argc, char** argv) {
@@ -308,31 +307,15 @@ int cmd_install(int argc, char** argv) {
     // вместе с модом. Печатаем оба, чтобы выбор был осознанным, а не единственным.
     std::println("graft: плагины клади в {} или в @МОД\\grafted рядом с игрой",
                  (game / "grafted").string());
-    std::println("graft: клиентские плагины — только в {}",
-                 (game / fs::path{graft::plugins::client_dir}).string());
     note_battleye(game);
     return 0;
 }
 
 // ── Осмотр ───────────────────────────────────────────────────────────────────
 
-// client == false — плагины, которые грузит сервер; true — те, что грузит клиент. Стороны
-// не смешиваются: плагин, лежащий в обеих папках, — один и тот же файл в двух процессах, и
-// коллизией имён он сам себе не является.
-std::vector<fs::path> plugin_files(const fs::path& game, bool client = false) {
+std::vector<fs::path> plugin_files(const fs::path& game) {
     std::vector<fs::path> out;
-    std::error_code ec;
-    if (client) {
-        // Клиент ходит только в <игра>/grafted/client (graft::plugins::client_dir).
-        const fs::path dir = game / fs::path{graft::plugins::client_dir};
-        for (const auto& item : fs::directory_iterator(dir, ec)) {
-            if (item.path().extension() == ".dll") {
-                out.push_back(item.path());
-            }
-        }
-        std::sort(out.begin(), out.end());
-        return out;
-    }
+    std::error_code       ec;
     for (const fs::path& dir : {game / "grafted"}) {
         if (!fs::is_directory(dir, ec)) {
             continue;
@@ -343,20 +326,23 @@ std::vector<fs::path> plugin_files(const fs::path& game, bool client = false) {
             }
         }
     }
-    // Папки модов рядом с игрой: @МОД/grafted/*.dll. Мод узнаётся по наличию grafted/,
-    // а не по префиксу @: хост идёт по -mod= и о префиксах не знает, а имя папки выбирает
-    // её автор. Префикс знал только этот обход — и ровно поэтому врал.
-    for (const auto& item : fs::directory_iterator(game, ec)) {
-        if (!item.is_directory()) {
-            continue;
-        }
-        const fs::path dir = item.path() / "grafted";
-        if (!fs::is_directory(dir, ec)) {
-            continue;
-        }
-        for (const auto& dll : fs::directory_iterator(dir, ec)) {
-            if (dll.path().extension() == ".dll") {
-                out.push_back(dll.path());
+    // Папки модов рядом с игрой и в `!Workshop` (там клиент держит подписки):
+    // @МОД/grafted/*.dll. Мод узнаётся по наличию grafted/, а не по префиксу @: хост идёт
+    // по -mod= и о префиксах не знает, а имя папки выбирает её автор. Префикс знал только
+    // этот обход — и ровно поэтому врал.
+    for (const fs::path& root : {game, game / "!Workshop"}) {
+        for (const auto& item : fs::directory_iterator(root, ec)) {
+            if (!item.is_directory()) {
+                continue;
+            }
+            const fs::path dir = item.path() / "grafted";
+            if (!fs::is_directory(dir, ec)) {
+                continue;
+            }
+            for (const auto& dll : fs::directory_iterator(dir, ec)) {
+                if (dll.path().extension() == ".dll") {
+                    out.push_back(dll.path());
+                }
             }
         }
     }
@@ -388,15 +374,11 @@ int cmd_uninstall(int argc, char** argv) {
     }
     drop_legacy_host(game);
     // remove() удаляет каталог, только если он пуст: чужие плагины в общей папке
-    // переживут снятие хоста, и это правильно — их туда клали не мы. Клиентская папка
-    // уходит первой: пока она на месте, grafted/ не пуста.
-    fs::remove(game / fs::path{graft::plugins::client_dir}, ec);
+    // переживут снятие хоста, и это правильно — их туда клали не мы.
     if (fs::remove(game / "grafted", ec)) {
         std::println("graft: пустая {} убрана", (game / "grafted").string());
     }
-    auto       left        = plugin_files(game);
-    const auto left_client = plugin_files(game, true);
-    left.insert(left.end(), left_client.begin(), left_client.end());
+    const auto left = plugin_files(game);
     if (!left.empty()) {
         std::println("graft: плагины остались лежать — без хоста они мертвы,");
         std::println("       удаляй вместе с самим модом:");
@@ -415,25 +397,20 @@ int cmd_list(int argc, char** argv) {
     const fs::path host = game / kHost;
     std::println("хост:   {}", !fs::exists(host) ? "НЕ УСТАНОВЛЕН" : is_our_host(host) ? "установлен"
                                                                                        : "ЧУЖАЯ hid.dll");
-    const auto server = plugin_files(game);
-    const auto client = plugin_files(game, true);
-    if (server.empty() && client.empty()) {
+    const auto files = plugin_files(game);
+    if (files.empty()) {
         std::println("плагинов не найдено");
         return 0;
     }
-    std::println("{:<8} {:<20} {:<8} {:<8} {}", "сторона", "плагин", "версия", "нативов", "файл");
-    const auto show = [](const char* side, const std::vector<fs::path>& files) {
-        for (const fs::path& path : files) {
-            const opened p = open_plugin(path);
-            if (p.status != GRAFT_OK) {
-                std::println("{:<8} {:<20} {:<8} {:<8} {}  <- {}", side, "?", "-", "-", path.filename().string(), p.why);
-                continue;
-            }
-            std::println("{:<8} {:<20} {:<8} {:<8} {}", side, p.info.name, p.info.version, p.info.count, path.filename().string());
+    std::println("{:<20} {:<8} {:<8} {}", "плагин", "версия", "нативов", "файл");
+    for (const fs::path& path : files) {
+        const opened p = open_plugin(path);
+        if (p.status != GRAFT_OK) {
+            std::println("{:<20} {:<8} {:<8} {}  <- {}", "?", "-", "-", path.filename().string(), p.why);
+            continue;
         }
-    };
-    show("сервер", server);
-    show("клиент", client);
+        std::println("{:<20} {:<8} {:<8} {}", p.info.name, p.info.version, p.info.count, path.filename().string());
+    }
     return 0;
 }
 
@@ -461,32 +438,28 @@ int cmd_doctor(int argc, char** argv) {
     }
 
     // Сверяем каждый плагин с ЭТОЙ версией инструмента: она собрана из того же ABI,
-    // что и хост, поэтому её вердикт совпадёт с тем, что скажет игра. Стороны — по
-    // отдельности: серверные и клиентские плагины живут в разных процессах и за имена
-    // между собой не спорят.
-    for (const bool client : {false, true}) {
-        std::vector<graft::plugins::entry> all;
-        std::vector<opened>                live;
-        for (const fs::path& path : plugin_files(game, client)) {
-            opened p = open_plugin(path);
-            if (p.status != GRAFT_OK) {
-                std::println("[!] {}{}: {}", client ? "клиент: " : "", path.filename().string(), p.why);
-                ++problems;
-                continue;
-            }
-            live.push_back(p);
-        }
-        for (const opened& p : live) {
-            for (const graft_native_desc& d : std::span{p.info.natives, p.info.count}) {
-                all.push_back({&d, p.info.name});
-            }
-        }
-        std::vector<graft::plugins::collision> bad;
-        graft::plugins::merge(all, bad);
-        for (const graft::plugins::collision& c : bad) {
-            std::println("[!] {}{}", client ? "клиент: " : "", graft::plugins::describe(c));
+    // что и хост, поэтому её вердикт совпадёт с тем, что скажет игра.
+    std::vector<graft::plugins::entry> all;
+    std::vector<opened>                live;
+    for (const fs::path& path : plugin_files(game)) {
+        opened p = open_plugin(path);
+        if (p.status != GRAFT_OK) {
+            std::println("[!] {}: {}", path.filename().string(), p.why);
             ++problems;
+            continue;
         }
+        live.push_back(p);
+    }
+    for (const opened& p : live) {
+        for (const graft_native_desc& d : std::span{p.info.natives, p.info.count}) {
+            all.push_back({&d, p.info.name});
+        }
+    }
+    std::vector<graft::plugins::collision> bad;
+    graft::plugins::merge(all, bad);
+    for (const graft::plugins::collision& c : bad) {
+        std::println("[!] {}", graft::plugins::describe(c));
+        ++problems;
     }
     note_battleye(game);
     // Журнал — по файлу на запуск. Сервер с -profiles= кладёт его туда же, где script- и

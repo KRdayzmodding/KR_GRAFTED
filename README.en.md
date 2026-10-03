@@ -138,18 +138,14 @@ into functions that nothing but the game thread executes.
 
 ## Client
 
-The host loads into the client too, but by default it **does nothing there** — no scan, no
-hooks, no thread, no log line; `hid.dll` stays the pass-through it always was. It wakes up
-only if `<game>/grafted/client/` contains at least one DLL.
+The host loads into the client the same way as on a server: plugins come from `-mod=`,
+`-serverMod=` and `<game>/grafted`, including mods under `!Workshop`, and the log is written
+at once (to `-profiles=`, or to `%LOCALAPPDATA%\DayZ` when there is none). A plugin runs
+with the player's rights, so which mods carry one is the player's call.
 
-- The client takes plugins **only** from `<game>/grafted/client/` — never from
-  `@MOD/grafted` or `<game>/grafted`. Server plugins live there and never start on a
-  client. A mod folder on a client is a Workshop item, and a plugin runs with the player's
-  rights, so it must not load from someone else's mod without the player's say-so.
-- Side is set by the folder, not by the DLL: same plugin, same ABI. Needed on both sides —
-  put it in both folders.
 - Role comes from the exe name: `DayZServer_x64.exe` and `DayZDiag_x64.exe -server` are
-  servers, anything else is a client.
+  servers, anything else is a client. The role only decides two things: whether the host
+  watches for BattlEye, and where the log goes by default.
 - **BattlEye:** the host does not work under it. Through `DayZ_BE.exe` BattlEye blocks
   `hid.dll` and the game does not start (measured on 1.29,
   [RESEARCH/theory/client.md](RESEARCH/theory/client.md)); run `DayZ_x64.exe` directly or

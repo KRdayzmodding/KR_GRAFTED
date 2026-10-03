@@ -50,6 +50,14 @@ TEST(ModDirs, HandlesQuotedListWithSpaces) {
     EXPECT_EQ(got, (std::vector<std::string>{"@My Mod", "@B"}));
 }
 
+// Так игру запускает лаунчер: в кавычки берётся весь аргумент, а не только значение. Хост
+// тогда не находил ни одного мода, а клиент с плагином в `!Workshop` оставался без журнала.
+TEST(ModDirs, HandlesTheWholeArgumentInQuotes) {
+    const auto got = graft::plugins::mod_dirs(
+        R"(DayZ_x64.exe -name=me "-mod=F:\DayZ\!Workshop\@@[KR] 404;F:\DayZ\!Workshop\@CF" -port=1)");
+    EXPECT_EQ(got, (std::vector<std::string>{R"(F:\DayZ\!Workshop\@@[KR] 404)", R"(F:\DayZ\!Workshop\@CF)"}));
+}
+
 TEST(ModDirs, SkipsEmptyEntriesAndDuplicates) {
     const auto got = graft::plugins::mod_dirs("game.exe -mod=@A;;@B;@A; -serverMod=@B;");
     EXPECT_EQ(got, (std::vector<std::string>{"@A", "@B"}));
@@ -71,6 +79,11 @@ TEST(ModDirs, RequiresSwitchToStartAtBoundary) {
 TEST(ProfileDir, TakesTheSwitchValue) {
     EXPECT_EQ(graft::plugins::profile_dir("game.exe -profiles=DEBUG/profiles -port=1"),
               "DEBUG/profiles");
+}
+
+TEST(ProfileDir, HandlesTheWholeArgumentInQuotes) {
+    EXPECT_EQ(graft::plugins::profile_dir(R"(game.exe "-profiles=C:\My Server\prof" -mod=@A;)"),
+              R"(C:\My Server\prof)");
 }
 
 TEST(ProfileDir, HandlesQuotedPathWithSpaces) {
