@@ -1,15 +1,43 @@
-# KR_GRAFTED
+<div align="center">
+    <a href="https://github.com/KRdayzmodding/KR_GRAFTED"><img src="https://github.com/user-attachments/assets/96d2e5e9-2532-467b-a4af-03a473c5e369" /></a>
+</div>
 
-[![Релиз](https://img.shields.io/github/v/release/KRdayzmodding/KR_GRAFTED?label=релиз&color=success)](https://github.com/KRdayzmodding/KR_GRAFTED/releases/latest)
-[![CI](https://github.com/KRdayzmodding/KR_GRAFTED/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/KRdayzmodding/KR_GRAFTED/actions/workflows/ci.yml)
-[![Лицензия: GPL-3.0-or-later с исключением для плагинов](https://img.shields.io/badge/лицензия-GPL--3.0--or--later%20%2B%20plugin%20exception-blue)](#лицензия)
-[![C++26 · clang-cl · Windows](https://img.shields.io/badge/C%2B%2B26-clang--cl%20%C2%B7%20Windows-orange)](CONTRIBUTING.md#1-окружение)
+<div align="center">
+    <a href="https://github.com/KRdayzmodding/KR_GRAFTED/releases/latest"><img src="https://img.shields.io/github/v/release/KRdayzmodding/KR_GRAFTED?label=%D1%80%D0%B5%D0%BB%D0%B8%D0%B7&color=success&style=for-the-badge" alt="релиз" /></a>
+    <a href="https://github.com/KRdayzmodding/KR_GRAFTED/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/KRdayzmodding/KR_GRAFTED/ci.yml?branch=main&label=CI&style=for-the-badge" alt="CI" /></a>
+    <a href="#лицензия"><img src="https://img.shields.io/badge/лицензия-GPL--3.0--or--later%20%2B%20plugin%20exception-blue?style=for-the-badge" alt="лицензия: GPL-3.0-or-later с исключением для плагинов" /></a>
+    <a href="CONTRIBUTING.md#1-окружение"><img src="https://img.shields.io/badge/C%2B%2B26-clang--cl%20%C2%B7%20Windows-orange?style=for-the-badge" alt="C++26 · clang-cl · Windows" /></a>
+</div>
 
-**[Как участвовать](CONTRIBUTING.md)** · **[Обсуждения](https://github.com/KRdayzmodding/KR_GRAFTED/discussions)** · **[Сборки](https://github.com/KRdayzmodding/KR_GRAFTED/releases)** · **[Изменения](CHANGELOG.md)** · **[In English](README.en.md)**
+<div align="center">
+    <a href="CONTRIBUTING.md"><b>Как участвовать</b></a>
+    &bull; <a href="https://github.com/KRdayzmodding/KR_GRAFTED/discussions"><b>Обсуждения</b></a>
+    &bull; <a href="https://github.com/KRdayzmodding/KR_GRAFTED/releases"><b>Сборки</b></a>
+    &bull; <a href="CHANGELOG.md"><b>Изменения</b></a>
+    &bull; <a href="README.en.md"><b>In English</b></a>
+</div>
+
+<br />
+
+<div align="center">
+  📎DayZ C++ Mod-Loader/Framework
+</div>
+
+<div align="center">
+  <sub>
+    Built with love 
+    &bull; Brought to you by <a href="https://github.com/KRdayzmodding">@KR</a>
+    and other <a href="https://github.com/KRdayzmodding/KR_GRAFTED/graphs/contributors">contributors</a>
+  </sub>
+</div>
+
+# Вступление
 
 KR_GRAFTED — мод-лоадер и фреймворк для модов DayZ на C++. Код собирается в
 DLL-плагин, который загружается вместе с модом. Скрипты мода вызывают функции плагина как
 встроенные функции движка.
+
+Плагину доступно то, чего нет в Enforce Script: стандартная и сторонние библиотеки C++, внутренние структуры движка и скорость нативного кода. На сервере мод работает без ограничений, клиент требует отключения BattlEye.
 
 Плагину доступно то, чего нет в Enforce Script: стандартная и сторонние библиотеки C++, внутренние структуры движка и скорость нативного кода. На сервере мод работает без ограничений, клиент требует отключения BattlEye.
 
