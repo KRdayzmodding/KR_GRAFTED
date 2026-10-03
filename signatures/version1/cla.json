@@ -1,3 +1,12 @@
 {
-   "signedContributors": []
+  "signedContributors": [
+    {
+      "name": "hurfy",
+      "id": 46726909,
+      "comment_id": 5974614192,
+      "created_at": "2026-10-03T23:30:52Z",
+      "repoId": 1338392327,
+      "pullRequestNo": 50
+    }
+  ]
 }
