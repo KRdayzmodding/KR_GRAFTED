@@ -1,5 +1,5 @@
 <div align="center">
-    <a href="https://github.com/KRdayzmodding/KR_GRAFTED"><img src="https://github.com/user-attachments/assets/96d2e5e9-2532-467b-a4af-03a473c5e369" /></a>
+    <a href="https://github.com/KRdayzmodding/KR_GRAFTED"><img src="docs/assets/banner.png" alt="KR GRAFTED" /></a>
 </div>
 
 <div align="center">
