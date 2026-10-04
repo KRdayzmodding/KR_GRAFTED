@@ -1,12 +1,39 @@
-# KR_GRAFT
+<div align="center">
+    <a href="https://github.com/KRdayzmodding/KR_GRAFTED"><img src="docs/assets/banner.png" alt="KR GRAFTED" /></a>
+</div>
 
-[![Release](https://img.shields.io/github/v/release/KRdayzmodding/KR_GRAFTED?label=release&color=success)](https://github.com/KRdayzmodding/KR_GRAFTED/releases/latest)
-[![CI](https://github.com/KRdayzmodding/KR_GRAFTED/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/KRdayzmodding/KR_GRAFTED/actions/workflows/ci.yml)
-[![License: GPL-3.0-or-later with plugin exception](https://img.shields.io/badge/license-GPL--3.0--or--later%20%2B%20plugin%20exception-blue)](#license)
+<div align="center">
+    <a href="https://github.com/KRdayzmodding/KR_GRAFTED/releases/latest"><img src="https://img.shields.io/github/v/release/KRdayzmodding/KR_GRAFTED?label=release&color=success&style=for-the-badge" alt="release" /></a>
+    <a href="https://github.com/KRdayzmodding/KR_GRAFTED/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/KRdayzmodding/KR_GRAFTED/ci.yml?branch=main&label=CI&style=for-the-badge" alt="CI" /></a>
+    <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later%20%2B%20plugin%20exception-blue?style=for-the-badge" alt="license: GPL-3.0-or-later with plugin exception" /></a>
+    <a href="CONTRIBUTING.md#1-окружение"><img src="https://img.shields.io/badge/C%2B%2B26-clang--cl%20%C2%B7%20Windows-orange?style=for-the-badge" alt="C++26 · clang-cl · Windows" /></a>
+</div>
+
+<div align="center">
+    <a href="CONTRIBUTING.md"><b>Contributing</b></a>
+    &bull; <a href="https://github.com/KRdayzmodding/KR_GRAFTED/discussions"><b>Discussions</b></a>
+    &bull; <a href="https://github.com/KRdayzmodding/KR_GRAFTED/releases"><b>Builds</b></a>
+    &bull; <a href="CHANGELOG.md"><b>Changelog</b></a>
+    &bull; <a href="README.md"><b>По-русски</b></a>
+</div>
+
+<br />
+
+<div align="center">
+  📎DayZ C++ Mod-Loader/Framework
+</div>
+
+<div align="center">
+  <sub>
+    Built with love
+    &bull; Brought to you by <a href="https://github.com/KRdayzmodding">@KR</a>
+    and other <a href="https://github.com/KRdayzmodding/KR_GRAFTED/graphs/contributors">contributors</a>
+  </sub>
+</div>
+
+# Introduction
 
 **One C++ entry — both an engine native and a `proto native` for script. No hardcoded addresses.**
-
-**[Contributing](CONTRIBUTING.md)** · **[Discussions](https://github.com/KRdayzmodding/KR_GRAFTED/discussions)** · **[Builds](https://github.com/KRdayzmodding/KR_GRAFTED/releases)** · **[Changelog](CHANGELOG.md)** · **[По-русски](README.md)**
 
 > The full documentation is in Russian: [README.md](README.md). This page is the short
 > version for people who just found the project.
