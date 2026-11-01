@@ -75,6 +75,23 @@ UPDATE_GATES = {
     "состояние and 0xf0000":       [H("2500000F003D00000100")],
 }
 
+# Парсер <event> (events.xml): запись полей в Event* (rdi) — раскладка
+# записи: flags +0x8, nominal +0x14, min +0x18, max +0x1c, lifetime +0x20,
+# restock +0x24, saferadius +0x2c (+копия в +0x38), distanceradius +0x30,
+# cleanupradius +0x34. Живой дамп реестра совпал с events.xml.
+EVENT_FIELDS = {
+    "flags   [ev+0x08]":  [H("897708")],
+    "nominal [ev+0x14]":  [H("896F14")],
+    "min     [ev+0x18]":  [H("44897F18")],
+    "max     [ev+0x1c]":  [H("44896F1C")],
+    "lifetime [ev+0x20]": [H("F30F114720")],
+    "restock [ev+0x24]":  [H("F30F114724")],
+    "safe    [ev+0x2c]":  [H("F30F11472C")],
+    "safe-коп [ev+0x38]": [H("F30F114738")],
+    "dist    [ev+0x30]":  [H("F30F114730")],
+    "cleanup [ev+0x34]":  [H("F30F114734")],
+}
+
 
 def ok(msg):
     print("  ok   " + msg)
@@ -279,6 +296,19 @@ def main(argv):
                 else:
                     fail("слоты vtable (Update и sweep через 4 слота) не найдены")
                     ret = False
+
+    # ── 7. events.xml: парсер <event> и раскладка записи ────────────────────
+    print("\n[7] парсер <event> (events.xml):")
+    evp = fn_by_anchor(
+        p, b"[CE][offlineDB] :: Unknown value of position element when parsing"
+          b" event %s.")
+    if not evp:
+        fail("парсер <event> по якорю не найден")
+        ret = False
+    else:
+        print("  парсер: %#012x..%#x" % (evp[0], evp[1]))
+        ret &= check_patterns(p.read(evp[0], evp[1] - evp[0]), evp[0],
+                              EVENT_FIELDS, "поля события")
 
     print("\nитог:", "все проверки сошлись" if ret else "ЕСТЬ РАСХОЖДЕНИЯ — обновить карту")
     return 0 if ret else 1
