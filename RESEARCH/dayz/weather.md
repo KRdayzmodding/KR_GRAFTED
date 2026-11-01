@@ -11,11 +11,11 @@
 
 | Источник | Что дал |
 |---|---|
-| зеркало `BohemiaInteractive/DayZ-Script-Diff`, ветка main, снято 2026-11-01 (строка 1.30) | `3_Game/weather.c`, `3_Game/worlddata.c`, `3_Game/global/game.c` — весь API и арбитраж |
-| та же система в ~1.14 (`dayzexplorer.zeroy.com`) | где жил конечный автомат до переезда в движок |
-| BI Wiki: `DayZ:Weather_Configuration`, `DayZ:cfgweather.xml` | конфигурация без скриптов |
+| зеркало `BohemiaInteractive/DayZ-Script-Diff`, ветка main, снято 2026-11-01 (строка 1.30) | `3_Game/weather.c`, `worlddata.c`, `global/game.c`, `sandstorm.c`, `debugweatherrpcdata.c`, `5_mission/gui/scriptconsoleweathertab.c`, `4_world/systems/sandstorm/scriptedsandstormcontroller.c`, `4_world/classes/undergroundhandlerclient.c` — API, арбитраж, бури, диагностическая консоль |
+| та же система в ~1.14 (`dayzexplorer.zeroy.com`) | где жил конечный автомат до переезда в движок; тело `OnBeforeChange` сравнивал с текущим |
+| BI Wiki: `DayZ:Weather_Configuration`, `DayZ:cfgweather.xml`; практика модов (OpenDayZ, init.c-гайды) | конфигурация без скриптов; употребление `MissionWeather` живыми серверами |
 
-После патча игры: перегенерить зеркало (`graft apigen`) и сверить три файла выше в
+После патча игры: перегенерить зеркало (`graft apigen`) и сверить файлы выше в
 зеркале скриптов. Расхождение зеркала с игрой ловит сам graft: `ref::call` ответит
 `wrong_type` со строкой в журнале, а не падением сервера.
 
@@ -43,6 +43,14 @@ Overcast — главное значение: дождь и молнии воз�
 У каждого явления есть текущее значение, прогноз и время, за которое движок ДОЕДЕТ к
 прогнозу, и момент следующего пересчёта. Извне задаются только ЦЕЛИ — интерполяция
 движковая, плавные переходы достаются бесплатно.
+
+Рецепт мгновенной смены — из диагностической консоли самих разработчиков
+(`scriptconsoleweathertab.c`): интерполяция 0 + длительность 960 — это потолки
+слайдеров `INTERPOLATION_MAX = 920` и `DURATION_MAX = 960`. Консоль даже на выделенном
+сервере применяет погоду через серверный RPC (`DEV_SET_WEATHER`) — ещё одно
+подтверждение, что писатель всегда сервер. `DebugWeatherRPCData` (значение +
+интерполяция + длительность на явление, −1 = «не трогать») — только отладочный канал
+поверх, продакшн-синхронизация целиком внутри движка.
 
 | Метод `WeatherPhenomenon` | Форма | Что |
 |---|---|---|
@@ -73,8 +81,38 @@ SetWind(vector)`, `Get/SetWindSpeed`, `SetWindMaximumSpeed`, `SetWindFunctionPar
 | `SetSnowflakeScale` | клиент; ванильный сервер задаёт детерминированно (движок это значение не разносит) |
 | `MissionWeather(bool)`, `SetWeatherUpdateFreeze(bool)` | сервер: скриптовые ПОЛЯ объекта Weather, арбитраж генератора, см. ниже |
 
+Ванильный образец употребления `SuppressLightningSimulation` —
+`undergroundhandlerclient.c`: игрок ушёл под землю глубже `EUndergroundPresence.OUTER`
+— выключили, вышел — включили, и то же в деструкторе (уборка за собой). Готовый
+шаблон для клиентских плагинов.
+
 `Weather.GetTime()` — секунды от старта сервера: расписание погоды детерминировано
 относительно аптайма, а не реального времени.
+
+## Песчаная буря: единственная пространственная погода
+
+`Weather.GetSandstorm()` — не явление-скаляр, а ДВИЖУЩИЙСЯ объект с географией
+(`3_Game/sandstorm.c`, класс `SandstormController`; конструктор приватный — создаёт
+движок):
+
+| Метод | Что |
+|---|---|
+| `GetPosition()`, `GetDirection()`, `GetSpeed()` | где фронт и куда едет (м/с) |
+| `IsPositionAtEnd()`, `GetRemainingMovementDuration()` | сколько движения осталось |
+| `GetPointOnEdge(worldPos, out outPos)` | проекция на границу; ОТРИЦАТЕЛЬНОЕ расстояние — точка внутри бури |
+| `GetIntensity(worldPos)`, `GetMagnitude()` | локальная интенсивность в любой точке мира |
+| `Start(duration, calledByWeather)`, `Stop(duration, ...)` | сервер-only: собраться за duration, движение, угасание |
+
+Синхронизация — движковая («driven by the server and replicated to all clients»),
+опоздавший клиент получает `OnStart(continuedSession)`. Маршрут движок выбирает сам:
+у `Start` нет аргументов-позиций. Скриптовая прослойка
+(`scriptedsandstormcontroller.c`) — только клиентские эффекты: пер-игровая
+интенсивность с «укрытиями» (под землёй / в здании по рейкасту и звуку / в машине —
+фейд 1.5 с; глубже 2 м от поверхности — линейное затухание), PPE-эффект, симптом
+прищура, модификатор exposure. Модам — хук `GetScriptedType()` (подменить контроллер
+своим классом) и ScriptInvoker'и старта/остановки. Триггер ванильных бурь —
+`WorldData.StartSandstorm`: ветер направлением в окне −1.77..−1.20 и силой ≥18,
+частота из cfgGameplay.json.
 
 ## Кто пишет прогнозы: движковый генератор и арбитраж
 
@@ -91,10 +129,18 @@ SetWeatherUpdateFreeze(true) -> true  заморозка: движок проп�
          возвращает true
 ```
 
-`m_UpdateFrozen` и `m_missionWeather` — скриптовые поля, но читает их ДВИЖОК у
-своего же объекта: в ~1.14 `MissionWeather` был ещё `proto native`, теперь поле.
-Что именно генератор делает с флагом миссии дальше — из скриптов не видно; это
-открытый вопрос на живой замер (кейс игровой сьюты), а не факт.
+`m_UpdateFrozen` — скриптовое поле, читает его сам колбэк, семантика однозначна.
+А вот `m_missionWeather` ПРОТИВОРЕЧИВ даже по исходникам. Тело `OnBeforeChange` в
+~1.14 и сегодня идентично (`MissionWeather(true)` -> сразу `false`); комментарий
+worlddata.c («поведение по умолчанию — как MissionWeather(true)») и конструктор
+(`m_missionWeather = false`, при живой динамической погоде в ваниле) согласуются
+только с чтением «false (дефолт) = автопилот работает». Но рабочие init.c-гайды
+«вечно ясно» (BI Wiki, OpenDayZ) строятся на `MissionWeather(false)` как на
+ОТКЛЮЧЕНИИ автопилота. Сходится лишь если флаг читает сам движок в обход колбэка
+(в ~1.14 метод был `proto native`) — либо гайды устарели с переездом автомата в
+движок. Из скриптов не разрешается; закрывает живой замер: сервер, тик пишет
+`GetNextChange()`/`GetForecast()` всех явлений -> `MissionWeather(false)` -> смотрим,
+двигается ли расписание; контрольный прогон с `m_UpdateFrozen = true`.
 
 Исторически (до ~1.15) весь конечный автомат жил в скриптах подкласса `WorldData`
 (`ChernarusPlusData`: CLEAR/CLOUDY/BAD, полосы дождя по overcast, туманное утро с
@@ -121,20 +167,27 @@ Obsolete), сбор дождевой воды (`RainProcurementManager`).
 | чтение на тике | `graft::game()` → `cast<graft::dayz::CGame>` → `GetWeather()` → `GetOvercast().GetActual()`; всё `ref::call` по дескриптору, зеркало — `graft apigen` на весь `3_Game` (паттерн — examples/players) |
 | прогнозы наружу | `GetForecast`/`GetNextChange` читаются дёшево: будущие изменения уже лежат в объекте, их можно анонсировать, а не угадывать |
 | управление | те же `Set*` из СЕРВЕРНОГО плагина; клиентский плагин — только чтение и несинхронизируемая локаль (молнии, масштаб снежинок) |
+| пространственные бури | `GetIntensity(worldPos)`/`GetPointOnEdge` — нативы: экспозиция любой точки карты дёшево и без скриптов; `Start/Stop` — серверные нативы, плагин может водить бури сам |
 | `Get*`-пары с out | `callout.hpp` (`call_proto`): арность и шаблоны — по дескриптору |
 | владение | приватный ctor → `lifetime::engine`: между тиками не держать, брать заново `game.GetWeather()` (один нативный вызов) или `borrowed<>` |
 | взятие управления | `MissionWeather`/`SetWeatherUpdateFreeze` — скриптовые поля, и graft их уже пишет: `field_proxy::operator=` (`graft/types.hpp`) кладёт int/float/bool/vector прямо в поле, зеркало генерирует `Weather::m_UpdateFrozen()` и `m_missionWeather()` — `weather.m_UpdateFrozen() = true;` работает сегодня, `EnScript.SetClassVar` не нужен |
 | перехват | не нужен: весь API погоды открыт нативами, врезаться не во что |
 
-Чего сделать НЕЛЬЗЯ: региональной и персональной погоды нет — явления это глобальные
-скаляры сервера, у вольфога лишь глобальные параметры высоты/дистанции. «Дождь над
-одним городом» движковой погодой не выражается.
+Чего сделать НЕЛЬЗЯ: региональной погоды для явлений-скаляров нет — overcast/дождь/
+туман глобальны на весь сервер, у вольфога лишь глобальные параметры высоты и
+дистанции. «Дождь над одним городом» движковой погодой не выражается; единственное
+исключение — песчаная буря: ОДИН движковый пространственный фронт на сервер
+(см. раздел выше).
 
 ## Источники
 
 - `github.com/BohemiaInteractive/DayZ-Script-Diff` — `scripts/3_game/weather.c`,
-  `scripts/3_game/worlddata.c`, `scripts/3_game/global/game.c` (текущая строка).
+  `worlddata.c`, `global/game.c`, `sandstorm.c`, `debugweatherrpcdata.c`;
+  `4_world/systems/sandstorm/scriptedsandstormcontroller.c`;
+  `4_world/classes/undergroundhandlerclient.c`;
+  `5_mission/gui/scriptconsoleweathertab.c` (текущая строка).
 - `dayzexplorer.zeroy.com` — `weather_8c`, `chernarusplus_8c` (~1.14): скриптовый
   автомат до переезда в движок.
 - `community.bistudio.com/wiki/DayZ:Weather_Configuration`,
-  `community.bistudio.com/wiki/DayZ:cfgweather.xml`.
+  `community.bistudio.com/wiki/DayZ:cfgweather.xml`; практика `MissionWeather(false)`
+  в init.c: opendayz.net, гайды r/dayz.
