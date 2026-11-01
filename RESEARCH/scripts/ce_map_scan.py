@@ -9,7 +9,10 @@
   3. поиск типа по имени: полиномиальный хеш ×0x25 (нижний регистр) и
      open-addressing проба по бакетам 0x18;
   4. привязку CE-объекта: геттер находится ВНУТРИ SpawnRandomLoot
-     (call; mov rcx,[rax+0x20]) — не фиксированным отступом по образу.
+     (call; mov rcx,[rax+0x20]) — не фиксированным отступом по образу;
+  5. цикл респавна: гейты LootRespawner::Update (initial-done, root-флаг,
+     контекст-гейты, состояние 0xf0000), sweep по хвостовому call и vtable
+     (слоты Update/sweep через 4 слота в данных образа).
 
 Образ берётся из GRAFT_SERVER_DIR (каталог сервера с DayZServer_x64.exe),
 переопределяется первым аргументом. Разбор PE — pe.py из этой же папки.
@@ -57,6 +60,19 @@ LOOKUP = {
     "хеш имени imul ×0x25":        [H("456BC925")],
     "проба lea rcx,[r10+r10*2]":   [H("4B8D0C52")],
     "бакет cmp [r8+rcx*8+4],0":    [H("41837CC80400")],
+}
+
+# Цикл респавна (LootRespawner::Update): гейты на этом объекте (rdi) и на
+# втором аргументе — контексте вызова (rbx). Живой замер 2026-11-02: все
+# гейты могли быть открыты, а сам Update движком не вызывался.
+UPDATE_GATES = {
+    "initial-done [this+0x30]":    [H("807F3000")],
+    "root-флаг shr eax,4;test":    [H("8B4008C1E804")],
+    "ctx-гейт [+0x3e]":            [H("807B3E00")],
+    "ctx-таймеры [0x28]>=/+0x24]": [H("F30F1043280F2F4324")],
+    "ctx-гейт [+0x3f]":            [H("807B3F00")],
+    "ctx-гейт [+0x40]":            [H("807B4000")],
+    "состояние and 0xf0000":       [H("2500000F003D00000100")],
 }
 
 
@@ -206,6 +222,63 @@ def main(argv):
         print("  info отступ -0x157b0 → %#012x, пролог: %s"
               % (off, "сходится" if pro else
                  "НЕ сходится (ожидаемо после перекомпоновки)"))
+
+    # ── 6. цикл респавна: гейты Update + vtable LootRespawner ───────────────
+    # Update ищется прологом в окне ±0x2000 от спавн-теста (якорь «exceeded
+    # max tests»); sweep — rel32 последнего call в Update; vtable — слоты
+    # в не-исполняемых секциях, Update и sweep отстоят на 4 слота.
+    print("\n[6] цикл респавна (Update: гейты, sweep, vtable):")
+    stest = fn_by_anchor(
+        p, b"[CE][LootRespawner] (%s) :: Item exceeded max tests: \"%s\"")
+    if not stest:
+        fail("спавн-тест по якорю не найден")
+        ret = False
+    else:
+        print("  спавн-тест: %#012x..%#x" % (stest[0], stest[1]))
+        lo = stest[0] - 0x2000
+        blob = p.read(lo, 0x4000)
+        pro = blob.find(H("48895C24085748 83EC20488BDA488BF9E8".replace(" ", "")))
+        upd = lo + pro if pro >= 0 else None
+        if upd is None:
+            fail("пролог Update (mov [rsp+8],rbx; push rdi; sub rsp,0x20; …) не найден")
+            ret = False
+        else:
+            body = p.read(upd, 0x120)
+            check_patterns(body, upd, UPDATE_GATES, "гейты Update")
+            ok("Update: %#012x (спавн-тест %+#x)" % (upd, upd - stest[0]))
+            # sweep: rel32 последнего E8 в теле Update (хвостовой вызов)
+            sweep = None
+            for i in range(len(body) - 5, 0, -1):
+                if body[i] == 0xE8:
+                    disp = struct.unpack_from("<i", body, i + 1)[0]
+                    sweep = upd + i + 5 + disp
+                    break
+            if not sweep:
+                fail("хвостовой call sweep не найден")
+                ret = False
+            else:
+                ok("sweep (хвостовой call): %#012x" % sweep)
+                # vtable: qword-слоты с адресами Update/sweep в данных образа
+                def slots(fn_va):
+                    pat = struct.pack("<Q", fn_va)
+                    out = []
+                    for name, sva, vs, ptr, rs in p.secs:
+                        if name == ".text" or rs == 0:
+                            continue
+                        hay = p.d[ptr:ptr + rs]
+                        pos = hay.find(pat)
+                        while pos >= 0:
+                            out.append(p.base + sva + pos)
+                            pos = hay.find(pat, pos + 1)
+                    return out
+                pairs = [(a, b) for a in slots(upd) for b in slots(sweep)
+                         if b - a == 0x20]
+                if pairs:
+                    ok("vtable: слот Update %#012x (+0x58 от базы), sweep +0x78"
+                       % pairs[0][0])
+                else:
+                    fail("слоты vtable (Update и sweep через 4 слота) не найдены")
+                    ret = False
 
     print("\nитог:", "все проверки сошлись" if ret else "ЕСТЬ РАСХОЖДЕНИЯ — обновить карту")
     return 0 if ret else 1
