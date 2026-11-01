@@ -12,6 +12,8 @@
 | Источник | Что дал |
 |---|---|
 | зеркало `BohemiaInteractive/DayZ-Script-Diff`, ветка main, снято 2026-11-01 (строка 1.30) | `3_Game/weather.c`, `worlddata.c`, `global/game.c`, `sandstorm.c`, `debugweatherrpcdata.c`, `5_mission/gui/scriptconsoleweathertab.c`, `4_world/systems/sandstorm/scriptedsandstormcontroller.c`, `4_world/classes/undergroundhandlerclient.c` — API, арбитраж, бури, диагностическая консоль |
+| бинарь `DayZDiag_x64.exe` 1.30.164.200 (sha256 a500be80…, копия в `RESEARCH/bin`), скрипт [scripts/sandstorm.py](../scripts/sandstorm.py) | движковая сторона буры: источник конфига, парсер и смещения, карта нативов |
+| живые прогоны: локальный сервер DayZServer 1.30 + ванильный клиент, Черногорка | репликация на ванильный клиент, рабочий порт, карта крашей |
 | та же система в ~1.14 (`dayzexplorer.zeroy.com`) | где жил конечный автомат до переезда в движок; тело `OnBeforeChange` сравнивал с текущим |
 | BI Wiki: `DayZ:Weather_Configuration`, `DayZ:cfgweather.xml`; практика модов (OpenDayZ, init.c-гайды) | конфигурация без скриптов; употребление `MissionWeather` живыми серверами |
 
@@ -113,6 +115,60 @@ SetWind(vector)`, `Get/SetWindSpeed`, `SetWindMaximumSpeed`, `SetWindFunctionPar
 своим классом) и ScriptInvoker'и старта/остановки. Триггер ванильных бурь —
 `WorldData.StartSandstorm`: ветер направлением в окне −1.77..−1.20 и силой ≥18,
 частота из cfgGameplay.json.
+
+### Движковая сторона по бинарю (DayZDiag_x64 1.30.164.200)
+
+Снято скриптом [scripts/sandstorm.py](../scripts/sandstorm.py) (pe.py, без IDA). Адреса —
+VA этой сборки, переживают патч только выводы.
+
+- Маршрут читает мировой загрузчик: секция `Weather` из **CfgWorlds** (рядом тот же код
+  читает `hazeDistCoef`/`volFogOffset` — конфиг террейна), подсекции `VolFog`,
+  `ThunderboltNorm/Heavy`, `RainFog`, `SnowfallFog`, `Sandstorm`. Объект буры создаётся
+  всегда, указатель — Weather+0x4a8.
+- Парсер свойств (0x14083e000): `startPosition` → объект+0x18 (vec3), `endPosition` →
+  +0x24, длина маршрута sqrt(dx²+dz²) → +0x30; дальше `particlePath` (дефолт зашит:
+  `Graphics/Particles/sandstorm/sandstorm`), `.ptc`, `soundSets`
+  (`SandStorm_Debris/Close/Dist_SoundSet`), `sandstormIntensity`. Дефолт позиций при
+  отсутствии секции — обе `(0, 0, 10000)`: маршрут нулевой длины.
+- Натив `Start` (0x14083eb20) маршрут НЕ проверяет: только серверный контекст и
+  «текущая позиция == 0» (буря не активна). Цель движения пересчитывается в момент
+  вызова — точки, записанные до вызова, подхватятся сами.
+- Регистрация методов (0x14083ce10) → имплы: `Start` 0x14083eb20, `Stop` 0x14083ebc0,
+  `IsActive` 0x14083df60, `IsPositionAtEnd` 0x14083dfe0, `GetDirection` 0x14083dc90,
+  `GetPosition` 0x14083dec0, `GetSpeed` 0x14083df30, `GetPointOnEdge` 0x14083dd50,
+  `GetIntensity` 0x14083dd00, `GetMagnitude` 0x14083dd40,
+  `GetRemainingMovementDuration` 0x14083df20. Апдейт — зона профайлера `WeatherStorm`
+  (0x14083f292), диагностический лог «Sandstorm state: Position=… TargetPos=…».
+
+### Рабочий порт на другую карту (проверен живым клиентом)
+
+Сервер 1.30, Черногорка, клиенты ПОЛНОСТЬЮ ванильные — ничего на клиент не нужно:
+
+1. конфиг-мод ТОЛЬКО в `-servermod`: `CfgWorlds >> ChernarusPlus >> Weather >> Sandstorm`
+   с `startPosition[]`, `endPosition[]`, `particlePath`, `sandstormIntensity`;
+2. `particlePath` ОБЯЗАТЕЛЬНО указывать на существующую частицу (проверен
+   `Graphics/Particles/dust_vehicle`): дефолтный путь — файл из DLC Badlands, которого
+   в базовой установке нет, и ванильный клиент при входе в стену бури падает с
+   0x400F0 «Game restart required»;
+3. миссия запускает цикл: `GetSandstorm().Start(gather, false)` + связка погоды (ветер
+   по направлению буры через `WindDirectionToAngle(GetDirection())`, overcast ≥0.75,
+   ветер ≥18, дождь 0, длительности 99999);
+4. сервер реплицирует клиентам И состояние, И частицу — клиент видит бурю без модов.
+
+Рабочий код мода и миссии-примера — репозиторий `KR_SandstormPort`.
+
+### Карта крашей (живые замеры)
+
+| Симптом | Причина | Условие |
+|---|---|---|
+| клиент: ACCESS_VIOLATION 67DB4CE5 в интро-сцене меню | наличие ЛЮБОЙ секции `Sandstorm` в CfgWorlds клиента, даже пустой | конфиг-мод подключён как `-mod` |
+| клиент: 0x400F0 «Game restart required» при входе в стену | дефолтный `particlePath` указывает на отсутствующий файл DLC | нет явного `particlePath` |
+| сервер: C++ фатал (e06d7363) на парсинге аддонов | мерж секции с тяжёлым модсетом (замерено на @CF+@test+@server) | `servermod` + модсет |
+
+Попутные факты: компилятор миссии не берёт перенос конкатенации на несколько строк и
+тернарник внутри строковой конкатенации (`Print` — однострочным); сервер с минимальным
+server.cfg само-выключается через 10 с после загрузки мира («termination in») — лечится
+полным конфигом.
 
 ## Кто пишет прогнозы: движковый генератор и арбитраж
 
