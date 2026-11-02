@@ -104,4 +104,4 @@ world / mission (CreateMission)`.
 | [theory/defines.md](theory/defines.md) | откуда у препроцессора дефайны и как дописать свой |
 | [theory/watch.md](theory/watch.md) | кто пишет в эту память: аппаратная точка останова на запись |
 | [theory/client.md](theory/client.md) | клиент: скан на розничном exe, BattlEye блокирует hid.dll, когда движок грузит BEClient |
-| [dayz/weather.md](dayz/weather.md) | погода Enfusion: явления, движковый генератор прогнозов, синхронизация и доступ из плагина |
+| [dayz/weather.md](dayz/weather.md) | погода Enfusion: явления, песчаные бури, генератор прогнозов, синхронизация и доступ из плагина |
