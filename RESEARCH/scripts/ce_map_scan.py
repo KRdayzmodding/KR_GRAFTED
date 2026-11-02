@@ -310,6 +310,38 @@ def main(argv):
         ret &= check_patterns(p.read(evp[0], evp[1] - evp[0]), evp[0],
                               EVENT_FIELDS, "поля события")
 
+    # ── 8. лимиты: парсер cfglimitsdefinition + держатель [CE+0x10] ─────────
+    print("\n[8] лимиты (cfglimitsdefinition):")
+    lim = fn_by_anchor(p, b"cfglimitsdefinitionuser.xml")
+    if not lim:
+        fail("парсер лимитов по якорю не найден")
+        ret = False
+    else:
+        print("  парсер: %#012x..%#x" % (lim[0], lim[1]))
+        # вызывающий передаёт держатель: mov rbp,rax; mov r15,[rax+0x10]
+        # сразу после call геттера CE — ищем E8 → парсер и проверяем хвост
+        tsec = p.text()  # (имя, rva, size, ptr, rawsize) — va нужны полные
+        tbase = p.base + tsec[1] if tsec else 0
+        tblob = p.read(tbase, tsec[2]) if tsec else b""
+        found_holder = False
+        i = 0
+        while True:
+            i = tblob.find(b"\xe8", i)
+            if i < 0 or i + 5 > len(tblob):
+                break
+            disp = struct.unpack_from("<i", tblob, i + 1)[0]
+            va = tbase + i
+            if va + 5 + disp == lim[0]:
+                win = p.read(va - 0x40, 0x60)
+                if H("488BE84C8B7810") in win:  # mov rbp,rax; mov r15,[rax+0x10]
+                    found_holder = True
+                    ok("держатель [CE+0x10] передаётся парсеру (окно 0x%x)" % va)
+                    break
+            i += 1
+        if not found_holder:
+            fail("цепочка геттер CE → [CE+0x10] у парсера лимитов не найдена")
+            ret = False
+
     print("\nитог:", "все проверки сошлись" if ret else "ЕСТЬ РАСХОЖДЕНИЯ — обновить карту")
     return 0 if ret else 1
 
