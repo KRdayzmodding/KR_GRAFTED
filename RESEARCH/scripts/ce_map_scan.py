@@ -75,6 +75,15 @@ UPDATE_GATES = {
     "состояние and 0xf0000":       [H("2500000F003D00000100")],
 }
 
+# Парсер группы mapgroupproto (0x1406bafc0): маски группы (+0x58 usage,
+# +0x5c value) и контейнера (+0x28 category, +0x2c tag) — байты живого образа.
+GROUP_MASKS = {
+    "usage [group+0x58]":    [H("41894558")],
+    "value [group+0x5c]":    [H("4189455C")],
+    "category [cont+0x28]":  [H("41894728")],
+    "tag [cont+0x2c]":       [H("4189472C")],
+}
+
 # Парсер cfgspawnabletypes: флаги дескриптора класса [desc+0x24] —
 # bts 0xb «есть конфиг», or 2 unique, or 4 hoarder (живой замер).
 SPAWNABLE_FLAGS = {
@@ -362,6 +371,38 @@ def main(argv):
         print("  парсер: %#012x..%#x" % (spn[0], spn[1]))
         ret &= check_patterns(p.read(spn[0], spn[1] - spn[0]), spn[0],
                               SPAWNABLE_FLAGS, "флаги spawnable")
+
+    # ── 10. mapgroupproto: маски групп/контейнеров ──────────────────────────
+    print("\n[10] mapgroupproto (маски групп):")
+    grp = fn_by_anchor(p, b"keepInvalidPoints")  # якорь загрузчика прототипов
+    if not grp:
+        fail("загрузчик прототипов групп по якорю не найден")
+        ret = False
+    else:
+        print("  загрузчик: %#012x..%#x" % (grp[0], grp[1]))
+        # маски пишутся в парсере группы; паттерны сверяем в смежном окне
+        blob = p.read(grp[0], 0x4000)
+        good = True
+        for label, pats in GROUP_MASKS.items():
+            if any(pat in blob for pat in pats):
+                ok(label)
+            else:
+                # парсер группы (0x1406bafc0) — отдельная функция; ищем в ней
+                g2 = None
+                for va in p.riprefs(grp[0]):
+                    f = p.func_at(va)
+                    if f:
+                        b2 = p.read(f[0], f[1] - f[0])
+                        if b2 and any(pat in b2 for pat in pats):
+                            g2 = f
+                            break
+                if g2:
+                    ok("%s (в парсере группы %#x)" % (label, g2[0]))
+                else:
+                    fail("%s не найдено" % label)
+                    good = False
+        if not good:
+            print("  (!) маски групп: раскладка изменилась — обновить карту")
 
     print("\nитог:", "все проверки сошлись" if ret else "ЕСТЬ РАСХОЖДЕНИЯ — обновить карту")
     return 0 if ret else 1
