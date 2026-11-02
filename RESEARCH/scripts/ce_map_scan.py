@@ -75,6 +75,15 @@ UPDATE_GATES = {
     "состояние and 0xf0000":       [H("2500000F003D00000100")],
 }
 
+# Парсер cfgspawnabletypes: флаги дескриптора класса [desc+0x24] —
+# bts 0xb «есть конфиг», or 2 unique, or 4 hoarder (живой замер).
+SPAWNABLE_FLAGS = {
+    "сброс flags [desc+0x24]":      [H("C7462400000000")],
+    "bts 0xb; mov [desc+0x24]":     [H("0FBAE80B894624")],
+    "бит unique (or eax,2)":        [H("83C802")],
+    "бит hoarder (or eax,4)":       [H("83C804")],
+}
+
 # Парсер <event> (events.xml): запись полей в Event* (rdi) — раскладка
 # записи: flags +0x8, nominal +0x14, min +0x18, max +0x1c, lifetime +0x20,
 # restock +0x24, saferadius +0x2c (+копия в +0x38), distanceradius +0x30,
@@ -341,6 +350,18 @@ def main(argv):
         if not found_holder:
             fail("цепочка геттер CE → [CE+0x10] у парсера лимитов не найдена")
             ret = False
+
+    # ── 9. cfgspawnabletypes: флаги дескриптора класса ──────────────────────
+    print("\n[9] cfgspawnabletypes (флаги +0x24):")
+    spn = fn_by_anchor(p, b"[CE][offlineDB] :: Failed to read cfgspawnabletypes"
+                          b" file '%s'.")
+    if not spn:
+        fail("парсер cfgspawnabletypes по якорю не найден")
+        ret = False
+    else:
+        print("  парсер: %#012x..%#x" % (spn[0], spn[1]))
+        ret &= check_patterns(p.read(spn[0], spn[1] - spn[0]), spn[0],
+                              SPAWNABLE_FLAGS, "флаги spawnable")
 
     print("\nитог:", "все проверки сошлись" if ret else "ЕСТЬ РАСХОЖДЕНИЯ — обновить карту")
     return 0 if ret else 1
