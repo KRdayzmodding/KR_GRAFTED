@@ -279,25 +279,20 @@ inline std::expected<proto_result, miss> call_proto(const script::method& fn, vo
         std::memcpy(ret_var.raw, &storage, sizeof storage);
     }
 
-    // Блок аргументов — не массив, а СТРУКТУРА С ДВУМЯ МАССИВАМИ: по +0 движок берёт
-    // указатели на значения, по +8 — на сами переменные. Ванильные имплы пользуются то
+    // Блок аргументов — два массива (script::arg_block). Ванильные имплы пользуются то
     // одним, то другим (`typename.Spawn` — только +0, `EnScript.GetClassVar` — обоими
     // через sub_1403672C0), и подать один голый массив значит уронить второй вид.
     // Значение живёт в самой переменной по +0, поэтому оба массива у нас — один и тот же.
-    struct arg_block {
-        void** values;
-        void** vars;
-    };
-    arg_block block_desc{block, block};
+    script::arg_block block_desc{block, block};
     void* ret_ptr = ret_var.raw;
     // Дескриптор — последнее слово: у статического метода объекта нет по определению,
     // сколько бы вызывающая сторона ни передала.
     if (self && (fn.flags & layout::flag_static) == 0) {
-        reinterpret_cast<std::int64_t(__fastcall*)(void*, arg_block*, void**)>(fn.impl)(
+        reinterpret_cast<std::int64_t(__fastcall*)(void*, script::arg_block*, void**)>(fn.impl)(
             self, &block_desc, &ret_ptr);
     } else {
-        reinterpret_cast<std::int64_t(__fastcall*)(arg_block*, void**)>(fn.impl)(&block_desc,
-                                                                                &ret_ptr);
+        reinterpret_cast<std::int64_t(__fastcall*)(script::arg_block*, void**)>(fn.impl)(&block_desc,
+                                                                                         &ret_ptr);
     }
 
     proto_result out;

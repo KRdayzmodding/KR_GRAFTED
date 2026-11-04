@@ -197,7 +197,46 @@ struct Any : graft::script_object<"SeraphGraft"> {
     graft::param<"vector"> Scale(graft::value v, graft::value k) const {
         return v.as<vector>() * k.as<f32>();
     }
+
+    // out у значения обычной ссылкой: маршалируемый путь выбирается сам, без graft::value.
+    void Split(f32 total, f32& left, f32& right) const {
+        left  = total * 0.25f;
+        right = total * 0.75f;
+    }
 };
+
+// ── Наследование новых классов ───────────────────────────────────────────────
+// new_class: класс объявляется целиком, база — тип C++. У наследника свои поля поверх
+// полей базы, а экземпляр на объект один — каким бы методом объект ни пришёл впервые, в
+// том числе у скриптового наследника, которого C++ не знает.
+struct Shape : graft::new_class<"SeraphShape"> {
+    i32 sides = 0;
+
+    i32 Sides() const { return sides; }
+
+    void SetSides(i32 n) { sides = n; }
+};
+
+struct Square : graft::new_class<"SeraphSquare", Shape> {
+    f32 side = 0;
+
+    void SetSide(f32 s) {
+        side  = s;
+        sides = 4;
+    }
+
+    f32 Area() const { return side * side; }
+};
+
+// Объект класса с полями аргументом — тот же экземпляр, что видят его методы. И в
+// `proto native`, и в маршалируемом `proto`.
+i32 SeraphGraftSidesOf(const Shape& shape) {
+    return shape.sides;
+}
+
+i32 SeraphGraftSidesPlus(const Shape& shape, graft::value extra) {
+    return shape.sides + extra.as<i32>();
+}
 
 // ── Свободные функции: матрица типов ─────────────────────────────────────────
 
@@ -1315,7 +1354,12 @@ GRAFT_BINDINGS("1_Core") {
         .method<&Any::Describe>("Describe")
         .method<&Any::Measure>("Measure")
         .method<&Any::ChainOf>("ChainOf")
-        .method<&Any::Scale>("Scale");
+        .method<&Any::Scale>("Scale")
+        .method<&Any::Split>();
+
+    bind.class_<Shape>().method<&Shape::Sides>().method<&Shape::SetSides>();
+    bind.class_<Square>().method<&Square::SetSide>().method<&Square::Area>();
+    bind.global<&SeraphGraftSidesOf>().global<&SeraphGraftSidesPlus>();
 
     bind.class_<Graft>()
         .static_method<&Graft::Magic>("Magic")

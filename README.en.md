@@ -139,11 +139,13 @@ against different ones, so ABI bumps are announced in [CHANGELOG.md](CHANGELOG.m
 
 Start from [examples/hello](examples/hello/).
 
-Bindings can carry argument names and a one-line description
-(`bind.global<&F>("F", "slot, zone", "What it does.")` — both land in the generated
-declarations), take `graft::value` for "any type" next to ordinary types, and introduce a
-brand-new script class with `bind.class_<T>("Name", graft::fresh)`. See
-[examples/minimal](examples/minimal/).
+The script name of a binding is the C++ function's own name. Bindings can carry argument
+names and a description (`bind.global<&F>({.args = "slot, zone", .doc = "What it
+does."})` — both land in the generated declarations), take `graft::value` for "any type"
+next to ordinary types, and return values through `f32&` / `int&` out arguments. A
+brand-new script class derives from `graft::new_class<"Name">`; its base is a C++ type,
+`graft::new_class<"Child", Base>`, with real inheritance: the child adds its own fields and
+one script object has one C++ instance. See [examples/minimal](examples/minimal/).
 
 Beyond natives, a plugin can reach engine code itself — still without a single hardcoded
 address. Find a function by a string it uses (`scan::function_referencing`), by RTTI

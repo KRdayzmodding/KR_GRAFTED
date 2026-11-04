@@ -95,6 +95,23 @@ patched* copy_of(void** vt) {
     return &made;
 }
 
+// Таблица объекта — чтением под __try, а не после VirtualQuery: тот — системный вызов на
+// каждом новом объекте. У настоящего объекта чтение не падает; падает у ненастоящего, с
+// каким трамплины зовут оффлайновые тесты. Чтение — отдельной функцией: таблица областей
+// x64-SEH описывает диапазоны адресов (guard.hpp).
+__declspec(noinline) void** read_vtable(void* self) {
+    return *static_cast<void** volatile*>(self);
+}
+
+void** vtable_of(void* self) {
+    __try {
+        return read_vtable(self);
+    } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER
+                                                                 : EXCEPTION_CONTINUE_SEARCH) {
+        return nullptr;
+    }
+}
+
 }  // namespace
 
 // ponytail: без синхронизации — объекты рождаются и умирают на скриптовом потоке, там же
@@ -107,13 +124,12 @@ void watch_object(void* self, void (*forget)(void*)) {
     if (std::find(all.begin(), all.end(), forget) == all.end()) {
         all.push_back(forget);
     }
-    // Указатель на таблицу приходит из чужой памяти — прежде чем читать по нему, надо
-    // убедиться, что это вообще указатель. Это же отсекает вызовы трамплинов с
-    // ненастоящим объектом (так их зовут оффлайновые тесты).
-    if (!detail::plausible(self) || !detail::readable(self, sizeof(void*))) {
+    // Указатель на таблицу приходит из чужой памяти: и объект, и таблица обязаны хотя бы
+    // выглядеть указателями. Это же отсекает вызовы трамплинов с ненастоящим объектом.
+    if (!detail::plausible(self)) {
         return;
     }
-    auto** vt = *reinterpret_cast<void***>(self);
+    auto** vt = vtable_of(self);
     if (!detail::plausible(vt)) {
         return;
     }

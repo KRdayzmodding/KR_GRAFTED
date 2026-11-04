@@ -324,7 +324,8 @@ powershell -File deploy.ps1 -Game "C:\DayZServer"
 ### Функции и типы
 
 Функции регистрируются в `GRAFT_BINDINGS("3_Game")`, где `3_Game` — модуль, в который
-попадут сгенерированные объявления. Имена параметров и описание необязательны:
+попадут сгенерированные объявления. Имя в скрипте берётся из имени функции C++; имена
+параметров и описание необязательны — из C++ их не достать, поэтому они строкой:
 
 ```cpp
 GRAFT_PLUGIN("MYMOD", 1);
@@ -332,10 +333,13 @@ GRAFT_PLUGIN("MYMOD", 1);
 bool Resettle(int slot, std::string_view zone, graft::obj player);
 
 GRAFT_BINDINGS("3_Game") {
-    bind.global<&IsValidNick>("IsValidNick");
-    bind.global<&Resettle>("Resettle", "slot, zone, player", "Переселить игрока в зону.");
+    bind.global<&IsValidNick>();
+    bind.global<&Resettle>({.args = "slot, zone, player", .doc = "Переселить игрока в зону."});
 }
 ```
+
+Другое имя в скрипте — `{.name = "..."}`; прежняя запись
+`bind.global<&F>("Имя", "args", "doc")` тоже работает.
 
 Результат для `Resettle`:
 
@@ -354,7 +358,7 @@ proto native bool Resettle(int slot, string zone, Class player);
 | `std::vector<T>` | `array<T>` (аргумент, копия) |
 | `graft::array<T>` | `array<T>` (массив движка, без копирования) |
 | `std::array<float, 3>`, `graft::vector` | `vector` |
-| `T&` | `out T` |
+| `T&` | `out T` (у `int`, `float`, `bool`, `vector` натив становится `proto`) |
 | `graft::obj` | `Class` (любой объект) |
 | `graft::ref<"Имя">` | объект скриптового класса `Имя` |
 | `graft::value` | значение любого типа |
@@ -371,15 +375,44 @@ struct ExampleGraft : graft::script_object<"ExampleGraft"> {
 };
 
 GRAFT_BINDINGS("1_Core") {
-    bind.class_<ExampleGraft>().method<&ExampleGraft::Version>("Version");
+    bind.class_<ExampleGraft>().method<&ExampleGraft::Version>();
 }
 ```
 
 Сам `class ExampleGraft {}` объявляется в скриптах мода (модуль `1_Core`), а сборка
-допишет методы через `modded class`. С флагом `graft::fresh` класс генерируется целиком.
+допишет методы через `modded class`. Поля класса C++ живут столько же, сколько скриптовый
+объект: на каждый объект — свой экземпляр. Наследник `graft::script_object` видит и сам
+скриптовый объект — его поля и методы (`field()`, `call()`).
 
-Наследуйте от `graft::script_object`, если методам нужен доступ к скриптовому объекту;
-иначе на каждый объект создаётся отдельный экземпляр C++.
+Новый класс, которого нет ни в движке, ни в скриптах, наследует `graft::new_class` и
+генерируется целиком. База задаётся типом C++:
+
+```cpp
+struct Animal : graft::new_class<"MyAnimal"> {
+    int legs   = 4;
+    int weight = 0;
+    int  Legs() const { return legs; }
+    void Feed(int grams) { weight += grams; }
+};
+
+struct Dog : graft::new_class<"MyDog", Animal> {   // class MyDog : MyAnimal
+    int barks = 0;
+    int Bark() { return ++barks; }
+};
+
+int LegsOf(const Animal& animal);   // объект аргументом: proto native int LegsOf(MyAnimal p0)
+
+GRAFT_BINDINGS("3_Game") {
+    bind.class_<Animal>().method<&Animal::Legs>().method<&Animal::Feed>({.args = "grams"});
+    bind.class_<Dog>().method<&Dog::Bark>();
+    bind.global<&LegsOf>();
+}
+```
+
+Наследование настоящее: у `Dog` свои поля поверх полей `Animal`, а экземпляр на объект
+один. `Feed()`, позванный на объекте `MyDog` или его скриптового наследника, кормит тот
+же `Dog`. Базой может быть и движковый класс: `graft::new_class<"MyThing",
+graft::ref<"Managed">>`.
 
 Шаблонные классы регистрируются через `bind.template_class`, и одна реализация работает
 для всех параметров. Пример — `CppHashMap<K, V>` на основе `std::unordered_map` в

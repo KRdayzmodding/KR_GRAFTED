@@ -399,10 +399,117 @@ TEST(ObjectFields, SurviveBetweenNativeCalls) {
     graft::detail::forget_instance<Counter>(&b);
 }
 
+// Объект класса с полями аргументом: натив получает экземпляр ТОГО объекта, а не копию.
+// В скрипте аргумент объявлен самим классом, в движок едет обычная ссылка.
+graft::i32 PeekOther(const Counter& other) {
+    return other.value;
+}
+
+using peek_other = graft::detail::free_thunk<&PeekOther>;
+static_assert(std::is_same_v<decltype(&peek_other::call), graft::i32(__fastcall*)(graft::ref<"TestBox">)>);
+
+TEST(ObjectFields, ObjectArgumentIsItsInstance) {
+    EXPECT_STREQ(peek_other::args[0], "TestBox");
+    int a = 0;
+    call_native<&Counter::Bump>(&a, 9);
+    EXPECT_EQ(peek_other::call(graft::ref<"TestBox">{&a}), 9);
+    graft::detail::forget_instance<Counter>(&a);
+}
+
+// NULL вместо объекта: натив не исполняется, возврат по умолчанию, экземпляр не заводится.
+TEST(ObjectFields, NullObjectArgumentIsRefused) {
+    const std::size_t before = graft::detail::instances<Counter>().size();
+    EXPECT_EQ(peek_other::call(graft::ref<"TestBox">{}), 0);
+    EXPECT_EQ(graft::detail::instances<Counter>().size(), before);
+}
+
 TEST(ObjectFields, WrapperWithoutFieldsNeedsNoTable) {
     int object = 0;
     EXPECT_EQ(call_native<&Plain::Tag>(&object), 7);
     EXPECT_TRUE(graft::detail::instances<Plain>().empty());
+}
+
+// ── Наследование: один экземпляр на объект ───────────────────────────────────
+// new_class<"Имя", База>: у наследника свои поля поверх полей базы. Метод базы, позванный
+// на объекте наследника, обязан видеть тот же экземпляр — каким бы методом объект ни
+// пришёл впервые.
+struct Animal : graft::new_class<"TestAnimal"> {
+    graft::i32 legs = 4;
+
+    graft::i32 Legs() const { return legs; }
+
+    void Lose() { --legs; }
+};
+
+struct Dog : graft::new_class<"TestDog", Animal> {
+    graft::i32 barks = 0;
+
+    graft::i32 Bark() { return ++barks * 10 + legs; }
+};
+
+struct Puppy : graft::new_class<"TestPuppy", Dog> {
+    std::string name = "щенок";
+
+    graft::i32 NameBytes() const { return static_cast<graft::i32>(name.size()); }
+};
+
+static_assert(std::is_same_v<graft::detail::root_of<Puppy>, Animal>);
+static_assert(graft::script_class<Dog>);
+static_assert(std::string_view{graft::enf_type<Dog>::name} == "TestDog");
+static_assert(std::string_view{graft::detail::header<Puppy>.value} == "TestPuppy : TestDog");
+static_assert(std::string_view{graft::detail::header<Animal>.value} == "TestAnimal");
+
+// Объект с дескриптором класса: имя класса — по +16 дескриптора.
+struct scripted {
+    std::vector<std::uint8_t> desc = std::vector<std::uint8_t>(64);
+    void*                     words[6]{};
+
+    explicit scripted(const char* class_name) {
+        std::memcpy(desc.data() + graft::layout::class_name, &class_name, sizeof class_name);
+        words[graft::layout::object_class / sizeof(void*)] = desc.data();
+    }
+
+    void* self() { return words; }
+};
+
+TEST(Inheritance, BaseMethodSeesTheDerivedInstance) {
+    graft::detail::know_kind<Dog>();
+    graft::detail::know_kind<Puppy>();
+    scripted dog{"TestDog"};
+
+    call_native<&Animal::Lose>(dog.self());             // впервые — методом базы
+    EXPECT_EQ(call_native<&Dog::Bark>(dog.self()), 13); // заведён Dog: поля базы те же
+    EXPECT_EQ(call_native<&Animal::Legs>(dog.self()), 3);
+    EXPECT_EQ(graft::live_instances<Animal>(), 1u);
+    EXPECT_EQ(graft::live_instances<Dog>(), 1u);
+    EXPECT_EQ(graft::live_instances<Puppy>(), 0u);
+
+    graft::detail::forget_instance<Animal>(dog.self());
+    EXPECT_EQ(call_native<&Animal::Legs>(dog.self()), 4); // умер — и поля всей цепочки
+    graft::detail::forget_instance<Animal>(dog.self());
+    EXPECT_EQ(graft::live_instances<Animal>(), 0u);
+}
+
+TEST(Inheritance, DeepestBoundClassIsChosen) {
+    graft::detail::know_kind<Dog>();
+    graft::detail::know_kind<Puppy>();
+    scripted puppy{"TestPuppy"};
+
+    EXPECT_EQ(call_native<&Dog::Bark>(puppy.self()), 14);
+    EXPECT_EQ(call_native<&Puppy::NameBytes>(puppy.self()), 10);
+    EXPECT_EQ(graft::live_instances<Puppy>(), 1u);
+    graft::detail::forget_instance<Puppy>(puppy.self());
+    EXPECT_EQ(graft::live_instances<Animal>(), 0u);
+}
+
+// Объект другой ветви: экземпляр Dog у объекта Animal не появится из ниоткуда — отказ, а не UB.
+TEST(Inheritance, ForeignBranchIsRefused) {
+    graft::detail::know_kind<Dog>();
+    scripted animal{"TestAnimal"};
+
+    EXPECT_EQ(call_native<&Animal::Legs>(animal.self()), 4);
+    EXPECT_EQ(call_native<&Dog::Bark>(animal.self()), 0); // исключение в журнал, ноль
+    graft::detail::forget_instance<Animal>(animal.self());
 }
 
 }  // namespace

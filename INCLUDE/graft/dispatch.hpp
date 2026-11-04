@@ -33,10 +33,6 @@ namespace graft::detail {
 
 // Типы, по которым разворачивается пользовательский шаблон, и их имена в скрипте.
 // «Class» — любой объект: конкретный класс подставлять незачем, ссылка одна и та же.
-template <class... T>
-struct type_list {
-    static constexpr std::size_t size = sizeof...(T);
-};
 using script_param_types = type_list<i32, f32, bool, std::string, vector, obj>;
 
 inline constexpr std::size_t kParamCount = script_param_types::size;
@@ -134,51 +130,6 @@ param_slots<N> slots_of(void* self) {
     return cached;
 }
 
-// Трамплин для одной инстанциации: аргументы приводятся к настоящим типам метода.
-template <class Inst, auto F>
-struct typed_thunk;
-
-template <class Inst, class Own, class R, class... A, R (Own::*F)(A...)>
-struct typed_thunk<Inst, F> {
-    static std::int64_t run(void* self, void** block, void* ret) {
-        [[maybe_unused]] arena_scope<R> alive;
-        return call(instance_of<Inst>(self), block, ret, std::index_sequence_for<A...>{});
-    }
-
-private:
-    template <std::size_t... I>
-    static std::int64_t call(Inst& object, void** block, void* ret, std::index_sequence<I...>) {
-        if constexpr (std::is_void_v<R>) {
-            (object.*F)(as_typed<std::remove_cvref_t<A>>(block ? block[I] : nullptr)...);
-        } else {
-            write_var(ret, value{(object.*F)(
-                              as_typed<std::remove_cvref_t<A>>(block ? block[I] : nullptr)...)});
-        }
-        return 0;
-    }
-};
-
-template <class Inst, class Own, class R, class... A, R (Own::*F)(A...) const>
-struct typed_thunk<Inst, F> {
-    static std::int64_t run(void* self, void** block, void* ret) {
-        [[maybe_unused]] arena_scope<R> alive;
-        return call(instance_of<Inst>(self), block, ret, std::index_sequence_for<A...>{});
-    }
-
-private:
-    template <std::size_t... I>
-    static std::int64_t call(const Inst& object, void** block, void* ret,
-                             std::index_sequence<I...>) {
-        if constexpr (std::is_void_v<R>) {
-            (object.*F)(as_typed<std::remove_cvref_t<A>>(block ? block[I] : nullptr)...);
-        } else {
-            write_var(ret, value{(object.*F)(
-                              as_typed<std::remove_cvref_t<A>>(block ? block[I] : nullptr)...)});
-        }
-        return 0;
-    }
-};
-
 // Имена для объявления. Метод шаблонного класса пишется обычными типами, поэтому какой
 // аргумент — параметр шаблона, а какой обычный тип, выясняем сравнением ДВУХ пробных
 // инстанциаций: C<int,float> и C<float,int>. Аргумент, который поменялся вместе с
@@ -241,40 +192,29 @@ struct template_sig<RA (OA::*)(AA...) const, RB (OB::*)(AB...) const>
 template <template <class...> class C, class Pick, class KL, class VL>
 struct dispatch2;
 
+// Трамплин инстанциации — тот же маршалируемый метод, что и у обычного класса: аргументы
+// приводятся к настоящим типам метода, арену заводит он же (тип возврата у каждой
+// инстанциации свой, и отсюда его не видно).
 template <template <class...> class C, class Pick, class... K, class... V>
 struct dispatch2<C, Pick, type_list<K...>, type_list<V...>> {
-    using slot = std::int64_t (*)(void*, void**, void*);
+    using slot = std::int64_t (*)(void*, script::arg_block*, void**);
 
     template <class Kt>
     static constexpr auto row() {
-        return std::array<slot, sizeof...(V)>{
-            &typed_thunk<C<Kt, V>, Pick{}.template operator()<C<Kt, V>>()>::run...};
+        return std::array<slot, sizeof...(V)> {
+            &marshal_thunk<C<Kt, V>, Pick{}.template operator()<C<Kt, V>>()>::body...
+        };
     }
     static constexpr auto table = std::array<std::array<slot, sizeof...(V)>, sizeof...(K)>{
         row<K>()...};
 
-    // Арену заводит уже сам трамплин инстанциации: тип возврата у каждой свой, и
-    // отсюда его не видно.
-    static std::int64_t __fastcall call(void* self, void*** args, void** ret) {
-        const auto slots = slots_of<2>(self);
-        return table[slots.at[0]][slots.at[1]](self, args ? *args : nullptr,
-                                               ret ? *ret : nullptr);
+    static std::int64_t __fastcall call(void* self, script::arg_block* args, void** ret) {
+        return guarded<std::int64_t>(reinterpret_cast<void*>(&call), [&] {
+            const auto slots = slots_of<2>(self);
+            return table[slots.at[0]][slots.at[1]](self, args, ret);
+        });
     }
 };
-
-// Нужен ли этой свободной функции маршалируемый путь.
-template <auto F>
-inline constexpr bool marshalled_free = false;
-template <class R, class... A, R (*F)(A...)>
-inline constexpr bool marshalled_free<F> = needs_marshal<R, A...>;
-
-// Нужен ли этому указателю на член маршалируемый путь.
-template <auto F>
-inline constexpr bool marshalled_member = false;
-template <class Own, class R, class... A, R (Own::*F)(A...)>
-inline constexpr bool marshalled_member<F> = needs_marshal<R, A...>;
-template <class Own, class R, class... A, R (Own::*F)(A...) const>
-inline constexpr bool marshalled_member<F> = needs_marshal<R, A...>;
 
 // Трамплин метода, у которого класс выводится из самого указателя на член.
 template <auto Mfn>

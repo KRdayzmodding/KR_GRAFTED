@@ -12,6 +12,7 @@
 #endif
 #include <windows.h>
 
+#include <bit>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -931,3 +932,159 @@ TEST(Role, ModNamedServerDoesNotMakeAClientAServer) {
 }
 
 }  // namespace
+
+// ── Маршалируемый аргумент: значение и переменная — разные адреса ───────────
+// Блок аргументов — два массива: значения (+0) и переменные (+8). У поля объекта значение
+// лежит в 4-байтном слоте поля, а тег и флаги — у переменной, описывающей поле; рядом со
+// слотом — соседние поля, а не тег (снято зондом на 1.30). Трамплин обязан брать тег из
+// переменной, а писать в слот ровно столько, сколько он занимает.
+namespace {
+
+// Переменная, как её видит движок: значение +0, тег +16, флаги +20.
+struct fake_var {
+    std::uint64_t value  = 0;
+    std::uint64_t engine = 0;
+    std::uint32_t tag    = 0;
+    std::uint32_t flags  = 0;
+    std::uint64_t tail[2]{};
+};
+
+// Поля объекта: слоты по 4 байта подряд (база + 4 * слот), тега рядом нет.
+struct fake_fields {
+    std::uint32_t cells[8]{};
+};
+
+std::uint32_t bits(float f) {
+    return std::bit_cast<std::uint32_t>(f);
+}
+
+std::string g_seen;
+
+void ShowAny(graft::value v) {
+    g_seen = v.to_string();
+}
+
+void Note(std::string_view text, graft::value extra) {
+    g_seen = std::string{text} + "|" + extra.to_string();
+}
+
+void FillTwo(graft::f32& a, graft::f32& b) {
+    a = 1.5f;
+    b = 2.5f;
+}
+
+void FillText(graft::value& v) {
+    v = std::string{"чужая строка"};
+}
+
+template <auto F>
+void run(std::initializer_list<void*> values, std::initializer_list<void*> vars) {
+    std::vector<void*>       v{values}, w{vars};
+    graft::script::arg_block block{v.data(), w.data()};
+    graft::detail::marshal_free_thunk<F>::call(&block, nullptr);
+}
+
+// out у значения сам переключает натив на `proto` и объявляется как `out float`.
+static_assert(graft::detail::marshalled_free<&FillTwo>);
+
+graft::i32 Twice(graft::i32 x) {
+    return x * 2;
+}
+
+static_assert(!graft::detail::marshalled_free<&Twice>);
+
+TEST(MarshalField, ValueOutDeclaresOut) {
+    EXPECT_STREQ(graft::detail::marshal_free_thunk<&FillTwo>::args[0], "out float");
+    EXPECT_STREQ(graft::detail::marshal_free_thunk<&Note>::args[0], "string");
+}
+
+TEST(MarshalField, VoidFieldIsReadByItsVariable) {
+    fake_fields obj;
+    obj.cells[3] = bits(0.5f);
+    obj.cells[4] = 0xe0a9da8e; // сосед — не тег
+    fake_var described;
+    described.tag = graft::script::tag_float;
+    run<&ShowAny>({&obj.cells[3]}, {&described});
+    EXPECT_EQ(g_seen, "0.5");
+}
+
+TEST(MarshalField, TypedStringFieldIsReadByDeclaration) {
+    const char*   text = "поле";
+    std::uint64_t cell = 0;
+    std::memcpy(&cell, &text, sizeof text);
+    fake_var described_text;
+    described_text.tag = graft::script::tag_string;
+    fake_var local;
+    local.value = 7;
+    local.tag   = graft::script::tag_int;
+    run<&Note>({&cell, &local}, {&described_text, &local});
+    EXPECT_EQ(g_seen, "поле|7");
+}
+
+// Два float-поля подряд: восемь байт в каждое затирали соседа, а у последнего поля объекта
+// — уходили за его конец (0xC0000374 на 1.30).
+TEST(MarshalField, OutIntoAdjacentFieldsWritesFourBytesEach) {
+    fake_fields obj;
+    obj.cells[2] = 0x5EB15EB1; // страж за вторым полем
+    fake_var a, b;
+    a.tag = b.tag = graft::script::tag_float;
+    a.flags = b.flags = 0x80;
+    run<&FillTwo>({&obj.cells[0], &obj.cells[1]}, {&a, &b});
+    EXPECT_EQ(obj.cells[0], bits(1.5f));
+    EXPECT_EQ(obj.cells[1], bits(2.5f));
+    EXPECT_EQ(obj.cells[2], 0x5EB15EB1u);
+}
+
+TEST(MarshalField, NoWriteFlagIsRespected) {
+    fake_fields obj;
+    fake_var    a, b;
+    a.tag = b.tag = graft::script::tag_float;
+    a.flags       = 0x40;
+    run<&FillTwo>({&obj.cells[0], &obj.cells[1]}, {&a, &b});
+    EXPECT_EQ(obj.cells[0], 0u);
+    EXPECT_EQ(obj.cells[1], bits(2.5f));
+}
+
+// Переменной движок не дал — значение лежит в переменной само, как у локальной.
+TEST(MarshalField, MissingVariableFallsBackToTheValue) {
+    fake_var local;
+    local.value = 42;
+    local.tag   = graft::script::tag_int;
+    run<&ShowAny>({&local}, {nullptr});
+    EXPECT_EQ(g_seen, "42");
+}
+
+TEST(MarshalField, StringIsNotWrittenThroughOut) {
+    fake_var local;
+    local.tag   = graft::script::tag_string;
+    local.flags = 0x80;
+    run<&FillText>({&local}, {&local});
+    EXPECT_EQ(local.value, 0u);
+}
+
+// ── Смерть объекта ───────────────────────────────────────────────────────────
+struct mortal {
+    virtual ~mortal() = default;
+};
+
+void* g_forgotten = nullptr;
+
+// Нулевой слот таблицы подменён: delete доходит до забывальщика, потом до деструктора.
+TEST(ObjectDeath, DestructorReportsTheObject) {
+    auto* m = new mortal;
+    graft::script::watch_object(m, [](void* self) { g_forgotten = self; });
+    void* const was = m;
+    delete m;
+    EXPECT_EQ(g_forgotten, was);
+}
+
+// Адрес похож на указатель, но страница не отображена: таблицу не прочесть, и это не
+// падение, а отказ — так трамплины зовут с ненастоящим объектом.
+TEST(ObjectDeath, UnreadableObjectIsSkipped) {
+    void* const page = VirtualAlloc(nullptr, 4096, MEM_RESERVE, PAGE_NOACCESS);
+    ASSERT_NE(page, nullptr);
+    graft::script::watch_object(page, [](void*) {});
+    VirtualFree(page, 0, MEM_RELEASE);
+}
+
+} // namespace

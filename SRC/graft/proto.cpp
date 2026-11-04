@@ -188,20 +188,59 @@ std::string proto_file(const std::vector<const graft_native_desc*>& source, cons
             classes.push_back(n->class_name);
         }
     }
-    for (const char* c : classes) {
-        // Заголовок: если он задан явно (`declare_as`), класс НАШ — и объявляется
-        // целиком, `class Имя`. Так печатаются и шаблонные классы (заголовок несёт
-        // параметры: `class Имя<Class K, Class V>`), и обычные новые. Если не задан —
-        // класс движковый, и мы к нему только дописываем: `modded class Имя`.
-        const char* header = c;
-        bool        ours   = false;
+    // Заголовок: если он задан явно (`declare_as`), класс НАШ — и объявляется целиком,
+    // `class Имя`. Так печатаются и шаблонные классы (заголовок несёт параметры:
+    // `class Имя<Class K, Class V>`), и новые с базой (`class Имя : База`). Если не задан —
+    // класс движковый, и мы к нему только дописываем: `modded class Имя`.
+    const auto header_of = [&](const char* c) -> const char* {
         for (const graft_native_desc* n : all) {
             if (n->class_name && std::strcmp(n->class_name, c) == 0 && n->declare_as) {
-                header = n->declare_as;
-                ours   = true;
-                break;
+                return n->declare_as;
             }
         }
+        return nullptr;
+    };
+    // База из этого же файла печатается раньше наследника, в каком бы порядке их ни
+    // привязали. Заголовок приходит из чужой DLL плагина, поэтому и цикл баз («A : B»,
+    // «B : A») обязан кончиться, а не уронить генератор: такой файл отвергнет уже
+    // компилятор скрипта, со своей понятной ошибкой.
+    const auto base_of = [&](const char* c) -> std::string_view {
+        const char* header = header_of(c);
+        const char* colon  = header ? std::strchr(header, ':') : nullptr;
+        if (!colon) {
+            return {};
+        }
+        std::string_view base{colon + 1};
+        base.remove_prefix(std::min(base.find_first_not_of(' '), base.size()));
+        return base.substr(0, base.find_first_of(" <"));
+    };
+    const auto among = [](const std::vector<const char*>& list, const char* c) {
+        return std::ranges::any_of(list, [&](const char* o) { return std::strcmp(o, c) == 0; });
+    };
+    std::vector<const char*> ordered;
+    std::vector<const char*> placing;
+    const auto               place = [&](this const auto& self, const char* c) -> void {
+        if (among(ordered, c) || among(placing, c)) {
+            return;
+        }
+        placing.push_back(c);
+        const std::string_view base = base_of(c);
+        for (const char* b : classes) {
+            if (!base.empty() && base == b) {
+                self(b);
+            }
+        }
+        placing.pop_back();
+        ordered.push_back(c);
+    };
+    for (const char* c : classes) {
+        place(c);
+    }
+
+    for (const char* c : ordered) {
+        const char* declared = header_of(c);
+        const bool  ours     = declared != nullptr;
+        const char* header   = ours ? declared : c;
         out += ours ? "\nclass " : "\nmodded class ";
         out += header;
         out += "\n{\n";
