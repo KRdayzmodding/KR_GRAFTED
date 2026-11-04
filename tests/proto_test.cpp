@@ -73,7 +73,22 @@ bool DemoWrapped(graft::i32 slot) {
     return slot >= 0;
 }
 
+// Новые классы с базой: одна C++-структура на обе привязки, нативы наследника — свободные
+// функции от неё. Наследник привязан ПЕРВЫМ: генератор обязан всё равно напечатать базу
+// раньше.
+struct DemoAnimal : graft::script_object<"DemoAnimal"> {
+    graft::i32 legs = 4;
+
+    graft::i32 Legs() const { return legs; }
+};
+
+graft::i32 DemoBark(const DemoAnimal& self) {
+    return self.legs;
+}
+
 GRAFT_BINDINGS("1_Core") {
+    bind.class_<DemoAnimal>("DemoDog : DemoAnimal", graft::fresh).method<&DemoBark>("Bark");
+    bind.class_<DemoAnimal>("DemoAnimal", graft::fresh).method<&DemoAnimal::Legs>("Legs");
     bind.global<&DemoNamed>("DemoNamed", "slot, zone, player", "Переселить игрока в зону.");
     bind.class_<DemoDocs>().method<&DemoDocs::Move>("Move", "speed_cms", "Задать скорость в см/с.");
     bind.global<&DemoWrapped>("DemoWrapped", "slot", "Занять слот.\n\nВозврат — влез ли.");
@@ -184,6 +199,26 @@ TEST(Proto, FileGroupsMethodsIntoModdedClass) {
     EXPECT_NE(file.find("    proto native void Scale(float p0);"), std::string::npos);
 }
 
+// Имя класса с базой регистрируется без неё: по нему движок ищет импл натива.
+TEST(Proto, FreshClassRegistersNameWithoutBase) {
+    EXPECT_STREQ(find("Bark").class_name, "DemoDog");
+    EXPECT_STREQ(find("Legs").class_name, "DemoAnimal");
+}
+
+TEST(Proto, FreshClassDeclaresItsBase) {
+    const std::string file = graft::proto_file();
+    EXPECT_NE(file.find("\nclass DemoDog : DemoAnimal\n{\n    proto native int Bark();\n}"), std::string::npos)
+        << file;
+}
+
+TEST(Proto, BaseIsDeclaredBeforeChild) {
+    const std::string file  = graft::proto_file();
+    const std::size_t base  = file.find("\nclass DemoAnimal\n{");
+    const std::size_t child = file.find("\nclass DemoDog : DemoAnimal\n{");
+    ASSERT_NE(base, std::string::npos);
+    ASSERT_NE(child, std::string::npos);
+    EXPECT_LT(base, child);
+}
 
 // У класса с состоянием в объявлении — только его методы: ни служебного натива, ни
 // деструктора. Освобождение живёт целиком на стороне C++.

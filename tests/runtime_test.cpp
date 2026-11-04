@@ -931,3 +931,86 @@ TEST(Role, ModNamedServerDoesNotMakeAClientAServer) {
 }
 
 }  // namespace
+
+// ── Маршалируемый аргумент без тега ──────────────────────────────────────────
+// Поле объекта движок отдаёт указателем прямо на ячейку поля: за значением лежат соседние
+// поля, а не тег (снято зондом на 1.30, мусорный «тег» e0a9da8e). Тип из объявления обязан
+// читаться и писаться без тега, `void` без тега — не читаться вовсе.
+namespace {
+
+struct field_row {
+    std::uint64_t value      = 0;
+    std::uint64_t neighbour  = 0x1111111122222222;
+    std::uint32_t junk_tag   = 0xe0a9da8e;
+    std::uint32_t junk_flags = 0x80049100;
+    std::uint64_t tail[2]{};
+};
+
+TEST(MarshalField, TypedStringIsReadByDeclaration) {
+    field_row   row;
+    const char* text = "field";
+    std::memcpy(&row.value, &text, sizeof text);
+    EXPECT_EQ(graft::detail::as_typed<graft::str>(&row).view(), "field");
+    EXPECT_EQ(graft::detail::as_typed<std::string>(&row), "field");
+}
+
+TEST(MarshalField, DeclaredParamIsReadByDeclaration) {
+    field_row   row;
+    const float half = 0.5f;
+    std::memcpy(&row.value, &half, sizeof half);
+    EXPECT_EQ(graft::detail::as_typed<graft::param<"float">>(&row).as<graft::f32>(), 0.5f);
+}
+
+// out в поле объекта не пишется: два float-поля подряд обрушили кучу на живом сервере.
+TEST(MarshalField, OutIntoFieldIsRefused) {
+    struct {
+        float         value     = 1;
+        std::uint32_t neighbour = 12345;
+        std::uint32_t more[2]{};
+        std::uint32_t junk_tag = 0x0000d431;
+        std::uint32_t pad[5]{};
+    } row;
+
+    graft::detail::write_var(&row, graft::value{2.5f}, graft::detail::var_kind::out, graft::detail::declared_tag<graft::param<"float">>);
+    EXPECT_EQ(row.value, 1.0f);
+    EXPECT_EQ(row.neighbour, 12345u);
+}
+
+TEST(MarshalField, OutIntoVariableIsWritten) {
+    field_row row;
+    row.junk_tag = graft::script::tag_float;
+    graft::detail::write_var(&row, graft::value{2.5f}, graft::detail::var_kind::out, graft::detail::declared_tag<graft::param<"float">>);
+    float got = 0;
+    std::memcpy(&got, &row.value, sizeof got);
+    EXPECT_EQ(got, 2.5f);
+}
+
+// Переменная другого типа, чем в объявлении, — тоже не цель для out.
+TEST(MarshalField, OutIntoVariableOfOtherTypeIsRefused) {
+    field_row row;
+    row.junk_tag = graft::script::tag_int;
+    graft::detail::write_var(&row, graft::value{2.5f}, graft::detail::var_kind::out, graft::detail::declared_tag<graft::param<"float">>);
+    EXPECT_EQ(row.value, 0u);
+}
+
+TEST(MarshalField, VoidWithoutTagIsNotRead) {
+    field_row row;
+    row.value = 7;
+    EXPECT_TRUE(graft::detail::read_var(&row).empty());
+}
+
+TEST(MarshalField, VoidOutWithoutTagIsNotWritten) {
+    field_row row;
+    graft::detail::write_var(&row, graft::value{graft::i32{9}}, graft::detail::var_kind::out);
+    EXPECT_EQ(row.value, 0u);
+    EXPECT_EQ(row.neighbour, 0x1111111122222222u);
+}
+
+TEST(MarshalField, RealVariableStillReadsByItsTag) {
+    field_row row;
+    row.value    = 42;
+    row.junk_tag = graft::script::tag_int;
+    EXPECT_EQ(graft::detail::read_var(&row).as<graft::i32>(), 42);
+}
+
+} // namespace

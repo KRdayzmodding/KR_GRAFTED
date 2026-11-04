@@ -4,6 +4,7 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "graft/guard.hpp"
@@ -20,15 +21,66 @@ namespace graft::detail {
 // устроены ванильные array<T>.Insert / map<K,V>.Get; так же теперь и свои шаблоны.
 // Проверено на живом сервере: <string,int> дал теги 0x50000003 / 0x20000000,
 // <int,string> — 0x20000000 / 0x50000003.
-inline value read_var(const void* var) {
+//
+// Тег есть не у всякого аргумента. ПОЛЕ объекта движок отдаёт указателем прямо на ячейку
+// поля: значение там на месте, а за ним вместо тега — соседние поля (снято зондом на 1.30:
+// у строкового поля «тег» e0a9da8e, у int-поля — кусок указателя; out во float-поле по
+// такому «тегу» обрушил кучу). Поэтому тип, известный из объявления, читается и пишется ПО
+// ОБЪЯВЛЕНИЮ, а тег переменной спрашивается только у `void` — и проверяется на правдоподобие.
+
+// Тег встроенного типа по его имени в объявлении; 0 — тип не встроенный (шаблонный K, класс).
+constexpr std::uint32_t builtin_tag(std::string_view name) {
+    if (name == "bool") {
+        return script::tag_bool;
+    }
+    if (name == "int") {
+        return script::tag_int;
+    }
+    if (name == "float") {
+        return script::tag_float;
+    }
+    if (name == "vector") {
+        return script::tag_vector;
+    }
+    if (name == "string") {
+        return script::type_string;
+    }
+    if (name == "typename") {
+        return script::type_typename;
+    }
+    return 0;
+}
+
+// Тег, под которым аргумент объявлен: param<"float"> — float, голый value — 0 («любой»).
+template <class T>
+inline constexpr std::uint32_t declared_tag = 0;
+template <name_t N>
+inline constexpr std::uint32_t declared_tag<param<N>> = builtin_tag(N.value);
+
+// Тег настоящей переменной: известное семейство и небольшой индекс типа в таблице
+// контекста. Соседние поля объекта сюда почти никогда не проходят.
+inline bool plausible_tag(std::uint32_t tag) {
+    switch (tag & script::type_family) {
+        case script::type_int:
+        case script::type_float:
+        case script::type_vector:
+        case script::type_string:
+        case script::type_class:
+        case script::type_typename:
+            return (tag & 0x0FFF0000u) == 0;
+        default:
+            return false;
+    }
+}
+
+// Значение переменной, тип которой уже известен.
+inline value read_as(const void* var, std::uint32_t tag) {
     if (!var) {
         return {};
     }
-    const auto* at = static_cast<const char*>(var);
-    const auto tag = *reinterpret_cast<const std::uint32_t*>(at + 16);
-    const auto raw = *reinterpret_cast<const std::uint64_t*>(at);
+    const auto raw = *reinterpret_cast<const std::uint64_t*>(var);
     if (tag == script::type_bool) {
-        return value{raw != 0};
+        return value{(raw & 0xFF) != 0}; // младший байт: у поля за ним уже сосед
     }
     switch (tag & script::type_family) {
         case script::type_int:
@@ -54,57 +106,59 @@ inline value read_var(const void* var) {
     }
 }
 
+// Значение переменной по её собственному тегу — для `void`, где объявление типа не знает.
+inline value read_var(const void* var) {
+    if (!var) {
+        return {};
+    }
+    const auto tag = *reinterpret_cast<const std::uint32_t*>(static_cast<const char*>(var) + 16);
+    if (!plausible_tag(tag)) {
+        log("graft: у аргумента `void` нет тега — похоже, это поле объекта; передай его копией "
+            "в локальной переменной");
+        return {};
+    }
+    return read_as(var, tag);
+}
+
 // Значение скриптовой переменной как КОНКРЕТНЫЙ тип C++ (а не value). Путь через value
 // стоил бы на каждый аргумент сборки и разрушения варианта (внутри него std::string, то
 // есть нетривиальный деструктор), а для строки — ещё и лишней копии: одна в вариант,
-// вторая из него. Решения по тегу здесь ровно те же, что и в read_var.
+// вторая из него. Тип известен из объявления, поэтому тег переменной не нужен.
 template <class T>
 T as_typed(const void* var) {
     // Наследник value (param<"K"> и прочие имена для объявления) — это тот же value:
-    // разбирать его надо по тегу переменной, а не искать в варианте тип, которого там
-    // нет. Без этого param<> в сигнатуре не собирался вовсе.
+    // встроенный тип читается по объявлению, остальное — по тегу переменной. Без этой
+    // ветки param<> в сигнатуре не собирался вовсе.
     if constexpr (std::is_base_of_v<value, T>) {
-        return read_var(var);
+        constexpr std::uint32_t tag = declared_tag<T>;
+        return tag ? T{read_as(var, tag)} : T{read_var(var)};
     } else {
         if (!var) {
             return T{};
         }
-        const auto* at     = static_cast<const char*>(var);
-        const auto  tag    = *reinterpret_cast<const std::uint32_t*>(at + 16);
-        const auto  raw    = *reinterpret_cast<const std::uint64_t*>(at);
-        const auto  family = tag & script::type_family;
+        const auto raw = *reinterpret_cast<const std::uint64_t*>(var);
         if constexpr (std::is_same_v<T, bool>) {
-            return tag == script::type_bool && raw != 0;
+            return (raw & 0xFF) != 0;
         } else if constexpr (std::is_same_v<T, i32>) {
-            return family == script::type_int && tag != script::type_bool
-                       ? static_cast<i32>(static_cast<std::uint32_t>(raw))
-                       : i32{};
+            return static_cast<i32>(static_cast<std::uint32_t>(raw));
         } else if constexpr (std::is_same_v<T, f32>) {
-            if (family != script::type_float) {
-                return f32{};
-            }
             return std::bit_cast<f32>(static_cast<std::uint32_t>(raw));
         } else if constexpr (std::is_same_v<T, str>) {
             // Строка движка как есть: указатель живёт до конца вызова, копии нет.
             // Без этой ветки graft::str в маршалируемой сигнатуре не собирался —
             // разбор уходил в value::as<str>(), а в варианте лежит std::string.
-            return family == script::type_string ? str{reinterpret_cast<const char*>(raw)} : str{};
+            return str{reinterpret_cast<const char*>(raw)};
         } else if constexpr (std::is_same_v<T, std::string>) {
-            if (family != script::type_string) {
-                return read_var(var).to_string(); // не строка — приводим к тексту
-            }
             const auto* text = reinterpret_cast<const char*>(raw);
             return text ? std::string{text} : std::string{};
         } else if constexpr (std::is_same_v<T, vector>) {
             // vector в 8 байт не влезает — в переменной указатель на сами 12 байт.
             const auto* p = reinterpret_cast<const vector*>(raw);
-            return family == script::type_vector && p ? *p : vector{};
+            return p ? *p : vector{};
         } else if constexpr (std::is_same_v<T, obj>) {
-            return family == script::type_class
-                       ? obj{script::deref_object(reinterpret_cast<void*>(raw))}
-                       : obj{};
+            return obj{script::deref_object(reinterpret_cast<void*>(raw))};
         } else if constexpr (std::is_same_v<T, type>) {
-            return family == script::type_typename ? type{reinterpret_cast<void*>(raw)} : type{};
+            return type{reinterpret_cast<void*>(raw)};
         } else {
             return read_var(var).template as<T>();
         }
@@ -117,15 +171,26 @@ T as_typed(const void* var) {
 // движок копирует себе сразу, а строкой в out-переменной он ВЛАДЕЕТ и потом освободит —
 // свой указатель туда класть нельзя (порча кучи 0xC0000374, проверено падением).
 // Это ограничение движка, то же самое, что запрет писать char* в array<string>.
+//
+// out пишется только в настоящую переменную — ту, чей тег совпал с объявлением (declared,
+// для `void` — любой правдоподобный). Поле объекта движок отдаёт указателем на ячейку без
+// тега, и запись туда не доживает до скрипта целой: два float-поля подряд обрушили кучу
+// (0xC0000374, снято на 1.30), одно — прошло. Такой out не пишется, а попадает в журнал.
 enum class var_kind { returned, out };
 
-inline void write_var(void* var, const value& v, var_kind kind = var_kind::returned) {
+inline void write_var(void* var, const value& v, var_kind kind = var_kind::returned, std::uint32_t declared = 0) {
     if (!var) {
         return;
     }
-    auto* at = static_cast<char*>(var);
-    const auto tag = *reinterpret_cast<const std::uint32_t*>(at + 16);
-    auto* slot = reinterpret_cast<std::uint64_t*>(at);
+    auto*      at   = static_cast<char*>(var);
+    const auto tag  = *reinterpret_cast<const std::uint32_t*>(at + 16);
+    auto*      slot = reinterpret_cast<std::uint64_t*>(at);
+    const auto same = declared ? (tag & script::type_family) == (declared & script::type_family) : true;
+    if (kind == var_kind::out && (!same || !plausible_tag(tag))) {
+        log("graft: out-аргумент — не переменная (поле объекта?), значение не записано; передай "
+            "локальную переменную");
+        return;
+    }
     if (kind == var_kind::out && (tag & script::type_family) == script::type_string) {
         log("graft: a string cannot be returned through an out argument - the engine owns the string; "
             "return it instead");
@@ -237,6 +302,9 @@ struct marshal_check {
                   "движку значение отдаётся по тегу");
     static_assert(std::is_void_v<R> || std::is_constructible_v<value, R>,
                   "возврат маршалируемого метода должен приводиться к graft::value");
+    static_assert(((!script_class<std::remove_cvref_t<A>> || !has_fields<std::remove_cvref_t<A>>) && ... && true),
+                  "объект класса с полями аргументом — только у немаршалируемого натива (proto "
+                  "native); здесь его экземпляр не найти");
     static constexpr const char* ret = marshal_ret<R>::value;
     // out-аргументы объявляются с модификатором: движок забирает записанное обратно.
     static constexpr const char* const args[] = {marshal_arg<A>::value..., nullptr};
@@ -273,7 +341,7 @@ std::int64_t marshal_run(C&& object, M method, void** block, void* ret,
     const auto                            write_back = [&] {
         ([&] {
             if constexpr (is_out_param<A> && is_value_type<A>) {
-                write_var(block ? block[I] : nullptr, std::get<I>(slots), var_kind::out);
+                write_var(block ? block[I] : nullptr, std::get<I>(slots), var_kind::out, declared_tag<std::remove_cvref_t<A>>);
             }
         }(),
          ...);
@@ -334,7 +402,7 @@ std::int64_t marshal_run_free(Fn fn, void** block, void* ret, std::index_sequenc
     const auto                            write_back = [&] {
         ([&] {
             if constexpr (is_out_param<A> && is_value_type<A>) {
-                write_var(block ? block[I] : nullptr, std::get<I>(slots), var_kind::out);
+                write_var(block ? block[I] : nullptr, std::get<I>(slots), var_kind::out, declared_tag<std::remove_cvref_t<A>>);
             }
         }(),
          ...);

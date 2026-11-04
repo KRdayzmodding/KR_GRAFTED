@@ -4,6 +4,7 @@
 #pragma once
 #include <cstring>
 #include <deque>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 
@@ -135,6 +136,26 @@ C& instance_of(void* self) {
         return object;
     }
 }
+
+// Объект класса С ПОЛЯМИ аргументом натива: в скрипте это сам объект (`bool Is(Tag tag)`),
+// в C++ — его экземпляр, тот же, что видят его собственные методы:
+//
+//   bool Is(const TagState& tag);
+//
+// Ссылка только константная: неконстантная у значений означает out. NULL вместо объекта —
+// исключение: guard пишет его в журнал, натив не исполняется, возврат по умолчанию.
+template <class C>
+    requires script_class<C> && has_fields<C>
+struct arg_of<const C&> {
+    using abi = ref<C::script_class>;
+
+    static const C& in(abi object) {
+        if (!object) {
+            throw std::invalid_argument(std::string{"NULL вместо объекта "} + C::script_class.value);
+        }
+        return instance_of<C>(object.ptr);
+    }
+};
 
 // Трамплин метода: движок кладёт объект в первый аргумент (это и есть this у ванильных
 // нативов), а мы находим по нему экземпляр класса C++ и зовём обычную функцию. В

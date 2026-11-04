@@ -53,7 +53,13 @@ inline constexpr struct declared_t {
 
 // Тег: класса в движке НЕТ, его вводит сам мод. Объявление печатается целиком
 // (`class Имя`), а не правкой существующего (`modded class Имя`). Так уже объявляются
-// шаблонные классы — тег даёт то же самое обычным.
+// шаблонные классы — тег даёт то же самое обычным. База пишется в имени, как в скрипте:
+//
+//   bind.class_<Tag>("Animal", graft::fresh).method<&Tag::Name>("Name");
+//   bind.class_<Tag>("Dog : Animal", graft::fresh).method<&Bark>("Bark");
+//
+// Генератор печатает базу раньше наследника. Одна C++-структура на обе привязки — один
+// экземпляр на объект: нативы Dog видят те же поля, что и нативы Animal.
 inline constexpr struct fresh_t {
 } fresh{};
 
@@ -65,13 +71,16 @@ public:
     template <class C>
     class class_scope {
     public:
-        // Имя может нести параметры шаблона: "CppHashMap<Class K, Class V>". Регистрация
-        // идёт по имени до '<' (сам шаблонный класс), а объявление печатается целиком.
+        // Имя может нести параметры шаблона: "CppHashMap<Class K, Class V>", а у нового
+        // класса — ещё и базу: "Child : Base". Регистрация идёт по имени до '<' или ':'
+        // (сам класс), а объявление печатается целиком.
         class_scope(const char* class_name, const char* module, bool generate, bool fresh = false)
             : class_name_(class_name), module_(module), generate_(generate) {
-            if (const char* angle = std::strchr(class_name, '<')) {
+            const std::string_view whole{class_name};
+            const std::size_t      end = whole.find_first_of(fresh ? "<:" : "<");
+            if (end != std::string_view::npos) {
                 declare_    = class_name;
-                class_name_ = detail::intern(std::string(class_name, static_cast<std::size_t>(angle - class_name)));
+                class_name_ = detail::intern(std::string(trim(whole.substr(0, end))));
             } else if (fresh) {
                 declare_ = class_name;
             }
@@ -109,6 +118,13 @@ public:
         }
 
     private:
+        static std::string_view trim(std::string_view s) {
+            while (!s.empty() && s.back() == ' ') {
+                s.remove_suffix(1);
+            }
+            return s;
+        }
+
         class_scope& put(const char* name, void* impl, bool is_static, const char* ret, const char* const* args, bool marshalled = false, const char* params = nullptr, const char* doc = nullptr) {
             detail::add({class_name_, name, impl, is_static, ret, args, nullptr, params, doc, marshalled, module_, generate_, declare_});
             return *this;

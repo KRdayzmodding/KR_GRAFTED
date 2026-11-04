@@ -399,6 +399,30 @@ TEST(ObjectFields, SurviveBetweenNativeCalls) {
     graft::detail::forget_instance<Counter>(&b);
 }
 
+// Объект класса с полями аргументом: натив получает экземпляр ТОГО объекта, а не копию.
+// В скрипте аргумент объявлен самим классом, в движок едет обычная ссылка.
+graft::i32 PeekOther(const Counter& other) {
+    return other.value;
+}
+
+using peek_other = graft::detail::free_thunk<&PeekOther>;
+static_assert(std::string_view{peek_other::args[0]} == "TestBox");
+static_assert(std::is_same_v<decltype(&peek_other::call), graft::i32(__fastcall*)(graft::ref<"TestBox">)>);
+
+TEST(ObjectFields, ObjectArgumentIsItsInstance) {
+    int a = 0;
+    call_native<&Counter::Bump>(&a, 9);
+    EXPECT_EQ(peek_other::call(graft::ref<"TestBox">{&a}), 9);
+    graft::detail::forget_instance<Counter>(&a);
+}
+
+// NULL вместо объекта: натив не исполняется, возврат по умолчанию, экземпляр не заводится.
+TEST(ObjectFields, NullObjectArgumentIsRefused) {
+    const std::size_t before = graft::detail::instances<Counter>().size();
+    EXPECT_EQ(peek_other::call(graft::ref<"TestBox">{}), 0);
+    EXPECT_EQ(graft::detail::instances<Counter>().size(), before);
+}
+
 TEST(ObjectFields, WrapperWithoutFieldsNeedsNoTable) {
     int object = 0;
     EXPECT_EQ(call_native<&Plain::Tag>(&object), 7);
