@@ -201,8 +201,9 @@ struct dispatch2<C, Pick, type_list<K...>, type_list<V...>> {
 
     template <class Kt>
     static constexpr auto row() {
-        return std::array<slot, sizeof...(V)>{
-            &marshal_thunk<C<Kt, V>, Pick{}.template operator()<C<Kt, V>>()>::body...};
+        return std::array<slot, sizeof...(V)> {
+            &marshal_thunk<C<Kt, V>, Pick{}.template operator()<C<Kt, V>>()>::body...
+        };
     }
     static constexpr auto table = std::array<std::array<slot, sizeof...(V)>, sizeof...(K)>{
         row<K>()...};
