@@ -3,10 +3,10 @@
 Что менять в плагине при обновлении graft. Полный список изменений — в
 [CHANGELOG.md](../CHANGELOG.md).
 
-## 0.4.0 → 0.4.1
+## 0.4.0 → 0.5.0
 
 **Коротко:** плагин на 0.4.0 собирается без правок, а объявления для прежних привязок
-генерируются те же. ABI 7 и LAYOUT 2 не изменились: ядро 0.4.1 грузит плагины 0.4.0, и
+генерируются те же. ABI 7 и LAYOUT 2 не изменились: ядро 0.5.0 грузит плагины 0.4.0, и
 наоборот. Что делать дальше, зависит от того, что в плагине есть:
 
 | В плагине | Что делать |
@@ -16,7 +16,7 @@
 | `proto` — `graft::value`, `graft::param<"...">`, out-аргумент — или `bind.template_class` | **пересобрать**: исправления маршалинга живут в заголовках, замена `hid.dll` их не даст |
 
 Проверено на DayZ 1.30.164.289 (сьюта `seraph::graft`). 0.4.0 проверялся на 1.29. Плагины
-первой группы, QueuePriority и AS_MemoryLimits, собраны с 0.4.0 и с 0.4.1: секции DLL
+первой группы, QueuePriority и AS_MemoryLimits, собраны с 0.4.0 и с 0.5.0: секции DLL
 совпали побайтно.
 
 ### Что сделать
@@ -24,12 +24,12 @@
 1. Поднять тег в `CMakeLists.txt` мода:
 
    ```cmake
-   graft_import(graft https://github.com/KRdayzmodding/KR_GRAFTED TAG v0.4.1)
+   graft_import(graft https://github.com/KRdayzmodding/KR_GRAFTED TAG v0.5.0)
    ```
 
 2. Пересобрать плагин и заново упаковать мод — если он во второй или третьей группе таблицы.
 3. Обновить ядро там, где запускается игра: `graft install <папка игры>`. Это
-   необязательно, плагин 0.4.1 работает и со старым ядром. Новое ядро в 4.5 раза быстрее
+   необязательно, плагин 0.5.0 работает и со старым ядром. Новое ядро в 4.5 раза быстрее
    заводит экземпляр класса с полями на первом вызове: раньше на каждом новом объекте шёл
    системный вызов.
 
@@ -60,7 +60,7 @@
 bind.class_<StringTable>("ExampleTable").method<&StringTable::Set>("Set");
 bind.global<&Resettle>("Resettle", "slot, zone, player", "Переселить игрока в зону.");
 
-// 0.4.1
+// 0.5.0
 bind.class_<StringTable>("ExampleTable").method<&StringTable::Set>();
 bind.global<&Resettle>({.args = "slot, zone, player", .doc = "Переселить игрока в зону."});
 ```
@@ -82,7 +82,7 @@ struct StringTable {
 };
 bind.class_<StringTable>("ExampleTable", graft::fresh).method<&StringTable::Set>("Set");
 
-// 0.4.1
+// 0.5.0
 struct StringTable : graft::new_class<"ExampleTable"> {
     std::unordered_map<std::string, std::string> data;
     void Set(std::string k, std::string v);
@@ -143,7 +143,7 @@ class MyDog : MyAnimal
 // 0.4.0: out только через graft::value / graft::param
 void Split(graft::f32 total, graft::param<"float">& left, graft::param<"float">& right);
 
-// 0.4.1
+// 0.5.0
 void Split(graft::f32 total, graft::f32& left, graft::f32& right);
 ```
 
