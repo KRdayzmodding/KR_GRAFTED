@@ -12,6 +12,7 @@
 #endif
 #include <windows.h>
 
+#include <bit>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -932,85 +933,158 @@ TEST(Role, ModNamedServerDoesNotMakeAClientAServer) {
 
 }  // namespace
 
-// ── Маршалируемый аргумент без тега ──────────────────────────────────────────
-// Поле объекта движок отдаёт указателем прямо на ячейку поля: за значением лежат соседние
-// поля, а не тег (снято зондом на 1.30, мусорный «тег» e0a9da8e). Тип из объявления обязан
-// читаться и писаться без тега, `void` без тега — не читаться вовсе.
+// ── Маршалируемый аргумент: значение и переменная — разные адреса ───────────
+// Блок аргументов — два массива: значения (+0) и переменные (+8). У поля объекта значение
+// лежит в 4-байтном слоте поля, а тег и флаги — у переменной, описывающей поле; рядом со
+// слотом — соседние поля, а не тег (снято зондом на 1.30). Трамплин обязан брать тег из
+// переменной, а писать в слот ровно столько, сколько он занимает.
 namespace {
 
-struct field_row {
-    std::uint64_t value      = 0;
-    std::uint64_t neighbour  = 0x1111111122222222;
-    std::uint32_t junk_tag   = 0xe0a9da8e;
-    std::uint32_t junk_flags = 0x80049100;
+// Переменная, как её видит движок: значение +0, тег +16, флаги +20.
+struct fake_var {
+    std::uint64_t value  = 0;
+    std::uint64_t engine = 0;
+    std::uint32_t tag    = 0;
+    std::uint32_t flags  = 0;
     std::uint64_t tail[2]{};
 };
 
-TEST(MarshalField, TypedStringIsReadByDeclaration) {
-    field_row   row;
-    const char* text = "field";
-    std::memcpy(&row.value, &text, sizeof text);
-    EXPECT_EQ(graft::detail::as_typed<graft::str>(&row).view(), "field");
-    EXPECT_EQ(graft::detail::as_typed<std::string>(&row), "field");
+// Поля объекта: слоты по 4 байта подряд (база + 4 * слот), тега рядом нет.
+struct fake_fields {
+    std::uint32_t cells[8]{};
+};
+
+std::uint32_t bits(float f) {
+    return std::bit_cast<std::uint32_t>(f);
 }
 
-TEST(MarshalField, DeclaredParamIsReadByDeclaration) {
-    field_row   row;
-    const float half = 0.5f;
-    std::memcpy(&row.value, &half, sizeof half);
-    EXPECT_EQ(graft::detail::as_typed<graft::param<"float">>(&row).as<graft::f32>(), 0.5f);
+std::string g_seen;
+
+void ShowAny(graft::value v) {
+    g_seen = v.to_string();
 }
 
-// out в поле объекта не пишется: два float-поля подряд обрушили кучу на живом сервере.
-TEST(MarshalField, OutIntoFieldIsRefused) {
-    struct {
-        float         value     = 1;
-        std::uint32_t neighbour = 12345;
-        std::uint32_t more[2]{};
-        std::uint32_t junk_tag = 0x0000d431;
-        std::uint32_t pad[5]{};
-    } row;
-
-    graft::detail::write_var(&row, graft::value{2.5f}, graft::detail::var_kind::out, graft::detail::declared_tag<graft::param<"float">>);
-    EXPECT_EQ(row.value, 1.0f);
-    EXPECT_EQ(row.neighbour, 12345u);
+void Note(std::string_view text, graft::value extra) {
+    g_seen = std::string{text} + "|" + extra.to_string();
 }
 
-TEST(MarshalField, OutIntoVariableIsWritten) {
-    field_row row;
-    row.junk_tag = graft::script::tag_float;
-    graft::detail::write_var(&row, graft::value{2.5f}, graft::detail::var_kind::out, graft::detail::declared_tag<graft::param<"float">>);
-    float got = 0;
-    std::memcpy(&got, &row.value, sizeof got);
-    EXPECT_EQ(got, 2.5f);
+void FillTwo(graft::f32& a, graft::f32& b) {
+    a = 1.5f;
+    b = 2.5f;
 }
 
-// Переменная другого типа, чем в объявлении, — тоже не цель для out.
-TEST(MarshalField, OutIntoVariableOfOtherTypeIsRefused) {
-    field_row row;
-    row.junk_tag = graft::script::tag_int;
-    graft::detail::write_var(&row, graft::value{2.5f}, graft::detail::var_kind::out, graft::detail::declared_tag<graft::param<"float">>);
-    EXPECT_EQ(row.value, 0u);
+void FillText(graft::value& v) {
+    v = std::string{"чужая строка"};
 }
 
-TEST(MarshalField, VoidWithoutTagIsNotRead) {
-    field_row row;
-    row.value = 7;
-    EXPECT_TRUE(graft::detail::read_var(&row).empty());
+template <auto F>
+void run(std::initializer_list<void*> values, std::initializer_list<void*> vars) {
+    std::vector<void*>       v{values}, w{vars};
+    graft::script::arg_block block{v.data(), w.data()};
+    graft::detail::marshal_free_thunk<F>::call(&block, nullptr);
 }
 
-TEST(MarshalField, VoidOutWithoutTagIsNotWritten) {
-    field_row row;
-    graft::detail::write_var(&row, graft::value{graft::i32{9}}, graft::detail::var_kind::out);
-    EXPECT_EQ(row.value, 0u);
-    EXPECT_EQ(row.neighbour, 0x1111111122222222u);
+// out у значения сам переключает натив на `proto` и объявляется как `out float`.
+static_assert(graft::detail::marshalled_free<&FillTwo>);
+
+graft::i32 Twice(graft::i32 x) {
+    return x * 2;
 }
 
-TEST(MarshalField, RealVariableStillReadsByItsTag) {
-    field_row row;
-    row.value    = 42;
-    row.junk_tag = graft::script::tag_int;
-    EXPECT_EQ(graft::detail::read_var(&row).as<graft::i32>(), 42);
+static_assert(!graft::detail::marshalled_free<&Twice>);
+
+TEST(MarshalField, ValueOutDeclaresOut) {
+    EXPECT_STREQ(graft::detail::marshal_free_thunk<&FillTwo>::args[0], "out float");
+    EXPECT_STREQ(graft::detail::marshal_free_thunk<&Note>::args[0], "string");
+}
+
+TEST(MarshalField, VoidFieldIsReadByItsVariable) {
+    fake_fields obj;
+    obj.cells[3] = bits(0.5f);
+    obj.cells[4] = 0xe0a9da8e; // сосед — не тег
+    fake_var described;
+    described.tag = graft::script::tag_float;
+    run<&ShowAny>({&obj.cells[3]}, {&described});
+    EXPECT_EQ(g_seen, "0.5");
+}
+
+TEST(MarshalField, TypedStringFieldIsReadByDeclaration) {
+    const char*   text = "поле";
+    std::uint64_t cell = 0;
+    std::memcpy(&cell, &text, sizeof text);
+    fake_var described_text;
+    described_text.tag = graft::script::tag_string;
+    fake_var local;
+    local.value = 7;
+    local.tag   = graft::script::tag_int;
+    run<&Note>({&cell, &local}, {&described_text, &local});
+    EXPECT_EQ(g_seen, "поле|7");
+}
+
+// Два float-поля подряд: восемь байт в каждое затирали соседа, а у последнего поля объекта
+// — уходили за его конец (0xC0000374 на 1.30).
+TEST(MarshalField, OutIntoAdjacentFieldsWritesFourBytesEach) {
+    fake_fields obj;
+    obj.cells[2] = 0x5EB15EB1; // страж за вторым полем
+    fake_var a, b;
+    a.tag = b.tag = graft::script::tag_float;
+    a.flags = b.flags = 0x80;
+    run<&FillTwo>({&obj.cells[0], &obj.cells[1]}, {&a, &b});
+    EXPECT_EQ(obj.cells[0], bits(1.5f));
+    EXPECT_EQ(obj.cells[1], bits(2.5f));
+    EXPECT_EQ(obj.cells[2], 0x5EB15EB1u);
+}
+
+TEST(MarshalField, NoWriteFlagIsRespected) {
+    fake_fields obj;
+    fake_var    a, b;
+    a.tag = b.tag = graft::script::tag_float;
+    a.flags       = 0x40;
+    run<&FillTwo>({&obj.cells[0], &obj.cells[1]}, {&a, &b});
+    EXPECT_EQ(obj.cells[0], 0u);
+    EXPECT_EQ(obj.cells[1], bits(2.5f));
+}
+
+// Переменной движок не дал — значение лежит в переменной само, как у локальной.
+TEST(MarshalField, MissingVariableFallsBackToTheValue) {
+    fake_var local;
+    local.value = 42;
+    local.tag   = graft::script::tag_int;
+    run<&ShowAny>({&local}, {nullptr});
+    EXPECT_EQ(g_seen, "42");
+}
+
+TEST(MarshalField, StringIsNotWrittenThroughOut) {
+    fake_var local;
+    local.tag   = graft::script::tag_string;
+    local.flags = 0x80;
+    run<&FillText>({&local}, {&local});
+    EXPECT_EQ(local.value, 0u);
+}
+
+// ── Смерть объекта ───────────────────────────────────────────────────────────
+struct mortal {
+    virtual ~mortal() = default;
+};
+
+void* g_forgotten = nullptr;
+
+// Нулевой слот таблицы подменён: delete доходит до забывальщика, потом до деструктора.
+TEST(ObjectDeath, DestructorReportsTheObject) {
+    auto* m = new mortal;
+    graft::script::watch_object(m, [](void* self) { g_forgotten = self; });
+    void* const was = m;
+    delete m;
+    EXPECT_EQ(g_forgotten, was);
+}
+
+// Адрес похож на указатель, но страница не отображена: таблицу не прочесть, и это не
+// падение, а отказ — так трамплины зовут с ненастоящим объектом.
+TEST(ObjectDeath, UnreadableObjectIsSkipped) {
+    void* const page = VirtualAlloc(nullptr, 4096, MEM_RESERVE, PAGE_NOACCESS);
+    ASSERT_NE(page, nullptr);
+    graft::script::watch_object(page, [](void*) {});
+    VirtualFree(page, 0, MEM_RELEASE);
 }
 
 } // namespace

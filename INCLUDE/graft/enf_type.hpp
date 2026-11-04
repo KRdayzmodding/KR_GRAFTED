@@ -34,8 +34,11 @@ GRAFT_MAP_TYPE(owned, "owned string");
 // скриптовый (наследник script_object). Благодаря этому свой класс пишется в сигнатуре
 // натива как есть: `i32 SumIds(graft::array<Node> nodes)` — но только пока он остаётся
 // голой обёрткой: класс со своими полями в сигнатуру не пролезет (сторож ABI ниже).
+//
+// Наследник new_class<"Имя", База> несёт ref своей базы, а имя — своё.
 template <class T>
-concept script_class = requires { T::script_class; } && std::derived_from<T, ref<T::script_class>>;
+concept script_class = requires { T::script_class; } &&
+                       (std::derived_from<T, ref<T::script_class>> || requires { typename T::graft_base; });
 
 template <class T>
     requires script_class<T>

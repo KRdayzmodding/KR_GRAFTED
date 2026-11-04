@@ -213,6 +213,14 @@ method find_method(void* class_desc, const char* name);
 void note_global(const char* name, void* impl);
 void* find_global(const char* name);
 
+// Блок аргументов маршалируемого вызова — не массив, а два: по +0 указатели на значения, по
+// +8 — на сами переменные (тег, флаги). У локальной переменной адрес один и тот же, у поля
+// объекта — разный (RESEARCH/theory/abi.md, «Блок аргументов»).
+struct arg_block {
+    void** values;
+    void** vars;
+};
+
 // Почему вызов не состоялся — пишется в журнал.
 void note_call_miss(const char* class_name, const char* name, void* self, const struct method& fn);
 
@@ -262,9 +270,9 @@ inline bool plausible(const void* p) {
 }
 
 // Единственное, ради чего здесь остаётся вызов наружу: спрашивает у системы, отображена
-// ли страница. Пробовать чтение под SEH нельзя — движок ставит свой фильтр исключений и
-// рапортует о падении раньше, чем сработал бы наш __except (проверено — вылет
-// 0xC0000005 с адресом внутри hid.dll).
+// ли страница. Это системный вызов (~175 нс), поэтому горячий путь его обходит. Чтение
+// под __try тоже годится и ничего не стоит, пока не упало (guard.hpp, objects.cpp), —
+// прежняя запись «движок рапортует о падении раньше нашего __except» оказалась неверной.
 bool readable(const void* p, std::size_t n);
 
 inline char* var_entry(void* class_desc, std::int32_t index) {

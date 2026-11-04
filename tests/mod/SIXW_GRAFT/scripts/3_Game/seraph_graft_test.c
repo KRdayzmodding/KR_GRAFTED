@@ -34,6 +34,24 @@ class SeraphClock : Managed
     }
 }
 
+// Скриптовый наследник привязанного класса: такого имени C++ не знает, родство с
+// SeraphSquare он спрашивает у движка.
+class SeraphRoundSquare : SeraphSquare
+{
+}
+
+// Поля разных типов подряд. В маршалируемый натив поле приезжает ячейкой в самом объекте:
+// за ней соседние поля, а тег — у переменной поля во втором массиве блока аргументов.
+class SeraphFieldHolder
+{
+    string m_Text = "поле";
+    int m_Count = 7;
+    float m_A;
+    float m_B;
+    int m_After = 99;
+    vector m_V = "1 2 3";
+}
+
 [KRU_TEST_SUITE("seraph::graft", SERAPH_GRAFT_TEST)];
 class SERAPH_GRAFT_TEST : KRU_Suite
 {
@@ -103,6 +121,16 @@ class SERAPH_GRAFT_TEST : KRU_Suite
     // типе дескриптор ищется один раз за процесс, и остаётся 0.96 — дешевле, чем сам
     // ванильный натив. Разница в 22 раза, и это самая крупная находка за всю оптимизацию.
     //
+    // same/rotate — метод класса с полями на одном объекте и на 64 разных по очереди. На
+    // одном экземпляр находится сравнением с последним, на разных — поиском в таблице:
+    // 1.54 против 1.83 и 1.79 против 1.96 в двух прогонах подряд.
+    //
+    // first/firstScript — жизнь объекта сверх голого `new` (bare 1.8): экземпляр C++
+    // заводится первым вызовом и разрушается со смертью объекта. 3.7 у класса, названного
+    // среди привязанных, и 9.5 у скриптового наследника — тому нужны поиск класса и вопрос
+    // движку IsInherited. Было 16.8 и 25.0: на каждом новом объекте шёл системный вызов
+    // VirtualQuery, проверявший, читается ли объект.
+    //
     // ПОТОЛКИ СТОЯТ ВДВОЕ ВЫШЕ ИЗМЕРЕННОГО, И ЭТО НЕ ЛЕНЬ. Первая калибровка была +25%
     // — и замигала: на занятой машине два прогона из четырёх ушли за порог, хотя код не
     // менялся. Кейс сторожит ГРУБУЮ регрессию — вернувшийся на горячий путь VirtualQuery
@@ -120,6 +148,9 @@ class SERAPH_GRAFT_TEST : KRU_Suite
     static const float PERF_GUARDED = 2.50;   // натив, защищённый __try/__except
     static const float PERF_MISSING = 2.50;   // вызов того, чего в этой сборке нет
     static const float PERF_PROTO_OUT = 9.00; // вызов движкового `proto` В ДРУГУЮ СТОРОНУ
+    static const float PERF_ROTATE = 1.50;             // объекты по очереди против одного объекта
+    static const float PERF_FIRST_TOUCH = 8.00;        // экземпляр C++ на новом объекте, сверх `new`
+    static const float PERF_FIRST_TOUCH_SCRIPT = 20.0; // то же у скриптового наследника
 
     // ── Менеджер модулей ──────────────────────────────────────────────────────
     // Нативы этой сьюты приезжают из ДВУХ РАЗНЫХ плагинов: всё, кроме SeraphHashMap, —
@@ -127,7 +158,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
     // проверяется обычным прогоном сьюты, а не отдельным ритуалом, который забудут
     // запустить: сломается сосуществование — покраснеет половина кейсов.
 
-    [KRU_TEST_CASE("Manager_HostVersionsMatchTheBuild").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Manager_HostVersionsMatchTheBuild", SERAPH_GRAFT_TEST)];
     void Manager_HostVersionsMatchTheBuild()
     {
         assert(GraftVersion() == 5, "5", GraftVersion().ToString(), "версия интерфейса хоста");
@@ -150,7 +181,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         return found;
     }
 
-    [KRU_TEST_CASE("Log_EngineGlobalsAreFoundByName").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Log_EngineGlobalsAreFoundByName", SERAPH_GRAFT_TEST)];
     void Log_EngineGlobalsAreFoundByName()
     {
         int found = SeraphGraftSayVia("Print", "[сьюта] глобаль движка позвана вслепую");
@@ -159,7 +190,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         assert(missing == -1, "-1", missing.ToString(), "чего нет — того нет, без падения");
     }
 
-    [KRU_TEST_CASE("Log_UserChannelGoesToTheGameLogs").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Log_UserChannelGoesToTheGameLogs", SERAPH_GRAFT_TEST)];
     void Log_UserChannelGoesToTheGameLogs()
     {
         bool said = SeraphGraftSay("строка из C++ в script-лог");
@@ -173,7 +204,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "crash-лог в профиле есть");
     }
 
-    [KRU_TEST_CASE("Manager_BothPluginsLoaded").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Manager_BothPluginsLoaded", SERAPH_GRAFT_TEST)];
     void Manager_BothPluginsLoaded()
     {
         assert(IsGrafted("SIXW_GRAFT"), "true", IsGrafted("SIXW_GRAFT").ToString(),
@@ -183,7 +214,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
     }
 
     // Хост считает себя модулем номер ноль: его нативы идут через то же слияние.
-    [KRU_TEST_CASE("Manager_HostCountsItself").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Manager_HostCountsItself", SERAPH_GRAFT_TEST)];
     void Manager_HostCountsItself()
     {
         assert(IsGrafted("graft"), "true", IsGrafted("graft").ToString(),
@@ -192,7 +223,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "хост + два плагина");
     }
 
-    [KRU_TEST_CASE("Manager_UnknownPluginReportsMinusOne").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Manager_UnknownPluginReportsMinusOne", SERAPH_GRAFT_TEST)];
     void Manager_UnknownPluginReportsMinusOne()
     {
         assert(IsGrafted("NOPE") == false, "false", IsGrafted("NOPE").ToString(),
@@ -206,7 +237,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
 
     // Коллизия имён — не абстракция: два плагина в одной установке легко занимают одно
     // имя. Здоровая установка обязана иметь ноль.
-    [KRU_TEST_CASE("Manager_NoNameCollisions").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Manager_NoNameCollisions", SERAPH_GRAFT_TEST)];
     void Manager_NoNameCollisions()
     {
         string first = "";
@@ -218,7 +249,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
 
     // Оба плагина работают ОДНОВРЕМЕННО и в одном выражении: слева натив одного,
     // справа — другого.
-    [KRU_TEST_CASE("Manager_TwoPluginsInOneExpression").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Manager_TwoPluginsInOneExpression", SERAPH_GRAFT_TEST)];
     void Manager_TwoPluginsInOneExpression()
     {
         SeraphHashMap<string, int> table = new SeraphHashMap<string, int>;   // SIXW_HASHMAP
@@ -242,7 +273,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
     // отдал строку, которую заберут только после последнего.
 
     // Присваивание уже случилось — с этого момента строка принадлежит движку.
-    [KRU_TEST_CASE("Arena_LifetimeAfterAssignment").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Arena_LifetimeAfterAssignment", SERAPH_GRAFT_TEST)];
     void Arena_LifetimeAfterAssignment()
     {
         string got = SeraphGraftEcho("one");
@@ -255,7 +286,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
     // память, и в этом весь смысл перехода на движковый аллокатор:
     //   * своё кольцо  — строка гибнет: движок держал наш указатель, мы его затёрли;
     //   * движковый блок — строке ничего не делается, затирать нечего, память не наша.
-    [KRU_TEST_CASE("Arena_PoisonMattersOnlyForOurOwnMemory").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Arena_PoisonMattersOnlyForOurOwnMemory", SERAPH_GRAFT_TEST)];
     void Arena_PoisonMattersOnlyForOurOwnMemory()
     {
         map<string, int> m = new map<string, int>;
@@ -283,7 +314,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
 
     // Кольцо прокручено между возвратом строки и её потреблением: текст обязан
     // испортиться, но процесс — выжить, а строка — остаться конечной.
-    [KRU_TEST_CASE("Arena_OverrunGivesWrongText").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Arena_OverrunGivesWrongText", SERAPH_GRAFT_TEST)];
     void Arena_OverrunGivesWrongText()
     {
         // Кольца может не быть вовсе: строки выдаёт движок и переполнять нечего.
@@ -303,7 +334,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
     }
 
     // А до потребления прокрутка безвредна: движок уже скопировал строку себе.
-    [KRU_TEST_CASE("Arena_ChurnAfterAssignmentIsHarmless").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Arena_ChurnAfterAssignmentIsHarmless", SERAPH_GRAFT_TEST)];
     void Arena_ChurnAfterAssignmentIsHarmless()
     {
         string got = SeraphGraftEcho("survivor");
@@ -315,7 +346,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
     // Строку, которую скрипт не потребил, обязан освободить тот, кто ей владеет. Пока
     // память была наша, вопрос не стоял: кольцо переиспользовалось само. Теперь блок
     // движковый, и если движок его не снимает — это утечка, видимая по памяти процесса.
-    [KRU_TEST_CASE("Arena_DiscardedStringsDoNotLeak").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Arena_DiscardedStringsDoNotLeak", SERAPH_GRAFT_TEST)];
     void Arena_DiscardedStringsDoNotLeak()
     {
         int i;
@@ -337,7 +368,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
     // двумя внешними вызовами против размера кольца. Замер на этой сьюте — 89 байт при
     // кольце 16384, то есть запас в 184 раза. Если однажды сблизятся, счётчик скажет
     // об этом раньше, чем строку успеет затереть.
-    [KRU_TEST_CASE("Arena_RingHasRoomToSpare").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Arena_RingHasRoomToSpare", SERAPH_GRAFT_TEST)];
     void Arena_RingHasRoomToSpare()
     {
         if (SeraphGraftEngineStrings())
@@ -360,7 +391,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "одна строка много меньше кольца");
     }
 
-    [KRU_TEST_CASE("Int_PingMatchesXorFormula").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Int_PingMatchesXorFormula", SERAPH_GRAFT_TEST)];
     void Int_PingMatchesXorFormula()
     {
         int token = 1234;
@@ -370,14 +401,14 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "int туда и обратно: reply == token ^ magic");
     }
 
-    [KRU_TEST_CASE("Int_PingZero").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Int_PingZero", SERAPH_GRAFT_TEST)];
     void Int_PingZero()
     {
         int reply = SeraphGraftPing(0);
         assert(reply == 0x0005E1AF, "385455", reply.ToString(), "ping(0) == magic");
     }
 
-    [KRU_TEST_CASE("Float_MixedWithInt").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Float_MixedWithInt", SERAPH_GRAFT_TEST)];
     void Float_MixedWithInt()
     {
         float got = SeraphGraftMix(2.5, 4.0, 3);   // 2.5*4 + 3
@@ -385,7 +416,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "float в xmm, int в целочисленном регистре — вперемешку");
     }
 
-    [KRU_TEST_CASE("String_LengthArrivesInCpp").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("String_LengthArrivesInCpp", SERAPH_GRAFT_TEST)];
     void String_LengthArrivesInCpp()
     {
         int got = SeraphGraftStrLen("hello");
@@ -400,7 +431,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "string-аргумент доходит как char*");
     }
 
-    [KRU_TEST_CASE("Bool_TwoStringArgs").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Bool_TwoStringArgs", SERAPH_GRAFT_TEST)];
     void Bool_TwoStringArgs()
     {
         bool yes = SeraphGraftHasPrefix("hello world", "hello");
@@ -415,7 +446,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "два string-аргумента + bool-возврат");
     }
 
-    [KRU_TEST_CASE("Vector_InAndOut").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Vector_InAndOut", SERAPH_GRAFT_TEST)];
     void Vector_InAndOut()
     {
         vector got = SeraphGraftVecScale(Vector(1, 2, 3), 2.0);
@@ -431,14 +462,14 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         assert(ok, "<2,4,6>", got.ToString(), "vector и аргументом, и возвратом");
     }
 
-    [KRU_TEST_CASE("String_OwnedReturn").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("String_OwnedReturn", SERAPH_GRAFT_TEST)];
     void String_OwnedReturn()
     {
         string got = SeraphGraftEcho("abc");
         assert(got == "echo:abc", "echo:abc", got, "owned string — возврат строки из C++");
     }
 
-    [KRU_TEST_CASE("Method_StaticOnScriptClass").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Method_StaticOnScriptClass", SERAPH_GRAFT_TEST)];
     void Method_StaticOnScriptClass()
     {
         int got = SeraphGraft.Magic();
@@ -446,7 +477,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "натив, привязанный методом класса (RegisterMethod)");
     }
 
-    [KRU_TEST_CASE("Entity_MethodsFromCpp").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Entity_MethodsFromCpp", SERAPH_GRAFT_TEST)];
     void Entity_MethodsFromCpp()
     {
         Object obj = GetGame().CreateObjectEx("Apple", "1000 5 1000", ECE_NONE);
@@ -478,7 +509,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             GetGame().ObjectDelete(obj);
     }
 
-    [KRU_TEST_CASE("Entity_MovedFromCpp").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Entity_MovedFromCpp", SERAPH_GRAFT_TEST)];
     void Entity_MovedFromCpp()
     {
         Object obj = GetGame().CreateObjectEx("Apple", "1000 5 1000", ECE_NONE);
@@ -499,7 +530,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             GetGame().ObjectDelete(obj);
     }
 
-    [KRU_TEST_CASE("Entity_VectorNativesFromCpp").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Entity_VectorNativesFromCpp", SERAPH_GRAFT_TEST)];
     void Entity_VectorNativesFromCpp()
     {
         // vector из движкового натива едет через скрытый буфер, а место буфера у двух
@@ -539,7 +570,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         return 1;
     }
 
-    [KRU_TEST_CASE("Proto_VectorAndExternalFromCpp").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Proto_VectorAndExternalFromCpp", SERAPH_GRAFT_TEST)];
     void Proto_VectorAndExternalFromCpp()
     {
         // Маршалируемый `proto` с vector-возвратом (ModelToWorld, WorldToModel) приходил
@@ -572,7 +603,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             GetGame().ObjectDelete(obj);
     }
 
-    [KRU_TEST_CASE("Proto_BuiltinVarsMatchCompiler").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Proto_BuiltinVarsMatchCompiler", SERAPH_GRAFT_TEST)];
     void Proto_BuiltinVarsMatchCompiler()
     {
         // Переменную возврата, параметра `void` и аргумент глобали без дескриптора (Print)
@@ -583,7 +614,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "переменная встроенного типа собирается как у компилятора");
     }
 
-    [KRU_TEST_CASE("Mirror_OutArraysAndStaticsFromCpp").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Mirror_OutArraysAndStaticsFromCpp", SERAPH_GRAFT_TEST)];
     void Mirror_OutArraysAndStaticsFromCpp()
     {
         // Через сгенерированное зеркало, тем путём, каким зовёт мод: статический массив
@@ -685,7 +716,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             GetGame().ObjectDelete(obj);
     }
 
-    [KRU_TEST_CASE("Modern_RangesOverScriptArray").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Modern_RangesOverScriptArray", SERAPH_GRAFT_TEST)];
     void Modern_RangesOverScriptArray()
     {
         array<int> values = new array<int>;
@@ -705,7 +736,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "std::ranges и views работают прямо по скриптовому массиву");
     }
 
-    [KRU_TEST_CASE("Modern_TryCallReportsMiss").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Modern_TryCallReportsMiss", SERAPH_GRAFT_TEST)];
     void Modern_TryCallReportsMiss()
     {
         Object obj = GetGame().CreateObjectEx("Apple", "1000 5 1000", ECE_NONE);
@@ -728,7 +759,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             GetGame().ObjectDelete(obj);
     }
 
-    [KRU_TEST_CASE("Modern_TryFieldReportsMiss").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Modern_TryFieldReportsMiss", SERAPH_GRAFT_TEST)];
     void Modern_TryFieldReportsMiss()
     {
         SeraphNode node = new SeraphNode(77, 0, "n");
@@ -744,7 +775,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "отсутствующее поле — пустой optional, а не тихий ноль");
     }
 
-    [KRU_TEST_CASE("Modern_TextFormatting").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Modern_TextFormatting", SERAPH_GRAFT_TEST)];
     void Modern_TextFormatting()
     {
         // возврат строки собран через std::format, без статических буферов
@@ -760,7 +791,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "graft::text: форматирование и несколько живых возвратов подряд");
     }
 
-    [KRU_TEST_CASE("Diag_MethodFlags").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Diag_MethodFlags", SERAPH_GRAFT_TEST)];
     void Diag_MethodFlags()
     {
         // ванильные: член класса, статический, метод шаблонного класса
@@ -799,7 +830,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         assert(true, "смотри graft.log", "смотри graft.log", "снимок флагов дескрипторов");
     }
 
-    [KRU_TEST_CASE("HashMap_StringToInt").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("HashMap_StringToInt", SERAPH_GRAFT_TEST)];
     void HashMap_StringToInt()
     {
         // шаблон скрипта, хранилище — std::unordered_map в C++
@@ -822,7 +853,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "шаблонная хеш-таблица поверх std::unordered_map");
     }
 
-    [KRU_TEST_CASE("HashMap_RemoveAndClear").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("HashMap_RemoveAndClear", SERAPH_GRAFT_TEST)];
     void HashMap_RemoveAndClear()
     {
         SeraphHashMap<string, int> m = new SeraphHashMap<string, int>;
@@ -846,7 +877,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "удаление и очистка доходят до C++");
     }
 
-    [KRU_TEST_CASE("HashMap_KeysAndIsolation").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("HashMap_KeysAndIsolation", SERAPH_GRAFT_TEST)];
     void HashMap_KeysAndIsolation()
     {
         SeraphHashMap<string, int> first = new SeraphHashMap<string, int>;
@@ -880,7 +911,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "перебор ключей и независимость таблиц у разных объектов");
     }
 
-    [KRU_TEST_CASE("HashMap_OtherInstantiations").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("HashMap_OtherInstantiations", SERAPH_GRAFT_TEST)];
     void HashMap_OtherInstantiations()
     {
         // те же нативы обслуживают любую инстанциацию шаблона
@@ -900,7 +931,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "один нативный слой обслуживает разные K и V");
     }
 
-    [KRU_TEST_CASE("Primitive_OwnEnumType").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Primitive_OwnEnumType", SERAPH_GRAFT_TEST)];
     void Primitive_OwnEnumType()
     {
         // свой примитив C++ (enum Team) скрипт видит как обычный int
@@ -920,7 +951,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "свой примитив: аргумент, возврат и элемент массива");
     }
 
-    [KRU_TEST_CASE("Fields_ScalarsAndString").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Fields_ScalarsAndString", SERAPH_GRAFT_TEST)];
     void Fields_ScalarsAndString()
     {
         SeraphNode node = new SeraphNode(42, 2.5, "root");
@@ -940,7 +971,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "C++ читает поля объекта по имени");
     }
 
-    [KRU_TEST_CASE("Fields_WriteBack").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Fields_WriteBack", SERAPH_GRAFT_TEST)];
     void Fields_WriteBack()
     {
         SeraphNode node = new SeraphNode(1, 0, "x");
@@ -955,7 +986,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "C++ пишет в поле объекта, скрипт видит изменение");
     }
 
-    [KRU_TEST_CASE("Fields_VectorThroughPointer").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Fields_VectorThroughPointer", SERAPH_GRAFT_TEST)];
     void Fields_VectorThroughPointer()
     {
         // Поле-вектор лежит в слоте ССЫЛКОЙ на три float, а не значением. Кейс держит
@@ -980,7 +1011,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "поле-вектор читается и пишется через ссылку в слоте");
     }
 
-    [KRU_TEST_CASE("Fields_NestedChain").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Fields_NestedChain", SERAPH_GRAFT_TEST)];
     void Fields_NestedChain()
     {
         SeraphNode a = new SeraphNode(1, 0, "a");
@@ -993,7 +1024,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "C++ спускается по вложенным объектам произвольной глубины");
     }
 
-    [KRU_TEST_CASE("Fields_NestedContainer").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Fields_NestedContainer", SERAPH_GRAFT_TEST)];
     void Fields_NestedContainer()
     {
         SeraphNode node = new SeraphNode(1, 0, "n");
@@ -1005,7 +1036,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "массив внутри объекта читается той же вьюхой");
     }
 
-    [KRU_TEST_CASE("Fields_Reflection").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Fields_Reflection", SERAPH_GRAFT_TEST)];
     void Fields_Reflection()
     {
         SeraphNode node = new SeraphNode(1, 0, "n");
@@ -1021,7 +1052,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "C++ обходит незнакомую структуру: имена и число полей");
     }
 
-    [KRU_TEST_CASE("Method_MemberLikeVanilla").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Method_MemberLikeVanilla", SERAPH_GRAFT_TEST)];
     void Method_MemberLikeVanilla()
     {
         // обычный member-метод: вызывается через объект, без явного self
@@ -1031,7 +1062,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "нестатичный метод объявлен как у ванильных коллекций");
     }
 
-    [KRU_TEST_CASE("Template_OwnProtoClass").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Template_OwnProtoClass", SERAPH_GRAFT_TEST)];
     void Template_OwnProtoClass()
     {
         // свой шаблонный тип: импл его proto-методов лежит в C++
@@ -1047,7 +1078,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "натив на своём шаблонном классе работает для любого T");
     }
 
-    [KRU_TEST_CASE("Template_PerInstanceState").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Template_PerInstanceState", SERAPH_GRAFT_TEST)];
     void Template_PerInstanceState()
     {
         SeraphBox<int> a = new SeraphBox<int>;
@@ -1065,7 +1096,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "this доезжает до C++ и различает экземпляры шаблона");
     }
 
-    [KRU_TEST_CASE("Nested_ArrayOfGameObjects").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Nested_ArrayOfGameObjects", SERAPH_GRAFT_TEST)];
     void Nested_ArrayOfGameObjects()
     {
         array<Object> objects = new array<Object>;
@@ -1098,7 +1129,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         }
     }
 
-    [KRU_TEST_CASE("Array_IntsRead").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Array_IntsRead", SERAPH_GRAFT_TEST)];
     void Array_IntsRead()
     {
         array<int> a = new array<int>;
@@ -1109,7 +1140,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         assert(got == 42, "42", got.ToString(), "C++ читает array<int> скрипта");
     }
 
-    [KRU_TEST_CASE("Array_StringsRead").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Array_StringsRead", SERAPH_GRAFT_TEST)];
     void Array_StringsRead()
     {
         array<string> a = new array<string>;
@@ -1119,7 +1150,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         assert(got == 5, "5", got.ToString(), "элементы array<string> приходят как char*");
     }
 
-    [KRU_TEST_CASE("Array_WriteBack").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Array_WriteBack", SERAPH_GRAFT_TEST)];
     void Array_WriteBack()
     {
         array<int> a = new array<int>;
@@ -1140,7 +1171,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "C++ пишет в существующие элементы массива");
     }
 
-    [KRU_TEST_CASE("Array_VectorElementStride").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Array_VectorElementStride", SERAPH_GRAFT_TEST)];
     void Array_VectorElementStride()
     {
         // ЗАМЕР, а не допущение: operator[] и set в C++ считают адрес элемента как
@@ -1156,7 +1187,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "элемент array<vector> лежит значением: шаг 12 байт");
     }
 
-    [KRU_TEST_CASE("Array_VectorWriteBack").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Array_VectorWriteBack", SERAPH_GRAFT_TEST)];
     void Array_VectorWriteBack()
     {
         array<vector> a = new array<vector>;
@@ -1186,7 +1217,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "C++ читает и пишет элементы array<vector>");
     }
 
-    [KRU_TEST_CASE("Array_SortAndRemove").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Array_SortAndRemove", SERAPH_GRAFT_TEST)];
     void Array_SortAndRemove()
     {
         array<int> a = new array<int>;
@@ -1205,7 +1236,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "Sort и Remove движка, вызванные из C++");
     }
 
-    [KRU_TEST_CASE("Set_Read").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Set_Read", SERAPH_GRAFT_TEST)];
     void Set_Read()
     {
         set<int> s = new set<int>;
@@ -1215,14 +1246,14 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         assert(got == 30, "30", got.ToString(), "set<T> устроен как array<T>");
     }
 
-    [KRU_TEST_CASE("Typename_Name").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Typename_Name", SERAPH_GRAFT_TEST)];
     void Typename_Name()
     {
         string got = SeraphGraftTypeName(SeraphGraft);
         assert(got == "SeraphGraft", "SeraphGraft", got, "typename несёт имя класса");
     }
 
-    [KRU_TEST_CASE("Ref_ArbitraryClass").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Ref_ArbitraryClass", SERAPH_GRAFT_TEST)];
     void Ref_ArbitraryClass()
     {
         SeraphGraft inst = new SeraphGraft;
@@ -1230,7 +1261,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         assert(got, "true", got.ToString(), "ссылка на произвольный скриптовый класс");
     }
 
-    [KRU_TEST_CASE("Array_GrownFromCpp").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Array_GrownFromCpp", SERAPH_GRAFT_TEST)];
     void Array_GrownFromCpp()
     {
         array<int> a = new array<int>;         // пустой: память выделит C++ движковым Resize
@@ -1248,7 +1279,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "C++ сам растит массив движковым Resize");
     }
 
-    [KRU_TEST_CASE("Array_GrowsBeyondCapacity").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Array_GrowsBeyondCapacity", SERAPH_GRAFT_TEST)];
     void Array_GrowsBeyondCapacity()
     {
         array<int> a = new array<int>;
@@ -1264,7 +1295,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "рост за пределы ёмкости работает: память выделяет движок");
     }
 
-    [KRU_TEST_CASE("Array_ClearStrings").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Array_ClearStrings", SERAPH_GRAFT_TEST)];
     void Array_ClearStrings()
     {
         array<string> a = new array<string>;
@@ -1281,7 +1312,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "Clear движка работает и для строк: за элементами следит он сам");
     }
 
-    [KRU_TEST_CASE("Map_Size").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Map_Size", SERAPH_GRAFT_TEST)];
     void Map_Size()
     {
         map<string, int> m = new map<string, int>;
@@ -1292,7 +1323,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         assert(got == 3, "3", got.ToString(), "размер map читается из объекта");
     }
 
-    [KRU_TEST_CASE("Table_ExportFromCpp").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Table_ExportFromCpp", SERAPH_GRAFT_TEST)];
     void Table_ExportFromCpp()
     {
         // Хеш-мапа C++ перекладывается в map скрипта: строки приходят возвратом
@@ -1316,7 +1347,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "хеш-мапа C++ доехала в map скрипта");
     }
 
-    [KRU_TEST_CASE("Table_ExportValuesIntoOutArray").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Table_ExportValuesIntoOutArray", SERAPH_GRAFT_TEST)];
     void Table_ExportValuesIntoOutArray()
     {
         array<int> values = new array<int>;   // пустой: размер поставит C++
@@ -1334,7 +1365,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "out array<int> заполняется прямо из C++");
     }
 
-    [KRU_TEST_CASE("Table_ImportToCpp").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Table_ImportToCpp", SERAPH_GRAFT_TEST)];
     void Table_ImportToCpp()
     {
         map<string, int> m = new map<string, int>;
@@ -1352,7 +1383,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         assert(got == 320, "320", got.ToString(), "map скрипта доехала в хеш-мапу C++");
     }
 
-    [KRU_TEST_CASE("Map_ClearFromCpp").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Map_ClearFromCpp", SERAPH_GRAFT_TEST)];
     void Map_ClearFromCpp()
     {
         map<string, int> m = new map<string, int>;
@@ -1369,7 +1400,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "Clear() движка, вызванный из C++");
     }
 
-    [KRU_TEST_CASE("Map_IterateIntKeys").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Map_IterateIntKeys", SERAPH_GRAFT_TEST)];
     void Map_IterateIntKeys()
     {
         map<int, int> m = new map<int, int>;
@@ -1380,7 +1411,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         assert(got == 196, "196", got.ToString(), "узлы с int-ключами: другой шаг узла");
     }
 
-    [KRU_TEST_CASE("Map_IterateStringKeys").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Map_IterateStringKeys", SERAPH_GRAFT_TEST)];
     void Map_IterateStringKeys()
     {
         map<string, int> m = new map<string, int>;
@@ -1392,7 +1423,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "C++ обходит map<string,int> движковым итератором");
     }
 
-    [KRU_TEST_CASE("Map_CopiedIntoSeraphHashMap").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Map_CopiedIntoSeraphHashMap", SERAPH_GRAFT_TEST)];
     void Map_CopiedIntoSeraphHashMap()
     {
         map<string, int> m = new map<string, int>;
@@ -1403,7 +1434,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "map скрипта переложена в std::unordered_map одним вызовом");
     }
 
-    [KRU_TEST_CASE("Map_IterateIntPairs").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Map_IterateIntPairs", SERAPH_GRAFT_TEST)];
     void Map_IterateIntPairs()
     {
         map<int, float> m = new map<int, float>;
@@ -1414,7 +1445,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "узел из двух 4-байтных полей разных типов: шаг 16");
     }
 
-    [KRU_TEST_CASE("Map_ContentsViaBridge").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Map_ContentsViaBridge", SERAPH_GRAFT_TEST)];
     void Map_ContentsViaBridge()
     {
         map<string, int> m = new map<string, int>;
@@ -1433,7 +1464,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         assert(got == 320, "320", got.ToString(), "содержимое map доходит до C++ через массивы");
     }
 
-    [KRU_TEST_CASE("HashMap_UnknownInstantiation").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("HashMap_UnknownInstantiation", SERAPH_GRAFT_TEST)];
     void HashMap_UnknownInstantiation()
     {
         // Ни одной из этих инстанциаций в C++ не перечислено: привязка одна, на общем
@@ -1460,7 +1491,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
     }
 
     // ── Полный спектр типов через маршалируемый путь ──────────────────────────
-    [KRU_TEST_CASE("Any_EveryPrimitive").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Any_EveryPrimitive", SERAPH_GRAFT_TEST)];
     void Any_EveryPrimitive()
     {
         SeraphGraft a = new SeraphGraft;
@@ -1474,7 +1505,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         assert(got == want, want, got, "int/float/string/bool/vector приезжают со своим типом");
     }
 
-    [KRU_TEST_CASE("Any_ObjectsAndTypename").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Any_ObjectsAndTypename", SERAPH_GRAFT_TEST)];
     void Any_ObjectsAndTypename()
     {
         SeraphGraft a = new SeraphGraft;
@@ -1488,7 +1519,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "объект, контейнер и typename различимы, у объекта видно настоящее имя типа");
     }
 
-    [KRU_TEST_CASE("Any_OutArguments").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Any_OutArguments", SERAPH_GRAFT_TEST)];
     void Any_OutArguments()
     {
         SeraphGraft a = new SeraphGraft;
@@ -1510,7 +1541,80 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "out-аргументы возвращаются в скрипт");
     }
 
-    [KRU_TEST_CASE("Any_NestedObjects").IN(SERAPH_GRAFT_TEST)];
+    // ── Поле объекта аргументом маршалируемого натива ─────────────────────────
+    [KRU_TEST_CASE("Fields_VoidArgumentFromField", SERAPH_GRAFT_TEST)];
+    void Fields_VoidArgumentFromField()
+    {
+        SeraphGraft a = new SeraphGraft;
+        SeraphFieldHolder h = new SeraphFieldHolder;
+        string got = a.Describe(h.m_Text);
+        got = got + "|" + a.Describe(h.m_Count);
+        got = got + "|" + a.Describe(h.m_V);
+        got = got + "|" + a.Describe(h.m_B);
+        string want = "string:поле|int:7|vector:1 2 3|float:0";
+        assert(got == want, want, got, "поле в `void` приезжает со своим типом, как у ванильного Print");
+    }
+
+    [KRU_TEST_CASE("Fields_OutIntoAdjacentFloatFields", SERAPH_GRAFT_TEST)];
+    void Fields_OutIntoAdjacentFloatFields()
+    {
+        SeraphGraft a = new SeraphGraft;
+        SeraphFieldHolder h = new SeraphFieldHolder;
+        a.Split(8, h.m_A, h.m_B);
+        string got = h.m_A.ToString() + " / " + h.m_B.ToString() + " / " + h.m_After.ToString() + " / " + h.m_Count.ToString();
+        assert(got == "2 / 6 / 99 / 7", "2 / 6 / 99 / 7", got,
+            "out в два float-поля подряд пишет по 4 байта: значения дошли, соседи целы");
+    }
+
+    [KRU_TEST_CASE("Fields_OutValueIntoFields", SERAPH_GRAFT_TEST)];
+    void Fields_OutValueIntoFields()
+    {
+        SeraphGraft a = new SeraphGraft;
+        SeraphFieldHolder h = new SeraphFieldHolder;
+        a.Measure("привет мир друг", h.m_Count, h.m_After, h.m_A);
+        string got = h.m_Count.ToString() + " / " + h.m_After.ToString() + " / " + h.m_Text;
+        bool ok = false;
+        if (got == "28 / 3 / поле")
+        {
+            if (h.m_A > 9.3)
+                ok = true;
+        }
+        assert(ok, "28 / 3 / поле, ratio > 9.3", got + ", ratio " + h.m_A.ToString(),
+            "out-аргументы graft::value пишутся в поля");
+    }
+
+    // ── Наследование новых классов ────────────────────────────────────────────
+    [KRU_TEST_CASE("Inherit_BaseMethodsSeeDerivedFields", SERAPH_GRAFT_TEST)];
+    void Inherit_BaseMethodsSeeDerivedFields()
+    {
+        SeraphSquare s = new SeraphSquare;
+        s.SetSide(3);
+        string got = s.Sides().ToString() + " / " + s.Area().ToString();
+        got = got + " / " + SeraphGraftSidesOf(s).ToString() + " / " + SeraphGraftSidesPlus(s, 10).ToString();
+        assert(got == "4 / 9 / 4 / 14", "4 / 9 / 4 / 14", got,
+            "методы базы, натив и маршалируемый натив видят один экземпляр наследника");
+    }
+
+    [KRU_TEST_CASE("Inherit_ScriptSubclassGetsDerivedInstance", SERAPH_GRAFT_TEST)];
+    void Inherit_ScriptSubclassGetsDerivedInstance()
+    {
+        SeraphRoundSquare r = new SeraphRoundSquare;
+        r.SetSides(5);   // впервые — методом базы: тип экземпляра решает родство у движка
+        r.SetSide(2);    // метод SeraphSquare обязан найти тот же экземпляр
+        string got = r.Sides().ToString() + " / " + r.Area().ToString();
+        assert(got == "4 / 4", "4 / 4", got, "скриптовый наследник получает экземпляр C++-наследника");
+    }
+
+    [KRU_TEST_CASE("Inherit_BaseObjectStaysBase", SERAPH_GRAFT_TEST)];
+    void Inherit_BaseObjectStaysBase()
+    {
+        SeraphShape sh = new SeraphShape;
+        sh.SetSides(3);
+        string got = sh.Sides().ToString() + " / " + SeraphGraftSidesOf(sh).ToString();
+        assert(got == "3 / 3", "3 / 3", got, "объект базы — экземпляр базы");
+    }
+
+    [KRU_TEST_CASE("Any_NestedObjects", SERAPH_GRAFT_TEST)];
     void Any_NestedObjects()
     {
         SeraphGraft a = new SeraphGraft;
@@ -1524,7 +1628,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "объект приезжает значением, дальше спуск по вложенным полям");
     }
 
-    [KRU_TEST_CASE("Any_VectorRoundTrip").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Any_VectorRoundTrip", SERAPH_GRAFT_TEST)];
     void Any_VectorRoundTrip()
     {
         SeraphGraft a = new SeraphGraft;
@@ -1533,7 +1637,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         assert(v == "2 4 6", "2 4 6", v.ToString(), "vector туда и обратно через теги");
     }
 
-    [KRU_TEST_CASE("Text_ManyReturnsInOneCall").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Text_ManyReturnsInOneCall", SERAPH_GRAFT_TEST)];
     void Text_ManyReturnsInOneCall()
     {
         // Прежнее кольцо было на 32 строки: сотня возвратов затирала ранние.
@@ -1560,7 +1664,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
     // поэтому все фазы меряются одним объектом.
     // ponytail: один прогон без прогрева — порядок величины виден, точных чисел
     // тут никто не обещает; для стабильных — гонять кейс несколько раз и усреднять.
-    [KRU_TEST_CASE("Bench_MapVsSeraphHashMap").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Bench_MapVsSeraphHashMap", SERAPH_GRAFT_TEST)];
     void Bench_MapVsSeraphHashMap()
     {
         int n = 10000;
@@ -1753,10 +1857,52 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         for (i = 0; i < n; i++)
             c += SeraphGraftGuardedNoop(i);
         r[15] = d.Exchange();
+
+        // Экземпляр класса с полями ищется по объекту. Один и тот же объект — сравнение
+        // указателей, 64 разных по очереди — поиск в таблице. Петли одинаковые, разница
+        // только в том, сколько разных объектов лежит в массиве.
+        array<SeraphShape> same = new array<SeraphShape>;
+        array<SeraphShape> many = new array<SeraphShape>;
+        SeraphShape one = new SeraphShape;
+        for (i = 0; i < 64; i++)
+        {
+            same.Insert(one);
+            many.Insert(new SeraphShape);
+        }
+        d.Exchange();
+        for (i = 0; i < n; i++)
+            c += same[i % 64].Sides();
+        r[16] = d.Exchange();
+        for (i = 0; i < n; i++)
+            c += many[i % 64].Sides();
+        r[17] = d.Exchange();
+
+        // Жизнь объекта целиком: создание, первый вызов натива (экземпляр C++ заводится) и
+        // смерть (он же разрушается). Без вызова — цена самой скриптовой машины. Тип
+        // экземпляра решается по имени класса (SeraphShape) или, у скриптового наследника,
+        // вопросом движку (SeraphRoundSquare).
+        SeraphShape bare;
+        SeraphShape fresh;
+        SeraphRoundSquare derived;
+        for (i = 0; i < n; i++)
+            bare = new SeraphShape;
+        r[18] = d.Exchange();
+        for (i = 0; i < n; i++)
+        {
+            fresh = new SeraphShape;
+            c += fresh.Sides();
+        }
+        r[19] = d.Exchange();
+        for (i = 0; i < n; i++)
+        {
+            derived = new SeraphRoundSquare;
+            c += derived.Sides();
+        }
+        r[20] = d.Exchange();
     }
 
     // ── Прокси поля: синтаксис sol2 на живом объекте ────────────────────────
-    [KRU_TEST_CASE("Field_ProxyAgreesWithExplicitForm").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Field_ProxyAgreesWithExplicitForm", SERAPH_GRAFT_TEST)];
     void Field_ProxyAgreesWithExplicitForm()
     {
         SeraphNode node = new SeraphNode(1234, 2.5, "узел");
@@ -1779,7 +1925,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
     //
     // Кейс намеренно роняет обращение по нулю ВНУТРИ натива. Если запись была верна —
     // сервер умрёт прямо здесь, и это будет видно. Если верен разбор — вернётся метка.
-    [KRU_TEST_CASE("Crash_OurFaultIsOurs").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Crash_OurFaultIsOurs", SERAPH_GRAFT_TEST)];
     void Crash_OurFaultIsOurs()
     {
         int here = SeraphGraftThreadHere();
@@ -1796,7 +1942,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
     // обращение по нулю написано прямо в его теле, как его и напишет живой человек.
     // Ловить обязан трамплин, и это единственное, что отделяет кривой плагин от
     // мёртвого сервера.
-    [KRU_TEST_CASE("Crash_LibraryCatchesUnguardedNative").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Crash_LibraryCatchesUnguardedNative", SERAPH_GRAFT_TEST)];
     void Crash_LibraryCatchesUnguardedNative()
     {
         int before = GraftFaultCount();
@@ -1812,7 +1958,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
 
     // Исключение C++ — второй слой защиты. Отдельный, потому что `try` и `__try` в одной
     // функции стоять не могут, и значит это два разных пути, а не один.
-    [KRU_TEST_CASE("Crash_LibraryCatchesCppException").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Crash_LibraryCatchesCppException", SERAPH_GRAFT_TEST)];
     void Crash_LibraryCatchesCppException()
     {
         int before = GraftFaultCount();
@@ -1827,7 +1973,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
 
     // Возврат строки после отказа. Движок копирует её сам и nullptr не проверяет:
     // если защита отдаст ноль, упадёт уже ДВИЖОК, и виноватых не найти.
-    [KRU_TEST_CASE("Crash_FailedTextNativeGivesEmptyString").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Crash_FailedTextNativeGivesEmptyString", SERAPH_GRAFT_TEST)];
     void Crash_FailedTextNativeGivesEmptyString()
     {
         string got = SeraphGraftThrowsText();
@@ -1837,7 +1983,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
 
     // Сервер после трёх падений подряд обязан остаться рабочим — не «не упал», а именно
     // рабочим: вызовы идут, строки возвращаются, арена не уехала.
-    [KRU_TEST_CASE("Crash_ServerKeepsWorkingAfterwards").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Crash_ServerKeepsWorkingAfterwards", SERAPH_GRAFT_TEST)];
     void Crash_ServerKeepsWorkingAfterwards()
     {
         int i;
@@ -1851,7 +1997,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "строковый вызов после падений: арена не уехала");
     }
 
-    [KRU_TEST_CASE("Perf_HotPathBudget").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Perf_HotPathBudget", SERAPH_GRAFT_TEST)];
     void Perf_HotPathBudget()
     {
         int n = 10000;
@@ -1863,14 +2009,14 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         // ближе всего к настоящей цене. Один раунд давал разброс до 40%, и порог на нём
         // пришлось бы ставить втрое выше измеренного — то есть почти бесполезным.
         // Шесть раундов, а не четыре: на четырёх вентиль всё ещё изредка мигал.
-        float best[16];
-        float cur[16];
-        for (k = 0; k < 16; k++)
+        float best[21];
+        float cur[21];
+        for (k = 0; k < 21; k++)
             best[k] = 1000000;
         for (i = 0; i < 6; i++)
         {
             PerfRound(n, cur);
-            for (k = 0; k < 16; k++)
+            for (k = 0; k < 21; k++)
                 if (cur[k] < best[k]) best[k] = cur[k];
         }
 
@@ -1890,6 +2036,11 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         float rProtoOut = best[13] / unit;
         float rMissing = best[14] / unit;
         float rGuarded = best[15] / unit;
+        float rSame = best[16] / unit;
+        float rRotate = best[17] / unit;
+        float rBare = best[18] / unit;
+        float rFirst = best[19] / unit - rBare;
+        float rFirstScript = best[20] / unit - rBare;
 
         string got = "bridge " + rBridge.ToString() + " field " + rField.ToString();
         got = got + " obj " + rObj.ToString() + " text " + rText.ToString();
@@ -1899,6 +2050,8 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         got = got + " arrVec " + rArrVec.ToString() + " arrSpan " + rArrSpan.ToString();
         got = got + " fieldProxy " + rFieldProxy.ToString() + " protoOut " + rProtoOut.ToString();
         got = got + " missing " + rMissing.ToString() + " guarded " + rGuarded.ToString();
+        got = got + " same " + rSame.ToString() + " rotate " + rRotate.ToString();
+        got = got + " bare " + rBare.ToString() + " first " + rFirst.ToString() + " firstScript " + rFirstScript.ToString();
         got = got + " unit " + unit.ToString();
 
         // В graft.log, а не в журнал сьюты: тот эфемерный и удаляется вместе с профилем,
@@ -1942,6 +2095,16 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         // Защита от падения на x64 табличная: в рантайме её быть не должно вовсе.
         assert(rGuarded < PERF_GUARDED, "< " + PERF_GUARDED.ToString(), got,
             "натив под __try стоит столько же, сколько без него");
+        // Объекты по очереди — поиск в таблице вместо сравнения указателей. Сравниваем с
+        // тем же циклом на одном объекте: обе петли в одном раунде.
+        assert(rRotate < rSame * PERF_ROTATE, "rotate ~ same", got,
+            "метод класса с полями на разных объектах по очереди");
+        // Первый вызов заводит экземпляр, смерть объекта его разрушает. Класс объекта
+        // среди привязанных — ответ по имени; скриптовый наследник — один вопрос движку.
+        assert(rFirst < PERF_FIRST_TOUCH, "< " + PERF_FIRST_TOUCH.ToString(), got,
+            "экземпляр C++ на новом объекте привязанного класса");
+        assert(rFirstScript < PERF_FIRST_TOUCH_SCRIPT, "< " + PERF_FIRST_TOUCH_SCRIPT.ToString(), got,
+            "экземпляр C++ на новом объекте скриптового наследника");
     }
 
     void MakeBoxInScope()
@@ -1950,7 +2113,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         box.Bump(5);   // тут заводится экземпляр на стороне C++
     }
 
-    [KRU_TEST_CASE("Lifetime_ScopeExit").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Lifetime_ScopeExit", SERAPH_GRAFT_TEST)];
     void Lifetime_ScopeExit()
     {
         int before = SeraphGraftLiveBoxes();
@@ -1960,7 +2123,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "объект вышел из скоупа: C++ отпустил его вместе со скриптовым");
     }
 
-    [KRU_TEST_CASE("Lifetime_ExplicitDelete").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Lifetime_ExplicitDelete", SERAPH_GRAFT_TEST)];
     void Lifetime_ExplicitDelete()
     {
         int before = SeraphGraftLiveBoxes();
@@ -1980,7 +2143,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "delete в скрипте доходит до C++ без единой строчки в скрипте");
     }
 
-    [KRU_TEST_CASE("Lifetime_NoNativeCallNoInstance").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Lifetime_NoNativeCallNoInstance", SERAPH_GRAFT_TEST)];
     void Lifetime_NoNativeCallNoInstance()
     {
         int before = SeraphGraftLiveBoxes();
@@ -1998,7 +2161,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
 
     // Шаг 1. Дескриптор функции знает, сколько у неё параметров (+88). Не сойдётся —
     // блок аргументов собирать не по чему.
-    [KRU_TEST_CASE("Out_DescriptorCarriesParamCount").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Out_DescriptorCarriesParamCount", SERAPH_GRAFT_TEST)];
     void Out_DescriptorCarriesParamCount()
     {
         // EnScript.GetClassVar(Class inst, string varname, int index, out void result)
@@ -2008,7 +2171,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
 
     // Шаг 2. У параметра есть готовый шаблон переменной, и тег в нём настоящий. Это и
     // есть находка, на которой держится всё остальное: шаблон не сочиняем, а копируем.
-    [KRU_TEST_CASE("Out_ParamTemplateHasRealTypeTag").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Out_ParamTemplateHasRealTypeTag", SERAPH_GRAFT_TEST)];
     void Out_ParamTemplateHasRealTypeTag()
     {
         int tag = SeraphGraftProtoParamTag("EnScript", "GetClassVar", 0);
@@ -2022,7 +2185,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
     
     // Шаг 3. Настоящий маршалируемый вызов наружу с проверяемым ответом:
     // typename.GetModule() зовётся на дескрипторе класса и говорит, где класс объявлен.
-    [KRU_TEST_CASE("Out_MarshalledCallReturnsValue").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Out_MarshalledCallReturnsValue", SERAPH_GRAFT_TEST)];
     void Out_MarshalledCallReturnsValue()
     {
         string module = SeraphGraftTypeModule("Man");
@@ -2030,7 +2193,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
     }
 
     // Шаг 4. Создание скриптового объекта из C++ — тот же `new`, что в скрипте.
-    [KRU_TEST_CASE("Out_SpawnCreatesScriptObject").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Out_SpawnCreatesScriptObject", SERAPH_GRAFT_TEST)];
     void Out_SpawnCreatesScriptObject()
     {
         string made = SeraphGraftSpawnClass("array<int>");
@@ -2043,7 +2206,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
     //
     // Заодно закреплены две особенности GetClassVar, найденные разведкой: код возврата
     // врёт (0 и на успехе), а глобальные переменные она не отдаёт — из скрипта тоже.
-    [KRU_TEST_CASE("Out_ClassVarThroughEngine").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Out_ClassVarThroughEngine", SERAPH_GRAFT_TEST)];
     void Out_ClassVarThroughEngine()
     {
         SeraphNode node = new SeraphNode(4242, 1.5, "узел");
@@ -2052,7 +2215,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "поле читается движковым GetClassVar из C++");
     }
 
-    [KRU_TEST_CASE("Out_GlobalVariableIsNotServedByEngine").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Out_GlobalVariableIsNotServedByEngine", SERAPH_GRAFT_TEST)];
     void Out_GlobalVariableIsNotServedByEngine()
     {
         DayZGame fromScript;
@@ -2065,7 +2228,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
 
     // Шаг 5б. Корень игры приходит вместе с тиком: мод и так зовёт GraftTick одной
     // строкой, поэтому GetGame() приезжает бесплатно и без единой лишней строки.
-    [KRU_TEST_CASE("Out_RootArrivesWithTick").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Out_RootArrivesWithTick", SERAPH_GRAFT_TEST)];
     void Out_RootArrivesWithTick()
     {
         GraftTick(0.0, GetGame());
@@ -2079,7 +2242,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
     // эта до сих пор выполнялась только при живом игроке (GetPlainId), то есть почти
     // никогда. Здесь она работает на пустом сервере: ScriptModule.CallFunction зовёт
     // скриптовую функцию GetGame(), и ответ сверяется с корнем от тика.
-    [KRU_TEST_CASE("Out_ObjectReceiverMarshalledCall").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Out_ObjectReceiverMarshalledCall", SERAPH_GRAFT_TEST)];
     void Out_ObjectReceiverMarshalledCall()
     {
         GraftTick(0.0, GetGame());
@@ -2091,7 +2254,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
 
     // Шаг 6. Целевой сценарий целиком: корень -> буфер -> движковый GetPlayers -> обход.
     // На пустом сервере ответ "0:" — и он уже доказывает всю цепочку.
-    [KRU_TEST_CASE("Out_PlayersFromCppMatchScript").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Out_PlayersFromCppMatchScript", SERAPH_GRAFT_TEST)];
     void Out_PlayersFromCppMatchScript()
     {
         GraftTick(0.0, GetGame());
@@ -2110,7 +2273,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
     // указатель в rax. Разъедется — сюда приедет не тот объект, и это ловится сверкой с
     // указателем, пришедшим из скрипта. Стоило steam id: GetIdentity отдавал мусор,
     // GetPlainId у него — пустую строку.
-    [KRU_TEST_CASE("Out_ObjectReturnIsTheSameObjectAsInScript").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Out_ObjectReturnIsTheSameObjectAsInScript", SERAPH_GRAFT_TEST)];
     void Out_ObjectReturnIsTheSameObjectAsInScript()
     {
         GraftTick(0.0, GetGame());
@@ -2118,7 +2281,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         assert(same, "true", same.ToString(), "натив вернул тот же объект, что видит скрипт");
     }
 
-    [KRU_TEST_CASE("Out_SteamIdsFromCppMatchScript").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Out_SteamIdsFromCppMatchScript", SERAPH_GRAFT_TEST)];
     void Out_SteamIdsFromCppMatchScript()
     {
         GraftTick(0.0, GetGame());
@@ -2145,7 +2308,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
     // Своего потока у библиотеки нет: всё обязано идти по скриптовому. GraftTick — то
     // место, где C++ просыпается, и мод зовёт его из своего OnUpdate.
 
-    [KRU_TEST_CASE("Tick_PluginIsSubscribed").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Tick_PluginIsSubscribed", SERAPH_GRAFT_TEST)];
     void Tick_PluginIsSubscribed()
     {
         int subscribed = GraftTickCount();
@@ -2153,7 +2316,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
             "подписка плагина дошла до хоста");
     }
 
-    [KRU_TEST_CASE("Tick_ReachesPlugin").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Tick_ReachesPlugin", SERAPH_GRAFT_TEST)];
     void Tick_ReachesPlugin()
     {
         int before = SeraphGraftTicks();
@@ -2169,7 +2332,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
     // одно — совпадает ли поток, на котором бьётся кандидат, с потоком, на котором зовут
     // нативы. Не совпал — кандидат бесполезен, звать движок оттуда нельзя.
     // Числа уезжают в graft.log: журнал сьюты эфемерный, а решение принимается по ним.
-    [KRU_TEST_CASE("Tick_LoopProbe").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Tick_LoopProbe", SERAPH_GRAFT_TEST)];
     void Tick_LoopProbe()
     {
         // Тик без единой строки в скрипте: обработчик плагина обязан быть вызван столько
@@ -2216,7 +2379,7 @@ class SERAPH_GRAFT_TEST : KRU_Suite
         assert(probe != "", "не пусто", probe, "разведка кадра отвечает");
     }
 
-    [KRU_TEST_CASE("Tick_DeltaArrivesIntact").IN(SERAPH_GRAFT_TEST)];
+    [KRU_TEST_CASE("Tick_DeltaArrivesIntact", SERAPH_GRAFT_TEST)];
     void Tick_DeltaArrivesIntact()
     {
         GraftTick(0.25, GetGame());

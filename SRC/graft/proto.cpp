@@ -201,7 +201,9 @@ std::string proto_file(const std::vector<const graft_native_desc*>& source, cons
         return nullptr;
     };
     // База из этого же файла печатается раньше наследника, в каком бы порядке их ни
-    // привязали.
+    // привязали. Заголовок приходит из чужой DLL плагина, поэтому и цикл баз («A : B»,
+    // «B : A») обязан кончиться, а не уронить генератор: такой файл отвергнет уже
+    // компилятор скрипта, со своей понятной ошибкой.
     const auto base_of = [&](const char* c) -> std::string_view {
         const char* header = header_of(c);
         const char* colon  = header ? std::strchr(header, ':') : nullptr;
@@ -212,17 +214,23 @@ std::string proto_file(const std::vector<const graft_native_desc*>& source, cons
         base.remove_prefix(std::min(base.find_first_not_of(' '), base.size()));
         return base.substr(0, base.find_first_of(" <"));
     };
+    const auto among = [](const std::vector<const char*>& list, const char* c) {
+        return std::ranges::any_of(list, [&](const char* o) { return std::strcmp(o, c) == 0; });
+    };
     std::vector<const char*> ordered;
+    std::vector<const char*> placing;
     const auto               place = [&](this const auto& self, const char* c) -> void {
-        if (std::ranges::any_of(ordered, [&](const char* o) { return std::strcmp(o, c) == 0; })) {
+        if (among(ordered, c) || among(placing, c)) {
             return;
         }
+        placing.push_back(c);
         const std::string_view base = base_of(c);
         for (const char* b : classes) {
             if (!base.empty() && base == b) {
                 self(b);
             }
         }
+        placing.pop_back();
         ordered.push_back(c);
     };
     for (const char* c : classes) {

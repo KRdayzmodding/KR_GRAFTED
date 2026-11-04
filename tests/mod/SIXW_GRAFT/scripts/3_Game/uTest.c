@@ -17,7 +17,7 @@
  *   [KRU_TEST_SUITE("math::basic", MATH_TEST)];
  *   class MATH_TEST : KRU_Suite
  *   {
- *       [KRU_TEST_CASE("Add_Simple").IN(MATH_TEST)];
+ *       [KRU_TEST_CASE("Add_Simple", MATH_TEST)];
  *       void Add_Simple()
  *       {
  *           int a = 2 + 2;
@@ -547,24 +547,12 @@ class KRU : Managed
 //  Registration attributes
 // ─────────────────────────────────────────────────────────────────────────────
 
-class KRU_TEST_CASE_ATTRIBUTE : Managed
+// Атрибут — вызов конструктора класса: с 1.30 компилятор не принимает в атрибуте цепочку
+// `KRU_TEST_CASE("x").IN(SUITE)` («Expected attribute call»).
+class KRU_TEST_CASE : Managed
 {
-    protected string   name;
-    protected typename suite;
-    protected string   file;
-    protected string   line;
-
-    void KRU_TEST_CASE_ATTRIBUTE(string testName) { name = testName; }
-
-    KRU_TEST_CASE_ATTRIBUTE IN(typename suiteType)
-    {
-        suite = suiteType;
-        KRU.RegisterTestCase(suite, name, file, line);
-        return this;
-    }
+    void KRU_TEST_CASE(string testName, typename suiteType) { KRU.RegisterTestCase(suiteType, testName, "", ""); }
 }
-
-KRU_TEST_CASE_ATTRIBUTE KRU_TEST_CASE(string name) { return new KRU_TEST_CASE_ATTRIBUTE(name); }
 
 class KRU_TEST_SUITE : Managed
 {

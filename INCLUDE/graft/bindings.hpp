@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH LicenseRef-GRAFT-plugin-exception-1.0
 // Мод на GRAFT ничего не обязан — даже закрытый и платный. См. LICENSE-EXCEPTION.
 #pragma once
+#include <algorithm>
+#include <array>
 #include <cstring>
 #include <string>
 #include <string_view>
@@ -17,12 +19,14 @@ inline const native* natives() {
     return detail::head();
 }
 
-// Сколько экземпляров класса C сейчас живёт на стороне C++ (по одному на скриптовый
-// объект, который хоть раз звал натив). Диагностика: если после смерти скриптовых
-// объектов число не падает, значит до нас не дошло их разрушение.
+// Сколько экземпляров класса C (с наследниками) сейчас живёт на стороне C++ — по одному на
+// скриптовый объект, который хоть раз звал натив. Диагностика: если после смерти
+// скриптовых объектов число не падает, значит до нас не дошло их разрушение.
 template <class C>
 std::size_t live_instances() {
-    return detail::instances<C>().size();
+    return static_cast<std::size_t>(std::ranges::count_if(detail::instances<C>(), [](const auto& entry) {
+        return detail::derives(entry.second.type, &detail::kind_of<C>());
+    }));
 }
 
 // ── Привязка ─────────────────────────────────────────────────────────────────
@@ -37,29 +41,125 @@ std::size_t live_instances() {
 //   };
 //
 //   GRAFT_BINDINGS("1_Core") {
-//       bind.global<&Ping>("SeraphGraftPing");
-//       bind.class_<Table>("CppHashMap").method<&Table::Set>("Set").method<&Table::Count>("Count");
+//       bind.global<&Ping>();
+//       bind.class_<Table>().method<&Table::Set>().method<&Table::Count>();
 //   }
 //
-// Имя скриптового класса берётся из самого типа (script_object<"...">), объект в методы
-// попадает сам, а поля живут столько же, сколько скриптовый объект.
+// Имя скриптового класса берётся из самого типа (script_object<"...">), имя метода — из
+// имени функции C++, объект в методы попадает сам, а поля живут столько же, сколько
+// скриптовый объект. Класс script_object уже есть в движке или в скрипте мода: генератор
+// дописывает к нему методы через `modded class`.
 template <name_t N>
 using script_object = ref<N>;
+
+// Новый класс — его вводит сам мод, в движке его нет. Объявление печатается целиком:
+// `class Имя` или `class Имя : База`.
+//
+//   struct Animal : graft::new_class<"MyAnimal"> {
+//       int legs = 4;
+//       int Legs() const { return legs; }
+//   };
+//   struct Dog : graft::new_class<"MyDog", Animal> {   // class MyDog : MyAnimal
+//       int barks = 0;
+//       int Bark() { return ++barks; }
+//   };
+//
+// Наследование настоящее: у Dog свои поля поверх полей Animal, а объект — один. Метод
+// Animal, позванный на объекте MyDog (или скриптового наследника MyDog), видит тот же
+// экземпляр Dog. База — другой new_class или движковый класс (graft::ref<"Managed">): у
+// такой полей нет, она только печатается в заголовке.
+template <name_t N, class Base = void>
+struct new_class : Base {
+    static_assert(requires { Base::script_class; }, "база new_class — скриптовый класс: new_class или ref<\"Имя\">");
+    static constexpr name_t script_class = N;
+    using graft_base                     = Base;
+};
+
+template <name_t N>
+struct new_class<N, void> : ref<N> {
+    using graft_base = void;
+};
+
+// Описание метода для генератора: имя в скрипте (по умолчанию — имя функции C++), имена
+// аргументов через запятую и описание. Имена аргументов из C++ не достать — язык их не
+// отдаёт, поэтому они строкой.
+//
+//   .method<&Animal::Feed>({.args = "grams", .doc = "Покормить животное."})
+//   .method<&Dog::Bark>({.name = "Woof"})
+struct decl {
+    const char* name = nullptr;
+    const char* args = nullptr;
+    const char* doc  = nullptr;
+};
+
+namespace detail {
+
+// Имя функции C++ без класса и параметров шаблона: &Dog::Bark -> "Bark",
+// &Dog::Fetch<int> -> "Fetch". Из сигнатуры самого шаблона — другого способа язык не даёт.
+template <auto F>
+consteval std::string_view signature() {
+#if defined(__clang__) || defined(__GNUC__)
+    return __PRETTY_FUNCTION__; // "... signature() [F = &Dog::Bark]"
+#else
+    return __FUNCSIG__; // "... signature<&Dog::Bark>(void)"
+#endif
+}
+
+consteval std::string_view short_name(std::string_view s) {
+#if defined(__clang__) || defined(__GNUC__)
+    s = s.substr(s.rfind("F = ") + 4);
+    s = s.substr(0, s.rfind(']'));
+#else
+    s = s.substr(s.find("signature<") + 10);
+    s = s.substr(0, s.rfind(">(void)"));
+#endif
+    if (s.ends_with('>')) { // параметры шаблона функции
+        int depth = 0;
+        for (std::size_t i = s.size(); i-- > 0;) {
+            if (s[i] == '>') {
+                ++depth;
+            } else if (s[i] == '<') {
+                --depth;
+            }
+            if (depth == 0) {
+                s = s.substr(0, i);
+                break;
+            }
+        }
+    }
+    const std::size_t colon = s.rfind("::");
+    s                       = colon == std::string_view::npos ? s : s.substr(colon + 2);
+    return s.starts_with('&') ? s.substr(1) : s;
+}
+
+template <auto F>
+inline constexpr auto function_name = [] {
+    constexpr std::string_view        name = short_name(signature<F>());
+    std::array<char, name.size() + 1> out{};
+    std::ranges::copy(name, out.begin());
+    return out;
+}();
+
+// Заголовок нового класса: "Имя" или "Имя : База".
+template <class C>
+inline constexpr auto header = [] {
+    if constexpr (std::is_void_v<typename C::graft_base>) {
+        return C::script_class;
+    } else {
+        return C::script_class + name_t{" : "} + C::graft_base::script_class;
+    }
+}();
+
+} // namespace detail
 
 // Объявление уже написано в скрипте руками — генератор такие записи не печатает. Нужно
 // там, где он не выразит синтаксис: шаблонный класс мода, свои модификаторы.
 inline constexpr struct declared_t {
 } declared{};
 
-// Тег: класса в движке НЕТ, его вводит сам мод. Объявление печатается целиком
-// (`class Имя`), а не правкой существующего (`modded class Имя`). Так уже объявляются
-// шаблонные классы — тег даёт то же самое обычным. База пишется в имени, как в скрипте:
-//
-//   bind.class_<Tag>("Animal", graft::fresh).method<&Tag::Name>("Name");
-//   bind.class_<Tag>("Dog : Animal", graft::fresh).method<&Bark>("Bark");
-//
-// Генератор печатает базу раньше наследника. Одна C++-структура на обе привязки — один
-// экземпляр на объект: нативы Dog видят те же поля, что и нативы Animal.
+// Тег для класса C++, который о скриптах не знает: класса в движке НЕТ, его вводит сам
+// мод, и объявление печатается целиком (`class Имя`), а не правкой существующего
+// (`modded class Имя`). Своему типу удобнее new_class — там же задаётся и база.
 inline constexpr struct fresh_t {
 } fresh{};
 
@@ -71,62 +171,57 @@ public:
     template <class C>
     class class_scope {
     public:
-        // Имя может нести параметры шаблона: "CppHashMap<Class K, Class V>", а у нового
-        // класса — ещё и базу: "Child : Base". Регистрация идёт по имени до '<' или ':'
-        // (сам класс), а объявление печатается целиком.
-        class_scope(const char* class_name, const char* module, bool generate, bool fresh = false)
-            : class_name_(class_name), module_(module), generate_(generate) {
-            const std::string_view whole{class_name};
-            const std::size_t      end = whole.find_first_of(fresh ? "<:" : "<");
-            if (end != std::string_view::npos) {
+        // Имя может нести параметры шаблона: "CppHashMap<Class K, Class V>". Регистрация
+        // идёт по имени до '<' (сам шаблонный класс), а объявление печатается целиком.
+        // declare — заголовок нового класса (`class ...`); nullptr — класс движковый.
+        class_scope(const char* class_name, const char* module, bool generate, const char* declare = nullptr)
+            : class_name_(class_name), module_(module), generate_(generate), declare_(declare) {
+            if (const char* angle = std::strchr(class_name, '<')) {
                 declare_    = class_name;
-                class_name_ = detail::intern(std::string(trim(whole.substr(0, end))));
-            } else if (fresh) {
-                declare_ = class_name;
+                class_name_ = detail::intern(std::string(class_name, static_cast<std::size_t>(angle - class_name)));
             }
+            detail::know_kind<C>();
         }
 
         // F — метод класса, константный метод или свободная функция, берущая объект
         // первым параметром. Объект в объявление скрипта не попадает.
         //
-        // Если в сигнатуре есть graft::value, метод обслуживает ШАБЛОННЫЙ скриптовый
-        // класс: одна привязка на общий класс работает для всех инстанциаций, а типы
-        // приезжают в рантайме. Библиотека переключается на этот путь сама.
+        // Если в сигнатуре есть graft::value или out у значения (`f32& ratio`), метод
+        // зовётся маршалируемым путём (`proto`) — библиотека переключается на него сама.
+        // graft::value — это ШАБЛОННЫЙ скриптовый класс: одна привязка на общий класс
+        // работает для всех инстанциаций, а типы приезжают в рантайме.
+        template <auto F>
+        class_scope& method(decl d = {}) {
+            constexpr bool marshalled = detail::marshalled_member<F>;
+            using T                   = std::conditional_t<marshalled, detail::marshal_thunk<C, F>, detail::method_thunk<C, F>>;
+            return put<F, T>(d, false, marshalled);
+        }
+
         template <auto F>
         class_scope& method(const char* name, const char* params = nullptr, const char* doc = nullptr) {
-            if constexpr (detail::marshalled_member<F>) {
-                using T = detail::marshal_thunk<C, F>;
-                return put(name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args, true, params, doc);
-            } else {
-                using T = detail::method_thunk<C, F>;
-                return put(name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args, false, params, doc);
-            }
+            return method<F>({name, params, doc});
         }
 
         // Статический метод: объекта нет, подойдёт любая свободная функция.
         // graft::value в сигнатуре переключает на маршалируемый путь — у статического
         // вызова приёмника нет, форма та же, что у глобального.
         template <auto F>
+        class_scope& static_method(decl d = {}) {
+            constexpr bool marshalled = detail::marshalled_free<F>;
+            using T                   = std::conditional_t<marshalled, detail::marshal_free_thunk<F>, detail::free_thunk<F>>;
+            return put<F, T>(d, true, marshalled);
+        }
+
+        template <auto F>
         class_scope& static_method(const char* name, const char* params = nullptr, const char* doc = nullptr) {
-            if constexpr (detail::marshalled_free<F>) {
-                using T = detail::marshal_free_thunk<F>;
-                return put(name, reinterpret_cast<void*>(&T::call), true, T::ret, T::args, true, params, doc);
-            } else {
-                using T = detail::free_thunk<F>;
-                return put(name, reinterpret_cast<void*>(&T::call), true, T::ret, T::args, false, params, doc);
-            }
+            return static_method<F>({name, params, doc});
         }
 
     private:
-        static std::string_view trim(std::string_view s) {
-            while (!s.empty() && s.back() == ' ') {
-                s.remove_suffix(1);
-            }
-            return s;
-        }
-
-        class_scope& put(const char* name, void* impl, bool is_static, const char* ret, const char* const* args, bool marshalled = false, const char* params = nullptr, const char* doc = nullptr) {
-            detail::add({class_name_, name, impl, is_static, ret, args, nullptr, params, doc, marshalled, module_, generate_, declare_});
+        template <auto F, class T>
+        class_scope& put(const decl& d, bool is_static, bool marshalled) {
+            const char* name = d.name ? d.name : detail::function_name<F>.data();
+            detail::add({class_name_, name, reinterpret_cast<void*>(&T::call), is_static, T::ret, T::args, nullptr, d.args, d.doc, marshalled, module_, generate_, declare_});
             return *this;
         }
 
@@ -136,20 +231,25 @@ public:
         const char* declare_ = nullptr;
     };
 
-    // params — имена аргументов через запятую ("player, uid"), doc — однострочное
-    // описание. Оба попадают в сгенерированное объявление: пользователь читает не
-    // типы, а имена и назначение.
+    // Имя в скрипте — имя функции C++, если не задано иначе; args — имена аргументов через
+    // запятую, doc — описание. Всё это попадает в сгенерированное объявление: пользователь
+    // читает не типы, а имена и назначение.
     //
-    //   bind.global<&KRT_Attach>("KRT_Attach", "player, player_uid, char_uid",
-    //                            "Подключить игрока: слот актора и конверт.");
+    //   bind.global<&KRT_Attach>({.args = "player, player_uid, char_uid",
+    //                             .doc  = "Подключить игрока: слот актора и конверт."});
+    template <auto Fn>
+    bindings& global(decl d = {}) {
+        return put_global<Fn>(d, true);
+    }
+
     template <auto Fn>
     bindings& global(const char* name, const char* params = nullptr, const char* doc = nullptr) {
-        return put_global<Fn>(name, true, params, doc);
+        return put_global<Fn>({name, params, doc}, true);
     }
 
     template <auto Fn>
     bindings& global(const char* name, declared_t) {
-        return put_global<Fn>(name, false);
+        return put_global<Fn>({name}, false);
     }
 
     // Настоящий шаблон C++: методы пишутся обычными типами, а библиотека разворачивает
@@ -219,13 +319,18 @@ public:
     // Класс, которого в движке нет: объявляется целиком, а не правкой существующего.
     template <class C>
     class_scope<C> class_(const char* name, fresh_t) {
-        return {name, module_, true, /*fresh=*/true};
+        return {name, module_, true, name};
     }
 
-    // ...или из самого типа, если он наследует script_object<"Имя">.
+    // ...или из самого типа: script_object<"Имя"> — дописать движковый класс,
+    // new_class<"Имя", База> — объявить новый целиком.
     template <class C>
     class_scope<C> class_() {
-        return {C::script_class.value, module_, true};
+        if constexpr (requires { typename C::graft_base; }) {
+            return {C::script_class.value, module_, true, detail::header<C>.value};
+        } else {
+            return {C::script_class.value, module_, true};
+        }
     }
 
     template <class C>
@@ -238,14 +343,11 @@ private:
     // объявлении такой аргумент печатается как `void` — «любой», ровно как у
     // ванильных proto void Print(void var) и Serializer.Write(void).
     template <auto Fn>
-    bindings& put_global(const char* name, bool generate, const char* params = nullptr, const char* doc = nullptr) {
-        if constexpr (detail::marshalled_free<Fn>) {
-            using T = detail::marshal_free_thunk<Fn>;
-            detail::add({nullptr, name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args, nullptr, params, doc, true, module_, generate});
-        } else {
-            using T = detail::free_thunk<Fn>;
-            detail::add({nullptr, name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args, nullptr, params, doc, false, module_, generate});
-        }
+    bindings& put_global(const decl& d, bool generate) {
+        constexpr bool marshalled = detail::marshalled_free<Fn>;
+        using T                   = std::conditional_t<marshalled, detail::marshal_free_thunk<Fn>, detail::free_thunk<Fn>>;
+        const char* name          = d.name ? d.name : detail::function_name<Fn>.data();
+        detail::add({nullptr, name, reinterpret_cast<void*>(&T::call), false, T::ret, T::args, nullptr, d.args, d.doc, marshalled, module_, generate});
         return *this;
     }
 

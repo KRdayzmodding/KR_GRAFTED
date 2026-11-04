@@ -73,22 +73,35 @@ bool DemoWrapped(graft::i32 slot) {
     return slot >= 0;
 }
 
-// Новые классы с базой: одна C++-структура на обе привязки, нативы наследника — свободные
-// функции от неё. Наследник привязан ПЕРВЫМ: генератор обязан всё равно напечатать базу
-// раньше.
-struct DemoAnimal : graft::script_object<"DemoAnimal"> {
+// Новые классы с базой: база — тип C++, наследник — new_class поверх неё. Наследник привязан
+// ПЕРВЫМ: генератор обязан всё равно напечатать базу раньше. Имена методов — из самих
+// функций C++.
+struct DemoAnimal : graft::new_class<"DemoAnimal"> {
     graft::i32 legs = 4;
 
     graft::i32 Legs() const { return legs; }
 };
 
-graft::i32 DemoBark(const DemoAnimal& self) {
-    return self.legs;
+struct DemoDog : graft::new_class<"DemoDog", DemoAnimal> {
+    graft::i32 barks = 0;
+
+    graft::i32 Bark() { return ++barks + legs; }
+};
+
+// База — движковый класс: печатается в заголовке, экземпляра не держит.
+struct DemoThing : graft::new_class<"DemoThing", graft::ref<"Managed">> {
+    graft::i32 Id() const { return 1; }
+};
+
+// Тот же класс-наследник, но метод привязан под другим именем и с описанием.
+graft::i32 DemoHowl(const DemoDog& dog) {
+    return dog.barks;
 }
 
 GRAFT_BINDINGS("1_Core") {
-    bind.class_<DemoAnimal>("DemoDog : DemoAnimal", graft::fresh).method<&DemoBark>("Bark");
-    bind.class_<DemoAnimal>("DemoAnimal", graft::fresh).method<&DemoAnimal::Legs>("Legs");
+    bind.class_<DemoDog>().method<&DemoDog::Bark>().method<&DemoHowl>({.name = "Howl", .doc = "Сколько лаял."});
+    bind.class_<DemoAnimal>().method<&DemoAnimal::Legs>();
+    bind.class_<DemoThing>().method<&DemoThing::Id>();
     bind.global<&DemoNamed>("DemoNamed", "slot, zone, player", "Переселить игрока в зону.");
     bind.class_<DemoDocs>().method<&DemoDocs::Move>("Move", "speed_cms", "Задать скорость в см/с.");
     bind.global<&DemoWrapped>("DemoWrapped", "slot", "Занять слот.\n\nВозврат — влез ли.");
@@ -199,16 +212,24 @@ TEST(Proto, FileGroupsMethodsIntoModdedClass) {
     EXPECT_NE(file.find("    proto native void Scale(float p0);"), std::string::npos);
 }
 
-// Имя класса с базой регистрируется без неё: по нему движок ищет импл натива.
-TEST(Proto, FreshClassRegistersNameWithoutBase) {
+// Имя метода — имя функции C++: без класса, пространства имён и параметров шаблона.
+static_assert(std::string_view{graft::detail::function_name<&DemoDog::Bark>.data()} == "Bark");
+static_assert(std::string_view{graft::detail::function_name<&DemoNamed>.data()} == "DemoNamed");
+static_assert(std::string_view{graft::detail::function_name<&DemoStatics::Any>.data()} == "Any");
+
+TEST(Proto, MethodNameComesFromTheFunction) {
     EXPECT_STREQ(find("Bark").class_name, "DemoDog");
     EXPECT_STREQ(find("Legs").class_name, "DemoAnimal");
+    EXPECT_STREQ(find("Howl").class_name, "DemoDog");
+    EXPECT_STREQ(find("Howl").doc, "Сколько лаял.");
 }
 
-TEST(Proto, FreshClassDeclaresItsBase) {
+TEST(Proto, NewClassDeclaresItsBase) {
     const std::string file = graft::proto_file();
-    EXPECT_NE(file.find("\nclass DemoDog : DemoAnimal\n{\n    proto native int Bark();\n}"), std::string::npos)
+    EXPECT_NE(file.find("\nclass DemoDog : DemoAnimal\n{\n    proto native int Bark();\n"), std::string::npos)
         << file;
+    EXPECT_NE(file.find("\nclass DemoThing : Managed\n{"), std::string::npos) << file;
+    EXPECT_NE(file.find("\nclass DemoAnimal\n{"), std::string::npos) << file;
 }
 
 TEST(Proto, BaseIsDeclaredBeforeChild) {
@@ -218,6 +239,16 @@ TEST(Proto, BaseIsDeclaredBeforeChild) {
     ASSERT_NE(base, std::string::npos);
     ASSERT_NE(child, std::string::npos);
     EXPECT_LT(base, child);
+}
+
+// Цикл баз в чужой DLL — не падение генератора: файл печатается, а отвергнет его уже
+// компилятор скрипта.
+TEST(Proto, CyclicBasesDoNotHangTheGenerator) {
+    graft_native_desc a{"CycA", "F", nullptr, "void", nullptr, "1_Core", "CycA : CycB", 0, 0, 1, nullptr, nullptr};
+    graft_native_desc b{"CycB", "G", nullptr, "void", nullptr, "1_Core", "CycB : CycA", 0, 0, 1, nullptr, nullptr};
+    const std::string file = graft::proto_file({&a, &b}, "1_Core");
+    EXPECT_NE(file.find("class CycA : CycB"), std::string::npos);
+    EXPECT_NE(file.find("class CycB : CycA"), std::string::npos);
 }
 
 // У класса с состоянием в объявлении — только его методы: ни служебного натива, ни

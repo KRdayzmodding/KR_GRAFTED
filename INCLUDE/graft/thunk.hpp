@@ -2,11 +2,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH LicenseRef-GRAFT-plugin-exception-1.0
 // Мод на GRAFT ничего не обязан — даже закрытый и платный. См. LICENSE-EXCEPTION.
 #pragma once
+#include <algorithm>
 #include <cstring>
 #include <deque>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include "graft/guard.hpp"
 #include "graft/script.hpp"
@@ -69,19 +72,65 @@ inline constexpr bool has_fields =
     !std::is_empty_v<C> && (sizeof(C) != sizeof(void*) || !std::is_trivially_copyable_v<C> ||
                             !std::is_trivially_destructible_v<C>);
 
-// Таблица намеренно не разрушается: движок может позвать натив (в том числе Dispose из
-// деструктора скриптового объекта) уже после того, как побежали деструкторы статиков
-// при выгрузке DLL. Работать с трупом контейнера хуже, чем не освободить его на выходе.
+// База с полями: new_class<"Имя", База> (bindings.hpp). Наследник и база — ОДИН экземпляр
+// на объект: методы базы, позванные на объекте наследника, видят его поля как свои. База
+// без полей (движковый класс, голая обёртка) экземпляра не держит и в счёт не идёт.
 template <class C>
-std::unordered_map<void*, C>& instances() {
-    static auto* all = new std::unordered_map<void*, C>;
-    return *all;
+struct base_of {
+    using type = void;
+};
+
+template <class C>
+    requires requires { typename C::graft_base; } && (!std::is_void_v<typename C::graft_base>) &&
+             has_fields<typename C::graft_base>
+struct base_of<C> {
+    using type = typename C::graft_base;
+};
+
+// Верх иерархии: одна таблица экземпляров на всю иерархию, ключ — скриптовый объект.
+template <class C>
+struct root_of_t {
+    using type = C;
+};
+
+template <class C>
+    requires(!std::is_void_v<typename base_of<C>::type>)
+struct root_of_t<C> {
+    using type = typename root_of_t<typename base_of<C>::type>::type;
+};
+template <class C>
+using root_of = typename root_of_t<C>::type;
+
+// Тип экземпляра в рантайме. Экземпляр хранится указателем на корень иерархии: к любому
+// классу цепочки от него ведёт static_cast.
+struct kind {
+    const char* script; // скриптовый класс; nullptr — тип о скрипте не знает
+    const kind* base;   // ближайшая база с полями
+    void* (*make)();    // новый экземпляр, указателем на корень
+    void (*destroy)(void*);
+    void (*forget)(void* self); // сбросить память о self у каждого класса цепочки
+};
+
+inline bool derives(const kind* k, const kind* from) {
+    for (; k; k = k->base) {
+        if (k == from) {
+            return true;
+        }
+    }
+    return false;
+}
+
+inline int depth(const kind* k) {
+    int d = 0;
+    while ((k = k->base)) {
+        ++d;
+    }
+    return d;
 }
 
 // Последний найденный экземпляр. Поиск по таблице — хеш плюс сравнение ключа на каждый
 // нативный вызов, а скриптовый цикл почти всегда дёргает один и тот же объект: тогда
-// вместо поиска остаётся сравнение указателей. Ссылки на элементы unordered_map при
-// вставках не портятся, поэтому держать указатель можно; сбрасывает его forget_instance.
+// вместо поиска остаётся сравнение указателей. Сбрасывает его forget_instance.
 // ponytail: как и сама таблица, без синхронизации — нативы зовутся из скриптового потока.
 template <class C>
 struct memo {
@@ -95,6 +144,142 @@ memo<C>& last_instance() {
     return m;
 }
 
+template <class C>
+void forget_memo(void* self) {
+    if (last_instance<C>().self == self) {
+        last_instance<C>() = {};
+    }
+    if constexpr (!std::is_void_v<typename base_of<C>::type>) {
+        forget_memo<typename base_of<C>::type>(self);
+    }
+}
+
+template <class C>
+const kind& kind_of() {
+    using B    = typename base_of<C>::type;
+    using Root = root_of<C>;
+    static const kind k{
+        [] -> const char* {
+            if constexpr (requires { C::script_class; }) {
+                return C::script_class.value;
+            } else {
+                return nullptr;
+            }
+        }(),
+        [] -> const kind* {
+            if constexpr (std::is_void_v<B>) {
+                return nullptr;
+            } else {
+                return &kind_of<B>();
+            }
+        }(),
+        [] -> void* { return static_cast<Root*>(new C()); },
+        [](void* p) { delete static_cast<C*>(static_cast<Root*>(p)); },
+        &forget_memo<C>,
+    };
+    return k;
+}
+
+// Владеет экземпляром: стирание из таблицы разрушает его деструктором настоящего типа.
+struct held {
+    void*       object;
+    const kind* type;
+
+    held(void* o, const kind* t) : object(o), type(t) {}
+
+    held(held&& other) noexcept : object(std::exchange(other.object, nullptr)), type(other.type) {}
+
+    held& operator=(held&&) = delete;
+
+    ~held() {
+        if (object) {
+            type->destroy(object);
+        }
+    }
+};
+
+// Адрес объекта, свёрнутый с собственными старшими битами. std::hash<void*> у MSVC — FNV
+// по восьми байтам, а корзину таблица берёт по МЛАДШИМ битам: голый адрес при шаге
+// объектов 128/256 байт сваливает их в одни корзины. Замер на 1000–100000 объектах (шаг
+// 64/128/256, malloc, случайные размеры): поиск в 1.3–4.7 раза быстрее std::hash.
+struct object_hash {
+    std::size_t operator()(void* p) const noexcept {
+        const auto x = reinterpret_cast<std::uintptr_t>(p);
+        return (x >> 4) ^ (x >> 9) ^ (x >> 17);
+    }
+};
+
+using instance_map = std::unordered_map<void*, held, object_hash>;
+
+// Таблица намеренно не разрушается: движок может позвать натив (в том числе Dispose из
+// деструктора скриптового объекта) уже после того, как побежали деструкторы статиков
+// при выгрузке DLL. Работать с трупом контейнера хуже, чем не освободить его на выходе.
+template <class Root>
+instance_map& instance_table() {
+    static auto* all = new instance_map;
+    return *all;
+}
+
+template <class C>
+instance_map& instances() {
+    return instance_table<root_of<C>>();
+}
+
+// Привязанные классы иерархии — из них выбирается тип нового экземпляра. Заполняет
+// bind.class_<C>().
+template <class Root>
+std::vector<const kind*>& kinds() {
+    static auto* all = new std::vector<const kind*>;
+    return *all;
+}
+
+template <class C>
+void know_kind() {
+    if constexpr (has_fields<C>) {
+        auto& all = kinds<root_of<C>>();
+        if (std::ranges::find(all, &kind_of<C>()) == all.end()) {
+            all.push_back(&kind_of<C>());
+        }
+    }
+}
+
+// Родство по движку: скрипт может унаследовать привязанный класс сам
+// (`class MyPuppy : MyDog`), и такого имени среди привязанных нет. Имя метода — на
+// компиляции: поиск по строке на каждый вопрос стоил бы ~30 пустых вызовов (lookupRT).
+inline bool script_inherits(void* self, const char* script) {
+    void* const desc = script ? script::find_class(script) : nullptr;
+    return desc && obj{self}.call<bool, "IsInherited">(type{desc});
+}
+
+// Каким типом заводить экземпляр объекта, впервые пришедшего как C: самым глубоким из
+// привязанных классов, которым объект является. Пока наследников C не привязано, объект
+// не читается вовсе; класс объекта среди привязанных — ответ по имени, без движка.
+template <class C>
+const kind* pick_kind(void* self) {
+    const kind* const asked  = &kind_of<C>();
+    const auto&       all    = kinds<root_of<C>>();
+    const auto        deeper = [&](const kind* k) { return k != asked && derives(k, asked); };
+    if (std::ranges::none_of(all, deeper)) {
+        return asked;
+    }
+    const char* const name  = script::class_name(script::class_of(self));
+    const auto        named = [&](const kind* k) { return k->script && name && std::strcmp(k->script, name) == 0; };
+    if (named(asked)) {
+        return asked;
+    }
+    for (const kind* k : all) {
+        if (deeper(k) && named(k)) {
+            return k;
+        }
+    }
+    const kind* best = asked;
+    for (const kind* k : all) {
+        if (deeper(k) && depth(k) > depth(best) && script_inherits(self, k->script)) {
+            best = k;
+        }
+    }
+    return best;
+}
 
 // Скриптовый объект умер — умирает и его экземпляр C++ (с деструкторами полей). Зовёт
 // это движок: библиотека подписывается на разрушение объекта в instance_of.
@@ -102,8 +287,13 @@ memo<C>& last_instance() {
 template <class C>
 void forget_instance(void* self) {
     if constexpr (has_fields<C>) {
-        last_instance<C>() = {};  // память об этом объекте больше не годится
-        instances<C>().erase(self);
+        auto&      table = instances<C>();
+        const auto it    = table.find(self);
+        if (it == table.end()) {
+            return;
+        }
+        it->second.type->forget(self); // память об этом объекте больше не годится
+        table.erase(it);
     }
 }
 
@@ -117,15 +307,24 @@ C& instance_of(void* self) {
     if constexpr (has_fields<C>) {
         memo<C>& m = last_instance<C>();
         if (m.self != self || !m.object) {
-            const bool fresh = !instances<C>().contains(self);
-            m.object = &instances<C>()[self];
-            m.self = self;
-            if (fresh) {
+            auto& table = instances<C>();
+            auto  it    = table.find(self);
+            if (it == table.end()) {
+                const kind* type = pick_kind<C>(self);
+                it               = table.emplace(self, held{type->make(), type}).first;
                 // Завели поля на этот объект — просим сказать, когда он умрёт. Скрипт об
                 // этом не знает и знать не должен: движок разрушает объект своим же
                 // виртуальным слотом, туда мы и встраиваемся (script::watch_object).
-                script::watch_object(self, &forget_instance<C>);
+                script::watch_object(self, &forget_instance<root_of<C>>);
+            } else if (!derives(it->second.type, &kind_of<C>())) {
+                // Иерархия C++ разошлась со скриптовой: объект заведён другой ветвью.
+                const char* have = it->second.type->script;
+                const char* want = kind_of<C>().script;
+                throw std::logic_error(std::string{"экземпляр объекта заведён как "} + (have ? have : "?") +
+                                       ", а не " + (want ? want : "?"));
             }
+            m.object = static_cast<C*>(static_cast<root_of<C>*>(it->second.object));
+            m.self   = self;
         }
         bind_self(*m.object);
         return *m.object;
@@ -137,10 +336,10 @@ C& instance_of(void* self) {
     }
 }
 
-// Объект класса С ПОЛЯМИ аргументом натива: в скрипте это сам объект (`bool Is(Tag tag)`),
-// в C++ — его экземпляр, тот же, что видят его собственные методы:
+// Объект класса С ПОЛЯМИ аргументом натива: в скрипте это сам объект (`int LegsOf(MyAnimal
+// animal)`), в C++ — его экземпляр, тот же, что видят его собственные методы:
 //
-//   bool Is(const TagState& tag);
+//   int LegsOf(const Animal& animal);
 //
 // Ссылка только константная: неконстантная у значений означает out. NULL вместо объекта —
 // исключение: guard пишет его в журнал, натив не исполняется, возврат по умолчанию.
@@ -161,9 +360,33 @@ struct arg_of<const C&> {
 // нативов), а мы находим по нему экземпляр класса C++ и зовём обычную функцию. В
 // объявление скрипта объект не идёт. Привязать можно что угодно: метод, константный
 // метод или свободную функцию, берущую объект первым параметром (последнее — чтобы
-// цеплять методами чужие классы, в которые метод не добавить).
-template <class C, auto F>
-struct method_thunk;
+// цеплять методами чужие классы, в которые метод не добавить). Все три зовутся одним
+// std::invoke, разница — только в сигнатуре.
+template <class... T>
+struct type_list {
+    static constexpr std::size_t size = sizeof...(T);
+};
+
+template <auto F>
+struct method_sig;
+
+template <class Own, class R, class... A, R (Own::*F)(A...)>
+struct method_sig<F> {
+    using ret  = R;
+    using args = type_list<A...>;
+};
+
+template <class Own, class R, class... A, R (Own::*F)(A...) const>
+struct method_sig<F> {
+    using ret  = R;
+    using args = type_list<A...>;
+};
+
+template <class R, class Self, class... A, R (*F)(Self, A...)>
+struct method_sig<F> {
+    using ret  = R;
+    using args = type_list<A...>;
+};
 
 // Вход трамплина — тот, каким его зовёт движок. Флаги у наших членов те же, что у
 // Object.GetPosition (0xa28, без external), и движок зовёт их как функцию-член C++.
@@ -193,44 +416,24 @@ using member_entry = std::conditional_t<script::returned_in_register<ret_abi<R>>
                                         member_entry_in_register<Thunk, R, A...>,
                                         member_entry_in_buffer<Thunk, R, A...>>;
 
-template <class C, class Own, class R, class... A, R (Own::*F)(A...)>
-struct method_thunk<C, F> : member_entry<method_thunk<C, F>, R, A...> {
+template <class C, auto F, class R, class Args>
+struct method_body;
+
+template <class C, auto F, class R, class... A>
+struct method_body<C, F, R, type_list<A...>> : member_entry<method_body<C, F, R, type_list<A...>>, R, A...> {
     static ret_abi<R> body(void* self, arg_abi<A>... args) {
         [[maybe_unused]] arena_scope<R> alive;
         C& object = instance_of<C>(self);
         if constexpr (std::is_void_v<R>) {
-            (object.*F)(arg_of<A>::in(args)...);
+            std::invoke(F, object, arg_of<A>::in(args)...);
         } else {
-            return ret_of<R>::out((object.*F)(arg_of<A>::in(args)...));
+            return ret_of<R>::out(std::invoke(F, object, arg_of<A>::in(args)...));
         }
     }
 };
 
-template <class C, class Own, class R, class... A, R (Own::*F)(A...) const>
-struct method_thunk<C, F> : member_entry<method_thunk<C, F>, R, A...> {
-    static ret_abi<R> body(void* self, arg_abi<A>... args) {
-        [[maybe_unused]] arena_scope<R> alive;
-        const C& object = instance_of<C>(self);
-        if constexpr (std::is_void_v<R>) {
-            (object.*F)(arg_of<A>::in(args)...);
-        } else {
-            return ret_of<R>::out((object.*F)(arg_of<A>::in(args)...));
-        }
-    }
-};
-
-template <class C, class R, class Self, class... A, R (*F)(Self, A...)>
-struct method_thunk<C, F> : member_entry<method_thunk<C, F>, R, A...> {
-    static ret_abi<R> body(void* self, arg_abi<A>... args) {
-        [[maybe_unused]] arena_scope<R> alive;
-        C& object = instance_of<C>(self);
-        if constexpr (std::is_void_v<R>) {
-            F(object, arg_of<A>::in(args)...);
-        } else {
-            return ret_of<R>::out(F(object, arg_of<A>::in(args)...));
-        }
-    }
-};
+template <class C, auto F>
+struct method_thunk : method_body<C, F, typename method_sig<F>::ret, typename method_sig<F>::args> {};
 
 // ── Детур под защитой ────────────────────────────────────────────────────────
 // Натив плагина обёрнут защитой всегда — трамплины выше это и делают. С детуром так не
