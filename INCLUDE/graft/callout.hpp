@@ -101,6 +101,26 @@ inline bool builtin_var(std::uint32_t tag, script::var& out) {
     return true;
 }
 
+// Строка аргумента в формате движка: шапка {cap, len, ref} из трёх u16 перед символами
+// (defines::engine_string). out-строку движок пишет НА МЕСТЕ, сверившись с cap: строке
+// арены без шапки доставался мусор перед символами, и ответ уходил за конец кольца —
+// 0xC0000374 через запуск (ConfigGetChildName из CE_CORE). Запас cap — ответ ложится сюда
+// же; не влез — движок заведёт свою строку, а нашу лишь отпустит: счётчик 0x4000 до
+// освобождения не дойдёт (её память — кольцо, не его аллокатор).
+inline const char* headed_string(std::string_view text) {
+    constexpr std::size_t room    = 256; // имя класса, тип предмета — с запасом
+    const std::size_t     len     = (std::min)(text.size(), std::size_t{0xFFFE});
+    const std::size_t     cap     = (std::max)(len + 1, room);
+    char*                 raw     = reserve_text(6 + cap);
+    const std::uint16_t   head[3] = {static_cast<std::uint16_t>(cap), static_cast<std::uint16_t>(len), 0x4000};
+    std::memcpy(raw, head, sizeof head);
+    if (len) {
+        std::memcpy(raw + 6, text.data(), len);
+    }
+    raw[6 + len] = '\0';
+    return raw + 6;
+}
+
 // Флаги, которые шаблон чужого параметра принёс, а переменной возврата не нужны: const,
 // «не писать» и out. С 0x40 движок просто молча не запишет результат (проверено в
 // GetModule и Spawn — оба его читают).
@@ -244,7 +264,13 @@ inline std::expected<proto_result, miss> call_proto(const script::method& fn, vo
             void* storage = &vectors[i];
             std::memcpy(slots[i].raw, &storage, sizeof storage);
         }
-        detail::write_var(slots[i].raw, args[i]);
+        // Строка — с шапкой движка: в неё он может написать ответ (headed_string).
+        if ((slots[i].tag() & script::type_family) == script::type_string) {
+            const char* text = detail::headed_string(args[i].to_string());
+            std::memcpy(slots[i].raw, &text, sizeof text);
+        } else {
+            detail::write_var(slots[i].raw, args[i]);
+        }
         // Объект — тем способом, каким его держит переменная этого типа: где ждут
         // обёртку, голый указатель импл прочтёт как обёртку и уйдёт в мусор. Обёртки нет
         // — отказ, а не попытка.
