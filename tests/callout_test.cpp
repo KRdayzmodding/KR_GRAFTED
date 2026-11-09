@@ -255,6 +255,41 @@ TEST(CallOut, ReadsOutArgumentBack) {
     EXPECT_EQ(r->arg(1).as<graft::i32>(), 77);
 }
 
+// Пишет out-строку так, как движок (ConfigGetChildName): НА МЕСТЕ, если cap из шапки перед
+// символами вмещает ответ. Без шапки cap — мусор, и запись уходила за конец кольца арены.
+std::uint16_t g_in_head[3] = {};
+
+std::int64_t __fastcall out_string_impl(void*, void*** args, void**) {
+    void**      block = *args;
+    const char* in    = *reinterpret_cast<char* const*>(block[0]);
+    std::memcpy(g_in_head, in - 6, sizeof g_in_head);
+    char*         out = *reinterpret_cast<char**>(block[1]);
+    std::uint16_t cap = 0;
+    std::memcpy(&cap, out - 6, sizeof cap);
+    constexpr std::string_view answer = "Land_Wreck_Uaz_With_A_Long_Class_Name";
+    if (answer.size() < cap) {
+        std::memcpy(out, answer.data(), answer.size());
+        out[answer.size()] = '\0';
+        const auto n       = static_cast<std::uint16_t>(answer.size());
+        std::memcpy(out - 4, &n, sizeof n);
+    }
+    return 0;
+}
+
+TEST(CallOut, StringArgumentCarriesEngineHeaderWithRoomForTheAnswer) {
+    // int третьим — как у ConfigGetChildName: с него же берётся шаблон переменной возврата.
+    FakeProto          fake({graft::script::type_string, graft::script::type_string, graft::script::type_int},
+                   reinterpret_cast<void*>(&out_string_impl));
+    int                self_marker = 0;
+    const graft::value args[]      = {graft::value{std::string{"CfgVehicles"}}, graft::value{std::string{}}, graft::value{graft::i32{0}}};
+    const auto         r           = graft::call_proto(fake.method(), &self_marker, args);
+    ASSERT_TRUE(r.has_value());
+    EXPECT_EQ(g_in_head[1], 11);     // длина входа — в шапке
+    EXPECT_GT(g_in_head[0], 11);     // cap с запасом под ответ
+    EXPECT_EQ(g_in_head[2], 0x4000); // счётчик, который движок не доведёт до освобождения
+    EXPECT_EQ(r->arg(1).view(), "Land_Wreck_Uaz_With_A_Long_Class_Name");
+}
+
 TEST(CallOut, RefusesWhenArityDisagreesWithDescriptor) {
     FakeProto fake({graft::script::type_int, graft::script::type_int},
                    reinterpret_cast<void*>(&noop_impl));
