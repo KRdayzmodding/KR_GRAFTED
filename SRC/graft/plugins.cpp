@@ -54,13 +54,35 @@ std::vector<std::string> split_args(std::string_view cmdline) {
     return out;
 }
 
-// Значение ключа, если аргумент им начинается. Ключ — только в начале аргумента: иначе
-// `-profiles=x-mod=@A` подсунул бы нам чужой путь.
-std::optional<std::string_view> value_of(std::string_view arg, std::string_view key) {
-    if (arg.size() < key.size() || !same_ci(arg.substr(0, key.size()), key)) {
-        return std::nullopt;
+bool is_switch(std::string_view arg) {
+    return !arg.empty() && (arg[0] == '-' || arg[0] == '+');
+}
+
+// Значение ключа так, как его достаёт движок (разбор аргументов, DayZServer 1.29
+// sub_1401A59F0): ключ начинается с `-` или `+`, значение — после `=` или следующим
+// аргументом (`-profiles X`), если тот сам не ключ. Повтор ключа перезаписывает значение —
+// побеждает ПОСЛЕДНИЙ. Ключ — весь аргумент до `=`, поэтому `-profiles=x-mod=@A` — это
+// профиль, а не мод.
+std::optional<std::string> value_of(const std::vector<std::string>& args, std::string_view key) {
+    std::optional<std::string> found;
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        const std::string_view arg = args[i];
+        if (!is_switch(arg)) {
+            continue;
+        }
+        const std::size_t eq = arg.find('=');
+        if (!same_ci(arg.substr(1, eq == std::string_view::npos ? eq : eq - 1), key)) {
+            continue;
+        }
+        if (eq != std::string_view::npos) {
+            found = std::string{arg.substr(eq + 1)};
+        } else if (i + 1 < args.size() && !is_switch(args[i + 1])) {
+            found = args[++i];
+        } else {
+            found = std::string{};
+        }
     }
-    return arg.substr(key.size());
+    return found;
 }
 
 // `@A;@B;` -> {"@A", "@B"}. Пустые куски (хвостовая точка с запятой — норма для DayZ)
@@ -87,29 +109,41 @@ const char* text_or(const char* s, const char* fallback) {
 std::vector<std::string> mod_dirs(std::string_view cmdline) {
     std::vector<std::string> out;
     const auto               args = split_args(cmdline);
-    // Сначала все `-mod=`, потом все `-serverMod=`: порядок прежний, от положения ключей
-    // в строке победитель коллизии не зависит.
-    for (const std::string_view key : {"-mod=", "-serverMod="}) {
-        for (const std::string& arg : args) {
-            if (const auto list = value_of(arg, key)) {
-                append_list(*list, out);
-            }
+    // Сначала `-mod=`, потом `-serverMod=`: порядок прежний, от положения ключей в строке
+    // победитель коллизии не зависит. Из повторов ключа — последний, как у движка: моды
+    // первого он не грузит, и их плагинам без скриптов делать нечего.
+    for (const std::string_view key : {"mod", "serverMod"}) {
+        if (const auto list = value_of(args, key)) {
+            append_list(*list, out);
         }
     }
     return out;
 }
 
 std::string profile_dir(std::string_view cmdline) {
-    for (const std::string& arg : split_args(cmdline)) {
-        if (auto path = value_of(arg, "-profiles=")) {
-            // `-profiles=X\` — законная запись, а мы к пути дописываем своё имя файла.
-            while (!path->empty() && (path->back() == '\\' || path->back() == '/')) {
-                path->remove_suffix(1);
-            }
-            return std::string{*path};
-        }
+    std::string path = value_of(split_args(cmdline), "profiles").value_or("");
+    // `-profiles=X\` — законная запись, а мы к пути дописываем своё имя файла.
+    while (!path.empty() && (path.back() == '\\' || path.back() == '/')) {
+        path.pop_back();
     }
-    return {};
+    return path;
+}
+
+std::string_view profile_folder(std::uint32_t app_id) {
+    // Имя по номеру приложения Steam, как у движка (OFPApplicationInfoFunctions, слоты 5
+    // и 7): экспериментальная ветка пишет в свою папку, а неизвестный номер движок
+    // считает розничным DayZ.
+    switch (app_id) {
+        case 1024020: // клиент Experimental
+        case 1042420: // сервер Experimental
+        case 235300:
+            return "DayZ Exp";
+        case 2828030:
+        case 2828040:
+            return "DayZ Int";
+        default:
+            return "DayZ";
+    }
 }
 
 std::uint32_t check(const graft_plugin_info& info) {

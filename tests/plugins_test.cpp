@@ -105,6 +105,39 @@ TEST(ProfileDir, RequiresSwitchToStartAtBoundary) {
     EXPECT_EQ(graft::plugins::profile_dir("game.exe -mod=@A-profiles=NOPE; -profiles=YES"), "YES");
 }
 
+// Движок кладёт ключи в словарь, и повтор перезаписывает значение: логи игры уходят в
+// ПОСЛЕДНИЙ -profiles=, моды грузятся из последнего -mod=. Хост обязан видеть то же самое.
+TEST(ProfileDir, LastSwitchWinsLikeTheEngine) {
+    EXPECT_EQ(graft::plugins::profile_dir("game.exe -profiles=OLD -port=1 -profiles=NEW"), "NEW");
+}
+
+TEST(ModDirs, LastSwitchWinsLikeTheEngine) {
+    const auto got = graft::plugins::mod_dirs("game.exe -mod=@OLD; -serverMod=@S; -mod=@NEW;");
+    EXPECT_EQ(got, (std::vector<std::string>{"@NEW", "@S"}));
+}
+
+// Значение движок берёт и следующим аргументом, если тот сам не ключ.
+TEST(ProfileDir, TakesTheValueFromTheNextArgument) {
+    EXPECT_EQ(graft::plugins::profile_dir(R"(game.exe -profiles "C:\My Server\prof" -port=1)"),
+              R"(C:\My Server\prof)");
+    EXPECT_TRUE(graft::plugins::profile_dir("game.exe -profiles -port=1").empty());
+}
+
+// Пустое значение — ключа как бы нет: движок тогда берёт профиль по умолчанию.
+TEST(ProfileDir, EmptyValueMeansDefault) {
+    EXPECT_TRUE(graft::plugins::profile_dir("game.exe -profiles= -port=1").empty());
+}
+
+// Папка профиля по умолчанию — по номеру приложения Steam, как у движка.
+TEST(ProfileFolder, FollowsTheSteamAppId) {
+    EXPECT_EQ(graft::plugins::profile_folder(221100), "DayZ"); // клиент
+    EXPECT_EQ(graft::plugins::profile_folder(223350), "DayZ"); // сервер
+    EXPECT_EQ(graft::plugins::profile_folder(1024020), "DayZ Exp");
+    EXPECT_EQ(graft::plugins::profile_folder(1042420), "DayZ Exp");
+    EXPECT_EQ(graft::plugins::profile_folder(2828030), "DayZ Int");
+    EXPECT_EQ(graft::plugins::profile_folder(0), "DayZ"); // не узнали — розница
+}
+
 // ── Сверка версий ────────────────────────────────────────────────────────────
 
 TEST(Check, AcceptsMatchingVersions) {

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH LicenseRef-GRAFT-plugin-exception-1.0
 // Мод на GRAFT ничего не обязан — даже закрытый и платный. См. LICENSE-EXCEPTION.
 #pragma once
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -13,14 +14,22 @@
 // у человека или нет, и гонять их ради этого игру не нужно (tests/plugins_test.cpp).
 namespace graft::plugins {
 
+// Ключи командной строки читаются так же, как их читает движок: `-ключ=значение` или
+// `-ключ значение`, регистр не важен, из повторов побеждает последний.
+
 // Папки модов из командной строки процесса: `-mod=` и `-serverMod=`, склеенные в один
 // список в порядке появления, без пустых и без повторов. Порядок важен: он же задаёт
 // порядок загрузки плагинов и, значит, победителя при коллизии имён.
 std::vector<std::string> mod_dirs(std::string_view cmdline);
 
-// Каталог профиля сервера из `-profiles=` — тот, куда игра кладёт script- и crash-логи.
-// Пусто — ключа нет (тогда журналы ложатся рядом с exe). Хвостовой разделитель снят.
+// Каталог профиля из `-profiles=` — тот, куда игра кладёт script- и crash-логи, он же
+// `$profile:`. Как есть: относительный путь движок считает от каталога exe. Пусто — ключа
+// нет, тогда профиль — %LOCALAPPDATA%\<profile_folder>. Хвостовой разделитель снят.
 std::string profile_dir(std::string_view cmdline);
+
+// Имя папки профиля по умолчанию в %LOCALAPPDATA% по номеру приложения Steam: "DayZ",
+// у экспериментальной ветки "DayZ Exp", у внутренней "DayZ Int".
+std::string_view profile_folder(std::uint32_t app_id);
 
 // Запись объединённого реестра: натив и плагин, который его принёс.
 struct entry {

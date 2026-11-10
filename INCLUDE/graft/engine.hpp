@@ -20,8 +20,7 @@ namespace graft {
 void install();
 
 // Роль процесса. Плагины сервер и клиент берут одинаково — из `-mod=`, `-serverMod=` и
-// <игра>/grafted. Различаются они двумя вещами: клиент следит за BattlEye (battleye.hpp) и,
-// не получив `-profiles=`, пишет журнал в %LOCALAPPDATA%\DayZ.
+// <игра>/grafted. Различаются они одним: клиент следит за BattlEye (battleye.hpp).
 enum class role : std::uint8_t {
     server,
     client
@@ -78,7 +77,8 @@ void bind_pending();
 // Их два, и читатели у них разные.
 //
 // СИСТЕМНЫЙ — про саму библиотеку: что нашлось, кого отклонили, чей натив упал. Это наш
-// файл в каталоге `-profiles=` (ключа нет — рядом с exe), по файлу на запуск и в том же
+// файл в профиле игры — `-profiles=`, а без ключа %LOCALAPPDATA%\DayZ (у Experimental
+// %LOCALAPPDATA%\DayZ Exp), как у самой игры, — по файлу на запуск и в том же
 // стиле имени, что script- и crash-логи игры:
 //
 //   <профиль>/graft_2026-08-19_21-03-55.log
