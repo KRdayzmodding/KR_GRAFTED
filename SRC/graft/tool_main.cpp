@@ -416,7 +416,7 @@ int cmd_list(int argc, char** argv) {
 
 int cmd_doctor(int argc, char** argv) {
     if (argc < 3) {
-        return fail("doctor <каталог игры>");
+        return fail("doctor <каталог игры> [каталог -profiles=]");
     }
     const fs::path game = argv[2];
     int problems = 0;
@@ -462,14 +462,20 @@ int cmd_doctor(int argc, char** argv) {
         ++problems;
     }
     note_battleye(game);
-    // Журнал — по файлу на запуск. Сервер с -profiles= кладёт его туда же, где script- и
-    // crash-логи; клиент без ключа — в %LOCALAPPDATA%\DayZ. Смотрим оба места и рядом с
-    // exe: самый свежий.
+    // Журнал — по файлу на запуск, в профиле игры: в `-profiles=` (его передают третьим
+    // аргументом — командной строки игры у нас нет; относительный считается от каталога
+    // игры, как у движка), а без ключа — в %LOCALAPPDATA%\<папка приложения>. Рядом с exe
+    // писал сервер без ключа до 0.5.1. Из всех мест берём самый свежий.
     std::vector<fs::path> journal_dirs{game};
-    wchar_t               local[MAX_PATH];
+    if (argc > 3) {
+        journal_dirs.push_back(game / fs::path{argv[3]});
+    }
+    wchar_t local[MAX_PATH];
     if (const DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH);
         n > 0 && n < MAX_PATH) {
-        journal_dirs.push_back(fs::path{std::wstring(local, n)} / L"DayZ");
+        std::uint32_t app_id = 0;
+        std::ifstream(game / "steam_appid.txt") >> app_id;
+        journal_dirs.push_back(fs::path{std::wstring(local, n)} / graft::plugins::profile_folder(app_id));
     }
     fs::path journal;
     for (const fs::path& dir : journal_dirs) {
@@ -483,9 +489,9 @@ int cmd_doctor(int argc, char** argv) {
         }
     }
     if (journal.empty()) {
-        std::println("[i] журнала graft_*.log нет ни рядом с exe, ни в %LOCALAPPDATA%\\DayZ — "
-                     "либо игра с этим хостом ещё не запускалась, либо задан -profiles= и "
-                     "журнал лежит там");
+        std::println("[i] журнала graft_*.log нет ни в профиле по умолчанию, ни рядом с exe — "
+                     "либо игра с этим хостом ещё не запускалась, либо задан -profiles=: "
+                     "передай его третьим аргументом, graft doctor <игра> <профиль>");
     } else {
         std::println("[i] журнал: {}", journal.filename().string());
         std::ifstream in(journal);
@@ -586,7 +592,7 @@ int usage() {
         "  graft install  <каталог игры> [hid.dll]      поставить хост\n"
         "  graft uninstall <каталог игры>               снять хост\n"
         "  graft list     <каталог игры>                что установлено\n"
-        "  graft doctor   <каталог игры>                почему не работает\n"
+        "  graft doctor   <каталог игры> [профиль]      почему не работает\n"
         "  graft protogen <плагин.dll|--host> <scripts> объявления для PBO\n"
         "  graft apigen   <scripts> <куда>              зеркало движкового API на C++\n"
         "  graft defines  <script_*.log>                дефайны игры для сборки зеркала\n"

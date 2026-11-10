@@ -9,8 +9,11 @@
 
 #include <algorithm>
 #include <cstring>
+#include <cwchar>
 #include <expected>
+#include <filesystem>
 #include <format>
+#include <fstream>
 #include <iterator>
 #include <string>
 #include <string_view>
@@ -58,16 +61,38 @@ std::wstring game_dir() {
     return slash == std::wstring::npos ? L"." : path.substr(0, slash);
 }
 
-// Профиль клиента, когда `-profiles=` не задан: игра кладёт script- и crash-логи в
-// %LOCALAPPDATA%\DayZ, и наш журнал должен лежать с ними, а не рядом с exe. Пусто — не
-// нашли переменную; тогда журнал уйдёт к exe, как на сервере.
-std::string default_client_profile() {
+// Номер приложения Steam — так же, как его берёт движок: Steam сообщает его процессу в
+// SteamAppId, без Steam он лежит в steam_appid.txt рядом с exe. Нет нигде — ноль, и
+// profile_folder отдаст розничную папку, как и движок.
+std::uint32_t steam_app_id(const std::wstring& dir) {
+    wchar_t buf[16];
+    if (const DWORD n = GetEnvironmentVariableW(L"SteamAppId", buf, 16); n > 0 && n < 16) {
+        return static_cast<std::uint32_t>(std::wcstoul(buf, nullptr, 10));
+    }
+    std::uint32_t id = 0;
+    std::ifstream(std::filesystem::path{dir} / L"steam_appid.txt") >> id;
+    return id;
+}
+
+// Профиль, куда игра кладёт script- и crash-логи, — и наш журнал к ним. `-profiles=`
+// относительный считается от каталога exe: движок переходит туда до разбора ключей
+// (DayZServer 1.29 sub_1403E3140). Ключа нет — у сервера и клиента одинаково
+// %LOCALAPPDATA%\<папка приложения> (sub_1408CDE20). Пусто — нет и переменной.
+// shortcut: движок остаётся в рабочем каталоге, если в нём самом есть dta (запуск из
+// чужой установки игры); не учтено, как и в loader::candidates для -mod=.
+std::string profile_of(const std::wstring& dir) {
+    const std::string given = plugins::profile_dir(loader::narrow(GetCommandLineW()));
+    if (!given.empty()) {
+        const std::filesystem::path path{std::u8string{given.begin(), given.end()}};
+        return loader::narrow((std::filesystem::path{dir} / path).wstring());
+    }
     wchar_t     buf[MAX_PATH];
     const DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", buf, MAX_PATH);
     if (n == 0 || n >= MAX_PATH) {
         return {};
     }
-    return loader::narrow(std::wstring(buf, n) + L"\\DayZ");
+    const std::string_view folder = plugins::profile_folder(steam_app_id(dir));
+    return loader::narrow(std::wstring(buf, n) + L"\\" + std::wstring(folder.begin(), folder.end()));
 }
 } // namespace
 
@@ -232,15 +257,10 @@ std::uint64_t __fastcall hook_link_check(void* compiler, void* errors) {
 void install() {
     const std::wstring dir  = game_dir();
     const role         self = process_role();
-    // Журналы кладём туда же, куда игра кладёт свои script- и crash-логи: в профиль.
-    // Админ ищет их там, а не рядом с exe, — и относительный путь из `-profiles=`
-    // разрешится от того же каталога, что и у самой игры. Клиент без ключа — в
-    // %LOCALAPPDATA%\DayZ, где его логи лежат на самом деле. Пути везде UTF-8: у клиента
-    // имя пользователя бывает любым, и обрезка до ASCII оставила бы его без журнала.
-    std::string profile = plugins::profile_dir(loader::narrow(GetCommandLineW()));
-    if (profile.empty() && self == role::client) {
-        profile = default_client_profile();
-    }
+    // Журналы кладём туда же, куда игра кладёт свои script- и crash-логи: в профиль
+    // (profile_of). Пути везде UTF-8: у клиента имя пользователя бывает любым, и обрезка
+    // до ASCII оставила бы его без журнала.
+    const std::string profile = profile_of(dir);
     set_log_dir(profile.empty() ? loader::narrow(dir) : profile);
     say_banner();
     // Баннер несёт версию рисунком; для отчёта об ошибке нужна строка, где есть и числа
