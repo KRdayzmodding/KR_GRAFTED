@@ -256,7 +256,7 @@ mymod/
 file(DOWNLOAD https://raw.githubusercontent.com/KRdayzmodding/KR_GRAFTED/main/cmake/graft.boot.cmake
      "${CMAKE_BINARY_DIR}/graft.boot.cmake")
 include("${CMAKE_BINARY_DIR}/graft.boot.cmake")
-graft_import(graft https://github.com/KRdayzmodding/KR_GRAFTED TAG v0.5.0)
+graft_import(graft https://github.com/KRdayzmodding/KR_GRAFTED TAG v0.5.1)
 
 graft_plugin(mymod NAME MYMOD VERSION 1 SOURCES src/plugin.cpp MODULES 3_Game)
 ```
@@ -308,14 +308,14 @@ powershell -File deploy.ps1 -Game "C:\DayZServer"
 
 ### Версии graft
 
-В `graft_import` указывайте тег, например `v0.5.0`: плагин, собранный с `main`, может
+В `graft_import` указывайте тег, например `v0.5.1`: плагин, собранный с `main`, может
 оказаться несовместим с ядром из релиза. Примеры ссылаются на `main`, но в своём проекте
 так делать не стоит.
 
 Совместимость определяют два числа из [`INCLUDE/graft/abi.h`](INCLUDE/graft/abi.h); при
 расхождении ядро отклоняет плагин и пишет причину в лог:
 
-| Константа | Что описывает | v0.5.0 |
+| Константа | Что описывает | v0.5.1 |
 |---|---|---|
 | `GRAFT_ABI_VERSION` | интерфейс ядра и плагина | 7 |
 | `GRAFT_LAYOUT_VERSION` | структуры движка | 2 |
