@@ -169,12 +169,14 @@ into functions that nothing but the game thread executes.
 
 The host loads into the client the same way as on a server: plugins come from `-mod=`,
 `-serverMod=` and `<game>/grafted`, including mods under `!Workshop`, and the log is written
-at once (to `-profiles=`, or to `%LOCALAPPDATA%\DayZ` when there is none). A plugin runs
+at once to the game profile, next to the script and crash logs: `-profiles=` (a relative
+path counts from the game folder, as the engine does), or `%LOCALAPPDATA%\DayZ` when there is
+none (`DayZ Exp` for Experimental) — the same rule as on a server. A plugin runs
 with the player's rights, so which mods carry one is the player's call.
 
 - Role comes from the exe name: `DayZServer_x64.exe` and `DayZDiag_x64.exe -server` are
-  servers, anything else is a client. The role only decides two things: whether the host
-  watches for BattlEye, and where the log goes by default.
+  servers, anything else is a client. The role only decides whether the host watches
+  for BattlEye.
 - **BattlEye:** the host does not work under it. Through `DayZ_BE.exe` BattlEye blocks
   `hid.dll` and the game does not start (measured on 1.29,
   [RESEARCH/theory/client.md](RESEARCH/theory/client.md)); run `DayZ_x64.exe` directly or
