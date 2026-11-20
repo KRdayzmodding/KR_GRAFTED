@@ -96,6 +96,9 @@ modded class MissionServer
 From the script side `IsValidNick` is indistinguishable from a vanilla native. From the
 C++ side it is an ordinary function the engine calls directly, by address. Need code on
 every frame too? That's `GRAFT_ON_TICK(dt) { ... }` — see [examples/players](examples/players/).
+Since 0.6 a plugin can live on events instead of the tick: subscriptions, work posted to the
+script thread from any thread, and timers — `graft::on<E>`, `graft::publish`, `graft::post`,
+`graft::every` in `graft/events.hpp` (rules are in the header and the Russian README).
 
 That ships as:
 
@@ -128,7 +131,7 @@ The whole mod project is a single CMakeLists:
 file(DOWNLOAD https://raw.githubusercontent.com/KRdayzmodding/KR_GRAFTED/main/cmake/graft.boot.cmake
      "${CMAKE_BINARY_DIR}/graft.boot.cmake")
 include("${CMAKE_BINARY_DIR}/graft.boot.cmake")
-graft_import(graft https://github.com/KRdayzmodding/KR_GRAFTED TAG v0.5.1)
+graft_import(graft https://github.com/KRdayzmodding/KR_GRAFTED TAG v0.6.0)
 
 graft_plugin(mymod NAME MYMOD VERSION 1 SOURCES src/plugin.cpp MODULES 3_Game)
 ```

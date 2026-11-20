@@ -19,6 +19,7 @@
 #include <windows.h>
 
 #include "graft/frame.hpp"
+#include "graft/hub.hpp"
 #include "graft/loader.hpp"
 #include "graft/native.hpp"
 
@@ -91,6 +92,11 @@ std::string GraftCollisionAt(int index) {
 void GraftTick(float dt, graft::obj game) {
     graft::loader::set_script_root(game.ptr);
     graft::loader::run_ticks(dt);
+    // Врезка кадра встала — события уже идут с неё; иначе этот натив и есть кадр.
+    if (graft::frame::frames() == 0) {
+        static std::uint64_t number = 0;
+        graft::events::frame(dt, ++number);
+    }
 }
 
 // Сколько раз натив упал и был перехвачен. Ноль на живом сервере — здоровая установка;

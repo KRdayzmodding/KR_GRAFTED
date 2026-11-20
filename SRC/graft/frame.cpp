@@ -8,9 +8,10 @@
 #include "graft/engine.hpp"
 #include "graft/frame.hpp"
 #include "graft/guard.hpp"
+#include "graft/hub.hpp"
 #include "graft/loader.hpp"
-#include "graft/stages.hpp"
 #include "graft/script.hpp"
+#include "graft/stages.hpp"
 
 // Кадр БЕЗ строки в скрипте.
 //
@@ -79,6 +80,8 @@ void __fastcall hook_prepare(void* self, void* frame, std::uint32_t index, std::
             loader::set_script_root(self);
             stage::note_frame();
             loader::run_ticks(static_cast<float>(dt));
+            // События 0.6: graft::tick, таймеры, очередь с других потоков — после старых тиков.
+            events::frame(static_cast<float>(dt), frames());
         });
     } else {
         detail::note_reject(true);

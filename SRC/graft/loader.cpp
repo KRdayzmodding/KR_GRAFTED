@@ -11,6 +11,7 @@
 
 #include "graft/abi.h"
 #include "graft/engine.hpp"
+#include "graft/events.hpp"
 #include "graft/native.hpp"
 #include "graft/plugins.hpp"
 #include "graft/script.hpp"
@@ -133,6 +134,34 @@ uint8_t api_install_hooks(const graft_hook_request* items, uint32_t count) {
     return hook_all(std::span{items, count}) ? 1u : 0u;
 }
 
+// ── С 0.6: события — хаб хоста (events.cpp) ────────────────────────────────────
+uint8_t api_post(void (*run)(void*), void (*drop)(void*), void* ctx, const char* where) {
+    return ::graft::detail::post(run, drop, ctx, where) ? 1u : 0u;
+}
+
+uint8_t api_on_script_thread() {
+    if (::graft::detail::on_script_thread()) {
+        return 1u;
+    }
+    return ::graft::detail::script_thread_known() ? 2u : 0u;
+}
+
+uint64_t api_subscribe(const char* topic, uint32_t size, void (*handler)(void*, const void*), void (*drop)(void*), void* ctx, const char* where) {
+    return ::graft::detail::subscribe(topic, size, handler, drop, ctx, where);
+}
+
+void api_unsubscribe(uint64_t id) {
+    ::graft::detail::unsubscribe(id);
+}
+
+uint8_t api_publish(const char* topic, uint32_t size, const void* event, uint8_t state) {
+    return ::graft::detail::publish(topic, size, event, state != 0) ? 1u : 0u;
+}
+
+uint64_t api_add_timer(uint32_t first_ms, uint32_t every_ms, void (*run)(void*), void (*drop)(void*), void* ctx, const char* where) {
+    return ::graft::detail::add_timer(first_ms, every_ms, run, drop, ctx, where);
+}
+
 const graft_host_api& host_api() {
     static const graft_host_api api{sizeof(graft_host_api),
                                     GRAFT_ABI_VERSION,
@@ -150,7 +179,13 @@ const graft_host_api& host_api() {
                                     &api_find_global,
                                     &api_install_hook,
                                     &api_remove_hook,
-                                    &api_install_hooks};
+                                    &api_install_hooks,
+                                    &api_post,
+                                    &api_on_script_thread,
+                                    &api_subscribe,
+                                    &api_unsubscribe,
+                                    &api_publish,
+                                    &api_add_timer};
     return api;
 }
 
