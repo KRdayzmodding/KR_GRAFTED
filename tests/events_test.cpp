@@ -93,6 +93,19 @@ TEST_F(Events, DestroyedSubscriptionStopsDelivery) {
     EXPECT_EQ(hub.subscribers("test.ping"), 0u);
 }
 
+TEST_F(Events, ReleasedSubscriptionLivesOnAfterTheObject) {
+    int seen = 0;
+    {
+        auto a = graft::on<ping>([&](const ping& p) { seen += p.n; });
+        ASSERT_TRUE(a);
+        a.release();
+        EXPECT_FALSE(a);
+    }
+    graft::publish(ping{.n = 3});
+    EXPECT_EQ(seen, 3);
+    EXPECT_EQ(hub.subscribers(ping::name), 1u);
+}
+
 TEST_F(Events, UnsubscribeInsideOwnHandlerKeepsClosureAliveUntilReturn) {
     graft::subscription self;
     int calls = 0;

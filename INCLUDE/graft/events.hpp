@@ -186,6 +186,13 @@ public:
         detail::unsubscribe(std::exchange(id_, 0));  // после него хост вправе отпустить замыкание
     }
 
+    // Оставить до конца процесса: объект забывает подписку, хост её держит. Для подписок плагина «навсегда» —
+    // статик с подпиской разрушался бы на выходе процесса, когда поток скрипта уже убит.
+    void release() noexcept {
+        id_   = 0;
+        slot_ = nullptr;
+    }
+
     explicit operator bool() const noexcept { return id_ != 0; }
     std::uint64_t id() const noexcept { return id_; }
 
