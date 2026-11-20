@@ -21,6 +21,7 @@ add_library(graft_common STATIC
     graft/loader_state.cpp
     graft/frame_state.cpp
     graft/log_script.cpp
+    graft/slot.cpp
 )
 target_include_directories(graft_common PUBLIC "${PROJECT_SOURCE_DIR}/INCLUDE")
 # Версия проекта — одна на всех: ею представляется шапка в журналах.
@@ -35,6 +36,8 @@ add_library(graft_host STATIC
     graft/banner.cpp
     graft/stages.cpp
     graft/events.cpp
+    graft/world_events.cpp
+    graft/profile.cpp
 )
 target_link_libraries(graft_host PUBLIC graft_common)
 

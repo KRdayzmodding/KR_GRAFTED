@@ -10,6 +10,7 @@
 #include "graft/guard.hpp"
 #include "graft/hub.hpp"
 #include "graft/loader.hpp"
+#include "graft/profile.hpp"
 #include "graft/script.hpp"
 #include "graft/stages.hpp"
 
@@ -77,11 +78,15 @@ void __fastcall hook_prepare(void* self, void* frame, std::uint32_t index, std::
         // Обработчики — чужой код плагинов, а мы стоим внутри движковой функции: падение
         // здесь уронило бы игру на её собственном коде.
         ::graft::detail::guarded<void>(reinterpret_cast<void*>(&hook_prepare), [&] {
+            const std::uint64_t t0 = profile::on() ? profile::now() : 0;
             loader::set_script_root(self);
             stage::note_frame();
             loader::run_ticks(static_cast<float>(dt));
             // События 0.6: graft::tick, таймеры, очередь с других потоков — после старых тиков.
             events::frame(static_cast<float>(dt), frames());
+            if (profile::on()) {
+                profile::frame(profile::now() - t0);
+            }
         });
     } else {
         detail::note_reject(true);

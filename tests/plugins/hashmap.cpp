@@ -9,6 +9,7 @@
 // модом тестов могут стоять в одной игре.
 #include <iterator>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 
@@ -91,4 +92,21 @@ extern "C" __declspec(dllexport) int fixture_events_probe() {
     const int  before = g_dropped;
     const bool posted = graft::post([mark = probe_mark{}] {});
     return !posted && g_dropped == before + 1 ? 0 : -1;
+}
+
+// Сторож объявлений 0.6: подписка вне функций строится раньше, чем хост представится, и доходит до
+// него на точке входа — без GRAFT_ON_LOAD.
+namespace {
+struct fixture_ping {
+    static constexpr std::string_view name = "fixture.ping";
+    int                               n    = 0;
+};
+
+int g_pinged = 0;
+
+graft::on<fixture_ping> pinged{[](const fixture_ping& p) { g_pinged += p.n; }};
+} // namespace
+
+extern "C" __declspec(dllexport) int fixture_pinged() {
+    return g_pinged;
 }
