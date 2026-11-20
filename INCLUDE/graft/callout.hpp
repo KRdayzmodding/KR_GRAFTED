@@ -91,6 +91,21 @@ inline void* builtin_context() {
                 : nullptr;
 }
 
+// Пустая строка движка — из живого шаблона строкового параметра (EnScript.GetClassVar):
+// компилятор кладёт её туда той же инициализацией, а смещение в контексте у сборок разное.
+// В DayZDiag 1.30 по +1144 лежит CRITICAL_SECTION (пустая — +1288), и строковый возврат
+// `proto` (PlayerIdentity.GetPlainId) падал в присваивании строки движка (sub_14028DC10):
+// оно приняло мусор за свою строку и читало длину перед ней. nullptr — шаблона ещё нет.
+inline const void* engine_empty_string() {
+    static const void* found = nullptr;
+    if (!found) {
+        if (const void* tpl = param_template_of_tag(script::find_method("EnScript", "GetClassVar"), script::tag_string)) {
+            std::memcpy(&found, tpl, sizeof found);
+        }
+    }
+    return found;
+}
+
 // Переменная встроенного типа там, где шаблона нет (см. script::var::of_tag).
 inline bool builtin_var(std::uint32_t tag, script::var& out) {
     void* ctx = tag != 0 ? builtin_context() : nullptr;
@@ -98,6 +113,11 @@ inline bool builtin_var(std::uint32_t tag, script::var& out) {
         return false;
     }
     out = script::var::of_tag(tag, ctx);
+    if ((tag & script::type_family) == script::type_string) {
+        if (const void* empty = engine_empty_string()) {
+            std::memcpy(out.raw, &empty, sizeof empty);
+        }
+    }
     return true;
 }
 
