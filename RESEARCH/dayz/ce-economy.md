@@ -524,3 +524,107 @@ strcmp по имени. Имя события — refcounted-строка: `[[ev
    с тика симуляции; объект LootRespawner — цепочкой якорь → пролог Update
    → vtable-слот → приватная память (2026-11-02, проверено живым замером).
    amount пакетный: после доспавна излишек подрезается внешним обходом.
+
+---
+
+## CE Storage: файловый слой persistence (статика + живой замер 2026-11-03)
+
+Дополнено при задаче «вынести persistence сервера во внешнее хранилище».
+Факты — своими словами; адреса — VA при базе 0x140000000, сборка
+**1.30.164200.56** (розничный сервер, та же, что в шапке). Перепроверка —
+`pe.py`, команды в конце раздела.
+
+### Каталог persistence (живой замер)
+
+`mpmissions/<template>/storage_<N>/`, где N — `instanceId` из serverDZ.cfg
+(не всегда 1). Состав на Чероруси:
+
+| Файл(ы) | Что |
+|---|---|
+| `data/dynamic_NNN.bin` | сегментированный слой дропа и построек игроков |
+| `data/vehicles.bin`, `zombies.bin`, `animals.bin` | одноимённые слои |
+| `data/building_NNN.bin` | постройки (BaseBuildingBase) |
+| `data/types.bin` (+ `types.001`… temp-файлы) | реестр/счётчики CE |
+| `data/events.bin` (+ сегменты) | события CE |
+| `data/doors.bin` | состояния дверей |
+| `players.db` | SQLite: `DB_Versions(Id, Structure)`, `Players(Id, Alive, UID CHAR(64) UNIQUE, Data BLOB)` |
+| `spawnpoints.bin` | точки спавна игроков |
+| `export/mapgroup*.xml` | экспорт описаний групп при буте |
+
+### Функции сохранения/загрузки слоёв (статика)
+
+| Якорь (строка в образе) | Функция | Что |
+|---|---|---|
+| `[CE][Storage] Saved data file [%d] items.` и `[CE][Storage] Fetching stream [%d] items.` | `0x1406a3990` (0x341) | сохранение слоя / выдача потока; до логов — вызов `0x1408f40e0`: геттер глобальной структуры настроек (байт verbose `+0x102`; в этой же структуре строка-имя режима `cefullremote`) |
+| `[CE][Storage] Restoring file "%s".` | `0x14069fc10`, `0x1406c77c0` | чтение файла слоя |
+| `[CE][Storage] Restoring file "%s" %d items.` | `0x1406a3e60` | чтение с подсчётом сущностей |
+| `players.db` | `0x1408f9c70` | сборка пути к players.db (склейка каталога storage со строкой через `0x1406d0140`) |
+
+Файловый ввод-вывод — не в этих функциях, а ниже по стеку: фасад
+`0x140755a60` → чтение целиком `fopen+fread+fclose` (`0x140756d60`) и запись
+целью `fopen+fwrite+fclose` (`0x140757f90`), всё через IAT CRT. Живой замер:
+в рантайме persistence ходит НЕ через CRT-фасад — слои и players.db
+открываются напрямую `CreateFileW` с префиксом `\\?\`. Патч одного fopen
+ничего не перехватывает.
+
+### Транспорт и режимы доступа (живой замер)
+
+- всё persistence открывается `CreateFileW(\\?\...)` из образа движка;
+- запись слоёв — temp-файл + `MoveFileExW` (`types.001/.002` → `types.bin`);
+- SQLite требует консистентности полного набора операций: CreateFileW,
+  DeleteFileW (журнал `players.db-journal`), MoveFileExW,
+  Get/SetFileAttributesW (проверки существования), CreateDirectoryW.
+  Перенаправление только CreateFileW — журнал расходится с базой, и бут
+  падает: `!!! [CE][offlineDB] :: Can't prepare data structure: disk I/O
+  error` → `[CE][Hive] :: Initialization failed.`;
+- файлы слоёв движок держит ОТКРЫТЫМИ без FILE_SHARE_READ: внешний читатель
+  обязан открывать с FILE_SHARE_READ|WRITE|DELETE — CRT-чтение (fopen)
+  молча проваливается;
+- параллельный readonly-доступ к живому players.db из другого потока процесса
+  работает (sqlite busy-timeout); хирургический `DELETE FROM Players WHERE
+  UID=...` движок переносит — logout-сейв не воскрешает запись (UPDATE по Id,
+  согласуется с разделом «Штатная конвертация персонажей»).
+
+### Бут-последовательность (живой замер, строки RPT)
+
+`[CE][Hive] :: Initializing OFFLINE` → `[StorageDirs] :: Selected storage
+directory: …` → `Loading core data` → `[CE][offlineDB] :: Conversion of
+characters started / Processing N players` → `Loading map data` →
+`[CE][offlineDB] :: No Shutdown message present` (признак некорректного
+завершения прошлой сессии) → `Loaded N dynamic events M total types` →
+`[CE][Storage] Restoring file "…"` по каждому слою → initial-проход
+(раздел «Initial-проход» выше). Выбор InitialSpawn/RestartSpawn описан там
+же; практически: при успешно восстановленных слоях бут-раскладка даёт
+`Initially (re)spawned:0` — двойного лута не возникает.
+
+### Техника подмены хранилища (живой замер, обобщённо)
+
+Слоты файловых операций в IAT ОБРАЗА ДВИЖКА (не процесса) заменяются на
+детуры, переписывающие пути с префиксом `storage_<N>\` на подставной
+каталог. Условия целостности:
+
+1. полный набор операций (иначе SQLite расходится, см. выше);
+2. подставной каталог и подкаталоги (`data`, `export`) создать ДО первого
+   обращения движка: CreateFileW каталогов не создаёт, а сам движок создаёт
+   их по настоящему пути;
+3. наполнять подставной каталог из внешнего хранилища синхронно, до чтения
+   persistence движком (GRAFT_ON_LOAD раньше первой фазы Hive);
+4. файл, переживший рестарт, новее копии во внешнем хранилище (финальный
+   сейв при выключении позже последней выгрузки) — не перезаписывать,
+   внешнее хранилище только закрывает отсутствующее;
+5. чтение файлов подставного каталога внешним синхронизатором — с полным
+   share (см. режимы доступа);
+6. недоступность внешнего хранилища на старте — не включать перенаправление
+   вовсе: движок продолжит работать с настоящим каталогом без потерь.
+
+### Перепроверка после патча
+
+```
+py -3.12 RESEARCH/scripts/pe.py <server.exe> str "[CE][Storage] Saved data file"
+py -3.12 RESEARCH/scripts/pe.py <server.exe> riprefs <VA строки>
+py -3.12 RESEARCH/scripts/pe.py <server.exe> dis_func <VA функции>
+```
+
+Поведенческие факты (какой API открывает persistence, share-режимы,
+цепочка бута) проверяются логом RPT живого сервера; счётчик-детур на
+CreateFileW печатает первые persistence-пути.
