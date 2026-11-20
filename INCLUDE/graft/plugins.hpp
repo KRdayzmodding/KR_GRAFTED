@@ -31,6 +31,9 @@ std::string profile_dir(std::string_view cmdline);
 // Нет ключа или не число — 2.
 std::uint32_t frame_budget_ms(std::string_view cmdline);
 
+// Отчёт о цене graft в кадре раз в столько секунд: ключ -graftProfile=<сек>. Нет ключа — 0, выключен.
+std::uint32_t profile_seconds(std::string_view cmdline);
+
 // Имя папки профиля по умолчанию в %LOCALAPPDATA% по номеру приложения Steam: "DayZ",
 // у экспериментальной ветки "DayZ Exp", у внутренней "DayZ Int".
 std::string_view profile_folder(std::uint32_t app_id);

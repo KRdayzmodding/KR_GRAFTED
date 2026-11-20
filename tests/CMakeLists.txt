@@ -98,6 +98,8 @@ add_executable(graft_tests
     enfparse_test.cpp
     runtime_test.cpp
     events_test.cpp
+    world_events_test.cpp
+    events_perf_test.cpp
 )
 # graft::hook — ради hook_test: врезка проверяется на своей же функции, без игры.
 target_link_libraries(graft_tests PRIVATE graft::host graft::gen graft::hook GTest::gtest_main)

@@ -5,6 +5,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
@@ -93,7 +94,11 @@ TEST(PluginEntry, OnLoadRunsOnceTheHostHasIntroduced) {
     host.log         = &capture_log;
     graft_plugin_info info{};
     EXPECT_EQ(entry(&host, &info), GRAFT_OK);
-    EXPECT_EQ(g_host_log, std::vector<std::string>{"fixture: on_load"});
+    // Следом может быть строка «событий нет»: у этого хоста полей событий нет, а у фикстуры есть
+    // объявленная подписка. Главное — on_load позван и позван первым.
+    ASSERT_FALSE(g_host_log.empty());
+    EXPECT_EQ(g_host_log.front(), "fixture: on_load");
+    EXPECT_EQ(std::ranges::count(g_host_log, std::string{"fixture: on_load"}), 1);
 }
 
 // Хост 0.5 (ABI 7, без полей «С 0.6») плагин 0.6 принимает: события ему просто недоступны,
@@ -110,6 +115,61 @@ TEST(PluginEntry, AcceptsHostWithoutEventServices) {
         reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"SIXW_HASHMAP.grafted.dll"), "fixture_events_probe")));
     ASSERT_NE(probe, nullptr);
     EXPECT_EQ(probe(), 0);
+}
+
+// Подписка, объявленная вне функций (graft::on<E> в файле плагина), строится раньше хоста и
+// уходит ему из точки входа — без GRAFT_ON_LOAD. Хосты прошлых тестов событий не имели: заявка ждала.
+struct fake_events {
+    std::vector<std::string> topics;
+    void (*handler)(void*, const void*) = nullptr;
+    void* ctx                           = nullptr;
+};
+
+fake_events g_events;
+
+uint64_t fake_subscribe(const char* topic, uint32_t, void (*handler)(void*, const void*), void (*)(void*), void* ctx, const char*) {
+    g_events.topics.emplace_back(topic);
+    g_events.handler = handler;
+    g_events.ctx     = ctx;
+    return 42;
+}
+
+TEST(PluginEntry, DeclaredSubscriptionReachesHostAtEntry) {
+    const auto entry = fixture_entry();
+    ASSERT_NE(entry, nullptr);
+    static auto host = foreign_host(GRAFT_ABI_VERSION, GRAFT_LAYOUT_VERSION);
+    host.log         = &capture_log;
+    host.post        = [](void (*)(void*), void (*drop)(void*), void* ctx, const char*) -> uint8_t {
+        drop(ctx);
+        return 1;
+    };
+    host.on_script_thread = []() -> uint8_t { return 1; };
+    host.subscribe        = &fake_subscribe;
+    host.unsubscribe      = [](uint64_t) {};
+    host.publish          = [](const char*, uint32_t, const void*, uint8_t) -> uint8_t { return 1; };
+    host.add_timer        = [](uint32_t, uint32_t, void (*)(void*), void (*drop)(void*), void* ctx, const char*) -> uint64_t {
+        drop(ctx);
+        return 0;
+    };
+    host.topic         = [](const char*, uint32_t, const char*) -> const graft_topic* { return nullptr; };
+    host.publish_topic = [](const graft_topic*, const void*, uint8_t) -> uint8_t { return 1; };
+    host.watch         = [](const char*, uint32_t, void (*)(void*, uint8_t), void (*drop)(void*), void* ctx, const char*) -> uint64_t {
+        drop(ctx);
+        return 0;
+    };
+    graft_plugin_info info{};
+    ASSERT_EQ(entry(&host, &info), GRAFT_OK);
+    ASSERT_EQ(g_events.topics, std::vector<std::string>{"fixture.ping"});
+
+    struct {
+        int n = 3;
+    } ping;
+
+    g_events.handler(g_events.ctx, &ping);
+    const auto pinged = reinterpret_cast<int (*)()>(
+        reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"SIXW_HASHMAP.grafted.dll"), "fixture_pinged")));
+    ASSERT_NE(pinged, nullptr);
+    EXPECT_EQ(pinged(), 3);
 }
 
 // Объявления, которые сборка напечатала рядом с фикстурами (graft.exe protogen, POST_BUILD).

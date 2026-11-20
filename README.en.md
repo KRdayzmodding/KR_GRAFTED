@@ -96,9 +96,12 @@ modded class MissionServer
 From the script side `IsValidNick` is indistinguishable from a vanilla native. From the
 C++ side it is an ordinary function the engine calls directly, by address. Need code on
 every frame too? That's `GRAFT_ON_TICK(dt) { ... }` — see [examples/players](examples/players/).
-Since 0.6 a plugin can live on events instead of the tick: subscriptions, work posted to the
-script thread from any thread, and timers — `graft::on<E>`, `graft::publish`, `graft::post`,
-`graft::every` in `graft/events.hpp` (rules are in the header and the Russian README).
+Since 0.6 a plugin can live on events instead of the tick. `graft::on<E> started{&start};` declared at
+file scope subscribes for the plugin's lifetime, no `GRAFT_ON_LOAD` needed; `graft::post` runs work on the script
+thread from any thread; `graft::every` / `graft::after` start timers that run until cancelled. The host publishes
+base events (`running`, `tick`, `mission_ready`, `players_online`, `player_joined`, `player_left`) and polls the
+engine for them only while someone listens; an event nobody listens to costs one counter read. See
+`graft/events.hpp` and the Russian README.
 
 That ships as:
 
