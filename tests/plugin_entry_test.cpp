@@ -5,6 +5,7 @@
 
 #include <windows.h>
 
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -93,6 +94,22 @@ TEST(PluginEntry, OnLoadRunsOnceTheHostHasIntroduced) {
     graft_plugin_info info{};
     EXPECT_EQ(entry(&host, &info), GRAFT_OK);
     EXPECT_EQ(g_host_log, std::vector<std::string>{"fixture: on_load"});
+}
+
+// Хост 0.5 (ABI 7, без полей «С 0.6») плагин 0.6 принимает: события ему просто недоступны,
+// а post не течёт — замыкание отпущено. Идёт после OnLoad: on_load зовут один раз.
+TEST(PluginEntry, AcceptsHostWithoutEventServices) {
+    const auto entry = fixture_entry();
+    ASSERT_NE(entry, nullptr);
+    static auto host = foreign_host(GRAFT_ABI_VERSION, GRAFT_LAYOUT_VERSION);
+    host.size        = offsetof(graft_host_api, post);
+    host.log         = &capture_log;
+    graft_plugin_info info{};
+    EXPECT_EQ(entry(&host, &info), GRAFT_OK);
+    const auto probe = reinterpret_cast<int (*)()>(
+        reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"SIXW_HASHMAP.grafted.dll"), "fixture_events_probe")));
+    ASSERT_NE(probe, nullptr);
+    EXPECT_EQ(probe(), 0);
 }
 
 // Объявления, которые сборка напечатала рядом с фикстурами (graft.exe protogen, POST_BUILD).

@@ -2,12 +2,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH LicenseRef-GRAFT-plugin-exception-1.0
 // Этот файл линкуется в КАЖДЫЙ плагин, поэтому едет с исключением: мод на GRAFT ничего
 // не обязан — даже закрытый и платный. См. LICENSE-EXCEPTION.
+#include <windows.h>
+
+#include <filesystem>
 #include <format>
 #include <mutex>
 #include <unordered_map>
 #include <utility>
 
 #include "graft/engine.hpp"
+#include "graft/guard.hpp"
 #include "graft/loader.hpp"
 
 // Хранилище результата загрузки, отдельно от самой загрузки.
@@ -31,11 +35,13 @@ void add_tick(void (*fn)(float)) {
     }
 }
 
-// Зовётся с натива GraftTick, то есть по скриптовому потоку. Обработчик может звать
-// движок — там же, где это делает сам скрипт.
+// Зовётся с кадра движка или натива GraftTick, то есть по скриптовому потоку. Обработчик может
+// звать движок — там же, где это делает сам скрипт. Ловушка — у каждого своя: раньше одна на
+// всех, и упавший тик одного плагина отменял в этом кадре тики всех, кто после него.
 void run_ticks(float dt) {
     for (void (*fn)(float) : g_ticks) {
-        fn(dt);
+        const fault_place place{reinterpret_cast<void*>(fn), "GRAFT_ON_TICK"};
+        ::graft::detail::guarded<void>(reinterpret_cast<void*>(fn), [fn, dt] { fn(dt); });
     }
 }
 
@@ -55,6 +61,40 @@ void set_script_root(void* game) {
 
 void* script_root() {
     return g_root;
+}
+
+namespace {
+// Где упал чужой код, когда это не натив: ставит fault_place на время вызова.
+thread_local void* g_fault_code        = nullptr;
+thread_local const char* g_fault_where = nullptr;
+}  // namespace
+
+fault_place::fault_place(void* code, const char* where) : code_was_(g_fault_code), where_was_(g_fault_where) {
+    g_fault_code  = code;
+    g_fault_where = where;
+}
+
+fault_place::~fault_place() {
+    g_fault_code  = code_was_;
+    g_fault_where = where_was_;
+}
+
+std::string module_of(const void* address) {
+    HMODULE mod = nullptr;
+    if (!address || !GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                        static_cast<LPCWSTR>(address), &mod)) {
+        return {};
+    }
+    wchar_t path[MAX_PATH]{};
+    const DWORD n = GetModuleFileNameW(mod, path, MAX_PATH);
+    if (n == 0) {
+        return {};
+    }
+    const std::wstring file = std::filesystem::path{std::wstring(path, n)}.filename().wstring();
+    const int size = WideCharToMultiByte(CP_UTF8, 0, file.data(), static_cast<int>(file.size()), nullptr, 0, nullptr, nullptr);
+    std::string out(static_cast<std::size_t>(size > 0 ? size : 0), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, file.data(), static_cast<int>(file.size()), out.data(), size, nullptr, nullptr);
+    return out;
 }
 
 namespace {
@@ -80,13 +120,22 @@ void note_fault(void* impl, std::uint32_t code, const void* at, const char* what
     const char* owner = "?";
     const char* class_name = nullptr;
     const char* name = "?";
+    bool native = false;
     for (const plugins::entry& e : registry()) {
         if (e.desc && e.desc->impl == impl) {
             owner = e.owner ? e.owner : "?";
             class_name = e.desc->class_name;
             name = e.desc->name;
+            native = true;
             break;
         }
+    }
+    // Не натив — тик, обработчик события или задание: DLL по адресу кода, место — от вызвавшего.
+    std::string module;
+    if (!native && (g_fault_code || g_fault_where)) {
+        module = module_of(g_fault_code ? g_fault_code : impl);
+        owner  = module.empty() ? "?" : module.c_str();
+        name   = g_fault_where ? g_fault_where : "?";
     }
     const std::string who =
         class_name ? std::format("{}.{}", class_name, name) : std::string{name};

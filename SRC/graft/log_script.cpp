@@ -8,6 +8,7 @@
 
 #include "graft/callout.hpp"
 #include "graft/engine.hpp"
+#include "graft/events.hpp"
 #include "graft/script.hpp"
 #include "graft/types.hpp"
 
@@ -72,7 +73,16 @@ bool to_crash_log(std::string_view text) {
 
 // Строка от имени плагина. Не дошла до игры — не теряем: уходит в системный журнал с
 // пометкой. Молчаливая потеря хуже строки не в том файле.
+//
+// С чужого потока (поток базы, пул, шлюз) звать движок нельзя: когда кадры уже идут, строка
+// уезжает заданием на поток скрипта и печатается на ближайшем кадре. Раньше такой вызов был
+// ошибкой плагина.
 bool say(bool bad, std::string_view who, std::string_view line) {
+    // До первого кадра потока скрипта нет — как раньше: движок не ответит, строка уйдёт в
+    // системный журнал с пометкой.
+    if (events_ready() && script_thread_known() && !on_script_thread()) {
+        return ::graft::post([bad, w = std::string{who}, l = std::string{line}] { say(bad, w, l); });
+    }
     const std::string text = std::format("[{}] {}", who, line);
     if (bad ? to_crash_log(text) : to_script_log(text)) {
         return true;

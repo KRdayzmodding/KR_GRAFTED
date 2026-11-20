@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <utility>
 
+#include "graft/events.hpp"
 #include "graft/native.hpp"
 
 GRAFT_PLUGIN("SIXW_HASHMAP", 1);
@@ -61,3 +62,30 @@ GRAFT_ON_LOAD() {
 }
 
 }  // namespace
+
+// Сторож совместимости 0.6: плагин с событиями на хосте без них не падает и не течёт —
+// post отвечает «нет», а замыкание отпущено. 1 — события есть, 0 — нет и отпущено, -1 — утекло.
+namespace {
+int g_dropped = 0;
+
+struct probe_mark {
+    bool armed = true;
+    probe_mark() = default;
+    probe_mark(probe_mark&& other) noexcept : armed(std::exchange(other.armed, false)) {}
+    probe_mark(const probe_mark&) = delete;
+    ~probe_mark() {
+        if (armed) {
+            ++g_dropped;
+        }
+    }
+};
+}  // namespace
+
+extern "C" __declspec(dllexport) int fixture_events_probe() {
+    if (graft::events_available()) {
+        return 1;
+    }
+    const int before  = g_dropped;
+    const bool posted = graft::post([mark = probe_mark{}] {});
+    return !posted && g_dropped == before + 1 ? 0 : -1;
+}

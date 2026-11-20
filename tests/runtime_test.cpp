@@ -21,6 +21,7 @@
 #include <iostream>
 #include <regex>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -369,6 +370,32 @@ TEST(LoaderState, TickHandlersRunInOrderWithDelta) {
     graft::loader::run_ticks(0.25f);
     EXPECT_EQ(g_ticks, 2);
     EXPECT_FLOAT_EQ(g_last, 0.25f);
+}
+
+// Ловушка — у каждого тика своя: раньше одна на всех, и упавший тик одного плагина отменял в
+// этом кадре тики всех, кто после него. Бросает только по флагу: список тиков — на весь процесс.
+bool g_tick_throws = false;
+int g_after_thrower = 0;
+void throwing_tick(float) {
+    if (g_tick_throws) {
+        throw std::runtime_error("тик упал");
+    }
+}
+void tick_after_thrower(float) {
+    ++g_after_thrower;
+}
+
+TEST(LoaderState, FaultInOneTickDoesNotSkipTheNext) {
+    graft::loader::add_tick(&throwing_tick);
+    graft::loader::add_tick(&tick_after_thrower);
+    const auto faults_were = graft::loader::fault_count();
+    g_tick_throws          = true;
+    g_after_thrower        = 0;
+    graft::loader::run_ticks(0.1f);
+    g_tick_throws = false;
+    EXPECT_EQ(g_after_thrower, 1);
+    EXPECT_EQ(graft::loader::fault_count(), faults_were + 1);
+    EXPECT_NE(graft::loader::last_fault().find("GRAFT_ON_TICK"), std::string::npos) << graft::loader::last_fault();
 }
 
 TEST(LoaderState, NullHandlerIsIgnored) {

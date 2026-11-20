@@ -57,7 +57,7 @@ typedef struct graft_method_info {
 // Первые три поля заморожены так же, как заголовок graft_plugin_info: по ним плагин любой
 // версии сверяется с хостом, не читая больше ничего.
 typedef struct graft_host_api {
-    uint32_t size;    // sizeof(graft_host_api) — задел на расширение
+    uint32_t size;    // sizeof(graft_host_api) — расширяется дописыванием в конец (см. «С 0.6»)
     uint32_t abi;     // GRAFT_ABI_VERSION хоста
     uint32_t layout;  // GRAFT_LAYOUT_VERSION хоста
 
@@ -99,6 +99,31 @@ typedef struct graft_host_api {
     // ставится вовсе. Половина врезок — это состояние, в котором мод уже сломан, но ещё
     // считает себя живым.
     uint8_t (*install_hooks)(const graft_hook_request* items, uint32_t count);
+
+    // ── С 0.6: события, поток скрипта, таймеры ───────────────────────────────
+    // Поля только ДОПИСЫВАЮТСЯ, ABI не меняется: плагин 0.5 читает свою часть и не знает о
+    // хвосте, плагин 0.6 узнаёт хвост по size (graft::detail::events_ready). Всё ниже зовут
+    // из любого потока; плагинный код (run, handler, drop) хост зовёт только на потоке
+    // скрипта, кроме drop при отказе — тогда в том же вызове. Замыкание ctx — память
+    // плагина: отпускает его только drop, код самого плагина (у каждой DLL своя куча).
+    // where — «файл:строка» для журнала, хост копирует его.
+
+    // Вызвать run(ctx) на потоке скрипта, на ближайшем кадре, в общем бюджете; потом drop(ctx).
+    uint8_t (*post)(void (*run)(void* ctx), void (*drop)(void* ctx), void* ctx, const char* where);
+    // 1 — это поток скрипта (тот, где идут кадры и нативы); 2 — другой поток, а поток скрипта
+    // уже известен (кадры идут); 0 — потока скрипта ещё нет: кадров не было.
+    uint8_t (*on_script_thread)(void);
+    // Подписка на тему. size — sizeof события: у другой стороны другой — отказ (0) и drop.
+    uint64_t (*subscribe)(const char* topic, uint32_t size, void (*handler)(void* ctx, const void* event),
+                          void (*drop)(void* ctx), void* ctx, const char* where);
+    // Снять подписку или таймер. Номера не повторяются; чужой номер — ничего.
+    void (*unsubscribe)(uint64_t id);
+    // С потока скрипта — подписчикам сразу, по порядку подписки; с другого — копия в очередь.
+    // state — запомнить: подписчик, пришедший позже, получит его на ближайшем кадре.
+    uint8_t (*publish)(const char* topic, uint32_t size, const void* event, uint8_t state);
+    // run(ctx) через first_ms, дальше каждые every_ms (0 — один раз); снимается unsubscribe.
+    uint64_t (*add_timer)(uint32_t first_ms, uint32_t every_ms, void (*run)(void* ctx), void (*drop)(void* ctx),
+                          void* ctx, const char* where);
 } graft_host_api;
 
 // Один натив. POD-зеркало graft::native без указателя на следующий: строки живут в
