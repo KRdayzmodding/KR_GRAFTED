@@ -23,8 +23,9 @@
 #include "graft/native.hpp"
 #include "graft/plugins.hpp"
 #include "graft/scan.hpp"
-#include "graft/stages.hpp"
 #include "graft/script.hpp"
+#include "graft/stages.hpp"
+#include "graft/world_events.hpp"
 
 namespace graft {
 namespace {
@@ -334,6 +335,8 @@ void install() {
     // Шапка ждёт, когда движку станет чем печатать: кадр вызова Print собирается по
     // шаблонам скриптовых переменных, а их приносит линковка модуля.
     stage::on(stage::step::linked, [] { say_banner_to_game(); });
+    // Базовые события мира (игроки, миссия): источники спят, пока на них никто не подписан.
+    world_events::install(events::host(), world_events::engine_probe());
 
     // ТОЛЬКО ТЕПЕРЬ грузим плагины: LoadLibrary — это десятки миллисекунд на каждый,
     // а маяк движка может прийти в любой момент. Хуки уже стоят, поэтому опоздать

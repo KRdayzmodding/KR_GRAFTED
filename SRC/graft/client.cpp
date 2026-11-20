@@ -16,6 +16,8 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -96,6 +98,9 @@ bool error(std::string_view line) {
 // ── События (graft/events.hpp): поля хоста «С 0.6» ───────────────────────────
 // Хост старше 0.6 этих полей не имеет — size короче. Тогда событий нет: замыкание
 // отпускаем сами (контракт: неудача — drop уже позван), а хосту одной строкой говорим почему.
+//
+// Объявления плагина (graft::on<E> вне функций, таймеры и задания из статиков) строятся раньше,
+// чем хост представится: их заявки ждут здесь и уходят хосту из graft_plugin_entry.
 namespace graft::detail {
 namespace {
 
@@ -108,10 +113,44 @@ void say_no_events() {
     }
 }
 
+std::vector<std::move_only_function<void()>>& pending_events() {
+    static std::vector<std::move_only_function<void()>> all;
+    return all;
+}
+
+bool settle(slot& s, std::uint64_t id) {
+    if (id != 0) {
+        s.id.store(id, std::memory_order_release);
+    } else {
+        s.alive.store(false, std::memory_order_release);
+    }
+    return id != 0;
+}
+
+// Хоста нет — заявка ждёт; есть, но без событий — отказ. true — заявку взяли в ожидание.
+template <class F>
+bool wait_for_host(F again) {
+    if (g_host) {
+        return false;
+    }
+    pending_events().emplace_back(std::move(again));
+    return true;
+}
+
 } // namespace
 
 bool events_ready() {
-    return g_host && g_host->size >= sizeof(graft_host_api);
+    // До watch включительно: frames дописан позже и без него события работают.
+    return g_host && g_host->size >= offsetof(graft_host_api, frames) && g_host->post && g_host->subscribe && g_host->topic &&
+           g_host->publish_topic && g_host->watch && g_host->add_timer && g_host->unsubscribe && g_host->on_script_thread;
+}
+
+std::uint64_t frames() {
+    return g_host && g_host->size >= sizeof(graft_host_api) && g_host->frames ? g_host->frames() : 0;
+}
+
+bool host_bound() {
+    return g_host != nullptr;
 }
 
 bool on_script_thread() {
@@ -122,7 +161,18 @@ bool script_thread_known() {
     return events_ready() && g_host->on_script_thread() != 0;
 }
 
+std::uint64_t epoch() {
+    return events_ready() ? reinterpret_cast<std::uintptr_t>(g_host) : 0;
+}
+
+const graft_topic* topic(const char* name, std::uint32_t size, const char* where) {
+    return events_ready() ? g_host->topic(name, size, where) : nullptr;
+}
+
 bool post(void (*run)(void*), void (*drop)(void*), void* ctx, const char* where) {
+    if (wait_for_host([run, drop, ctx, w = std::string{where}] { post(run, drop, ctx, w.c_str()); })) {
+        return true;
+    }
     if (!events_ready()) {
         say_no_events();
         drop(ctx);
@@ -131,13 +181,32 @@ bool post(void (*run)(void*), void (*drop)(void*), void* ctx, const char* where)
     return g_host->post(run, drop, ctx, where) != 0;
 }
 
-std::uint64_t subscribe(const char* topic, std::uint32_t size, void (*handler)(void*, const void*), void (*drop)(void*), void* ctx, const char* where) {
-    if (!events_ready()) {
-        say_no_events();
-        drop(ctx);
-        return 0;
+bool subscribe(const char* topic, std::uint32_t size, void (*handler)(void*, const void*), void (*drop)(void*), void* ctx, const char* where, const std::shared_ptr<slot>& s) {
+    if (wait_for_host([=, w = std::string{where}] { subscribe(topic, size, handler, drop, ctx, w.c_str(), s); })) {
+        return true;
     }
-    return g_host->subscribe(topic, size, handler, drop, ctx, where);
+    if (!events_ready() || !s->alive.load(std::memory_order_acquire)) { // снят, ещё не дойдя до хоста
+        if (!events_ready()) {
+            say_no_events();
+        }
+        drop(ctx);
+        return settle(*s, 0);
+    }
+    return settle(*s, g_host->subscribe(topic, size, handler, drop, ctx, where));
+}
+
+bool watch(const char* topic, std::uint32_t size, void (*changed)(void*, std::uint8_t), void (*drop)(void*), void* ctx, const char* where, const std::shared_ptr<slot>& s) {
+    if (wait_for_host([=, w = std::string{where}] { watch(topic, size, changed, drop, ctx, w.c_str(), s); })) {
+        return true;
+    }
+    if (!events_ready() || !s->alive.load(std::memory_order_acquire)) {
+        if (!events_ready()) {
+            say_no_events();
+        }
+        drop(ctx);
+        return settle(*s, 0);
+    }
+    return settle(*s, g_host->watch(topic, size, changed, drop, ctx, where));
 }
 
 void unsubscribe(std::uint64_t id) {
@@ -146,21 +215,43 @@ void unsubscribe(std::uint64_t id) {
     }
 }
 
-bool publish(const char* topic, std::uint32_t size, const void* event, bool state) {
+bool publish(const graft_topic* topic, const void* event, bool state) {
     if (!events_ready()) {
         say_no_events();
         return false;
     }
-    return g_host->publish(topic, size, event, state ? 1u : 0u) != 0;
+    return g_host->publish_topic(topic, event, state ? 1u : 0u) != 0;
 }
 
-std::uint64_t add_timer(std::uint32_t first_ms, std::uint32_t every_ms, void (*run)(void*), void (*drop)(void*), void* ctx, const char* where) {
+bool add_timer(std::uint32_t first_ms, std::uint32_t every_ms, void (*run)(void*), void (*drop)(void*), void* ctx, const char* where, const std::shared_ptr<slot>& s) {
+    if (wait_for_host([=, w = std::string{where}] { add_timer(first_ms, every_ms, run, drop, ctx, w.c_str(), s); })) {
+        return true;
+    }
+    if (!events_ready() || !s->alive.load(std::memory_order_acquire)) {
+        if (!events_ready()) {
+            say_no_events();
+        }
+        drop(ctx);
+        return settle(*s, 0);
+    }
+    return settle(*s, g_host->add_timer(first_ms, every_ms, run, drop, ctx, where));
+}
+
+// Заявки из статиков — хосту, когда он представился. Хост без событий их не получит: ждут
+// дальше (в игре вход один; второй вход с хостом 0.6 бывает только в тестах).
+void flush_pending_events() {
+    if (pending_events().empty()) {
+        return;
+    }
     if (!events_ready()) {
         say_no_events();
-        drop(ctx);
-        return 0;
+        return;
     }
-    return g_host->add_timer(first_ms, every_ms, run, drop, ctx, where);
+    std::vector<std::move_only_function<void()>> all = std::move(pending_events());
+    pending_events().clear();
+    for (auto& again : all) {
+        again();
+    }
 }
 
 } // namespace graft::detail
@@ -372,6 +463,8 @@ extern "C" __declspec(dllexport) uint32_t __cdecl graft_plugin_entry(const graft
             fn();
         }
         pending_loads().clear();
+        // Объявленные подписки, таймеры и задания — после GRAFT_ON_LOAD: врезки встают раньше.
+        graft::detail::flush_pending_events();
     }
 
     const std::vector<graft_native_desc>& all = flatten();

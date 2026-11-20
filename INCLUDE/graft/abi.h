@@ -122,7 +122,27 @@ typedef struct graft_host_api {
     uint8_t (*publish)(const char* topic, uint32_t size, const void* event, uint8_t state);
     // run(ctx) через first_ms, дальше каждые every_ms (0 — один раз); снимается unsubscribe.
     uint64_t (*add_timer)(uint32_t first_ms, uint32_t every_ms, void (*run)(void* ctx), void (*drop)(void* ctx), void* ctx, const char* where);
+
+    // Тема по имени: заводится при первом вопросе и живёт до конца процесса. size не тот, что у
+    // темы, — NULL и строка в журнале.
+    const struct graft_topic* (*topic)(const char* name, uint32_t size, const char* where);
+    // publish по теме. Без подписчиков и не state — сразу 1: тема без подписчиков ничего не стоит.
+    uint8_t (*publish_topic)(const struct graft_topic* topic, const void* event, uint8_t state);
+    // Источник темы: changed(ctx, 1) — у темы появился подписчик, changed(ctx, 0) — ушёл последний.
+    // Зовётся на потоке скрипта; есть подписчики уже при заявке — на ближайшем кадре.
+    // Снимается unsubscribe.
+    uint64_t (*watch)(const char* topic, uint32_t size, void (*changed)(void* ctx, uint8_t listened), void (*drop)(void* ctx), void* ctx, const char* where);
+    // Кадров движка с запуска (тот же счётчик, что graft::tick::number). Из любого потока: FPS —
+    // разницей раз в секунду, без подписки на каждый кадр.
+    uint64_t (*frames)(void);
 } graft_host_api;
+
+// Тема события. Держит хост, плагину — только читать. listeners пишет хост на потоке скрипта;
+// читать атомарно (std::atomic_ref): 0 — публиковать некому.
+typedef struct graft_topic {
+    uint32_t size;      // sizeof события
+    uint32_t listeners; // подписчиков сейчас
+} graft_topic;
 
 // Один натив. POD-зеркало graft::native без указателя на следующий: строки живут в
 // статике плагина, который не выгружается, поэтому хост их только читает.

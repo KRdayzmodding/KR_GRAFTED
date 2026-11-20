@@ -130,11 +130,21 @@ std::string profile_dir(std::string_view cmdline) {
     return path;
 }
 
+namespace {
+std::uint32_t number_of(std::string_view cmdline, std::string_view key, std::uint32_t fallback) {
+    const std::string text = value_of(split_args(cmdline), key).value_or("");
+    std::uint32_t     n    = 0;
+    const auto [end, oops] = std::from_chars(text.data(), text.data() + text.size(), n);
+    return oops == std::errc{} && end == text.data() + text.size() && !text.empty() ? n : fallback;
+}
+} // namespace
+
 std::uint32_t frame_budget_ms(std::string_view cmdline) {
-    const std::string text = value_of(split_args(cmdline), "graftBudget").value_or("");
-    std::uint32_t     ms   = 0;
-    const auto [end, oops] = std::from_chars(text.data(), text.data() + text.size(), ms);
-    return oops == std::errc{} && end == text.data() + text.size() && !text.empty() ? ms : 2u;
+    return number_of(cmdline, "graftBudget", 2u);
+}
+
+std::uint32_t profile_seconds(std::string_view cmdline) {
+    return number_of(cmdline, "graftProfile", 0u);
 }
 
 std::string_view profile_folder(std::uint32_t app_id) {

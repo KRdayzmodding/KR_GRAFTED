@@ -12,6 +12,8 @@
 #include "graft/abi.h"
 #include "graft/engine.hpp"
 #include "graft/events.hpp"
+#include "graft/frame.hpp"
+#include "graft/hub.hpp"
 #include "graft/native.hpp"
 #include "graft/plugins.hpp"
 #include "graft/script.hpp"
@@ -136,30 +138,46 @@ uint8_t api_install_hooks(const graft_hook_request* items, uint32_t count) {
 
 // ── С 0.6: события — хаб хоста (events.cpp) ────────────────────────────────────
 uint8_t api_post(void (*run)(void*), void (*drop)(void*), void* ctx, const char* where) {
-    return ::graft::detail::post(run, drop, ctx, where) ? 1u : 0u;
+    return events::host().post(run, drop, ctx, where ? where : "") ? 1u : 0u;
 }
 
 uint8_t api_on_script_thread() {
-    if (::graft::detail::on_script_thread()) {
+    if (events::host().on_thread()) {
         return 1u;
     }
-    return ::graft::detail::script_thread_known() ? 2u : 0u;
+    return events::host().bound() ? 2u : 0u;
 }
 
 uint64_t api_subscribe(const char* topic, uint32_t size, void (*handler)(void*, const void*), void (*drop)(void*), void* ctx, const char* where) {
-    return ::graft::detail::subscribe(topic, size, handler, drop, ctx, where);
+    return events::host().subscribe(topic ? topic : "", size, handler, drop, ctx, where ? where : "");
 }
 
 void api_unsubscribe(uint64_t id) {
-    ::graft::detail::unsubscribe(id);
+    events::host().unsubscribe(id);
 }
 
 uint8_t api_publish(const char* topic, uint32_t size, const void* event, uint8_t state) {
-    return ::graft::detail::publish(topic, size, event, state != 0) ? 1u : 0u;
+    return events::host().publish(topic ? topic : "", size, event, state != 0) ? 1u : 0u;
 }
 
 uint64_t api_add_timer(uint32_t first_ms, uint32_t every_ms, void (*run)(void*), void (*drop)(void*), void* ctx, const char* where) {
-    return ::graft::detail::add_timer(first_ms, every_ms, run, drop, ctx, where);
+    return events::host().timer(std::chrono::milliseconds{first_ms}, std::chrono::milliseconds{every_ms}, run, drop, ctx, where ? where : "");
+}
+
+const graft_topic* api_topic(const char* name, uint32_t size, const char* where) {
+    return events::host().topic(name ? name : "", size, where ? where : "");
+}
+
+uint8_t api_publish_topic(const graft_topic* topic, const void* event, uint8_t state) {
+    return events::host().publish(topic, event, state != 0) ? 1u : 0u;
+}
+
+uint64_t api_watch(const char* topic, uint32_t size, void (*changed)(void*, uint8_t), void (*drop)(void*), void* ctx, const char* where) {
+    return events::host().watch(topic ? topic : "", size, changed, drop, ctx, where ? where : "");
+}
+
+uint64_t api_frames() {
+    return frame::frames();
 }
 
 const graft_host_api& host_api() {
@@ -185,7 +203,11 @@ const graft_host_api& host_api() {
                                     &api_subscribe,
                                     &api_unsubscribe,
                                     &api_publish,
-                                    &api_add_timer};
+                                    &api_add_timer,
+                                    &api_topic,
+                                    &api_publish_topic,
+                                    &api_watch,
+                                    &api_frames};
     return api;
 }
 
