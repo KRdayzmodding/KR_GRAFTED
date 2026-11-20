@@ -146,8 +146,7 @@ uint8_t api_on_script_thread() {
     return ::graft::detail::script_thread_known() ? 2u : 0u;
 }
 
-uint64_t api_subscribe(const char* topic, uint32_t size, void (*handler)(void*, const void*), void (*drop)(void*),
-                       void* ctx, const char* where) {
+uint64_t api_subscribe(const char* topic, uint32_t size, void (*handler)(void*, const void*), void (*drop)(void*), void* ctx, const char* where) {
     return ::graft::detail::subscribe(topic, size, handler, drop, ctx, where);
 }
 
@@ -159,8 +158,7 @@ uint8_t api_publish(const char* topic, uint32_t size, const void* event, uint8_t
     return ::graft::detail::publish(topic, size, event, state != 0) ? 1u : 0u;
 }
 
-uint64_t api_add_timer(uint32_t first_ms, uint32_t every_ms, void (*run)(void*), void (*drop)(void*), void* ctx,
-                       const char* where) {
+uint64_t api_add_timer(uint32_t first_ms, uint32_t every_ms, void (*run)(void*), void (*drop)(void*), void* ctx, const char* where) {
     return ::graft::detail::add_timer(first_ms, every_ms, run, drop, ctx, where);
 }
 

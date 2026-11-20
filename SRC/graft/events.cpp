@@ -21,7 +21,7 @@ namespace graft::events {
 void closure::release() {
     if (drop_) {
         const auto drop = std::exchange(drop_, nullptr);
-        void* ctx       = std::exchange(ctx_, nullptr);
+        void*      ctx  = std::exchange(ctx_, nullptr);
         // drop — код плагина (обычно delete): ловушка та же, что у вызова, — упасть тут значит
         // уронить кадр движка.
         ::graft::detail::guarded<void>(reinterpret_cast<void*>(drop), [drop, ctx] { drop(ctx); });
@@ -68,7 +68,7 @@ bool hub::post_own(std::move_only_function<void()> fn, std::string_view where) {
 // Отказ — сразу и громко: обоих по месту, иначе непонятно, кого из двух пересобирать.
 bool hub::size_fits(std::string_view topic, std::uint32_t size, std::string_view where) {
     const std::lock_guard held{sizes_lock_};
-    const auto found = sizes_.find(topic);
+    const auto            found = sizes_.find(topic);
     if (found == sizes_.end()) {
         sizes_.emplace(std::string(topic), std::pair{size, std::string(where)});
         return true;
@@ -76,8 +76,7 @@ bool hub::size_fits(std::string_view topic, std::uint32_t size, std::string_view
     if (found->second.first == size) {
         return true;
     }
-    graft::log(std::format("! событие «{}»: размер {} у {} — тема уже {} ({}); отказано", topic, size, where,
-                           found->second.first, found->second.second));
+    graft::log(std::format("! событие «{}»: размер {} у {} — тема уже {} ({}); отказано", topic, size, where, found->second.first, found->second.second));
     return false;
 }
 
@@ -89,11 +88,10 @@ hub::topic& hub::topic_of(std::string_view name) {
     return *found->second;
 }
 
-std::uint64_t hub::subscribe(std::string_view topic, std::uint32_t size, void (*handler)(void*, const void*),
-                             void (*drop)(void*), void* ctx, std::string_view where) {
+std::uint64_t hub::subscribe(std::string_view topic, std::uint32_t size, void (*handler)(void*, const void*), void (*drop)(void*), void* ctx, std::string_view where) {
     closure box{drop, ctx};
     if (!handler || !size_fits(topic, size, where)) {
-        return 0;  // box отпустит замыкание здесь же — плагин его уже не держит
+        return 0; // box отпустит замыкание здесь же — плагин его уже не держит
     }
     const std::uint64_t id = next_.fetch_add(1, std::memory_order_relaxed);
     if (on_thread()) {
@@ -135,7 +133,7 @@ void hub::remove(std::uint64_t id) {
         const auto at = std::ranges::find(t.subs, id, [](const auto& s) { return s->id; });
         if (at != t.subs.end()) {
             if (t.delivering > 0) {
-                (*at)->dead = true;  // идёт раздача: замыкание отпустим после неё
+                (*at)->dead = true; // идёт раздача: замыкание отпустим после неё
                 t.dirty     = true;
             } else {
                 t.subs.erase(at);
@@ -187,7 +185,7 @@ void hub::deliver(topic& t, const void* event) {
             continue;
         }
         const auto handler = s->handler;
-        void* ctx          = s->box.ctx();
+        void*      ctx     = s->box.ctx();
         call(reinterpret_cast<void*>(handler), s->where, [handler, ctx, event] { handler(ctx, event); });
     }
     if (--t.delivering == 0 && t.dirty) {
@@ -201,15 +199,15 @@ void hub::deliver_last(std::uint64_t id) {
     if (found == topic_of_sub_.end() || !found->second->has_last) {
         return;
     }
-    topic& t      = *found->second;
+    topic&     t  = *found->second;
     const auto at = std::ranges::find(t.subs, id, [](const auto& s) { return s->id; });
     if (at == t.subs.end() || (*at)->dead) {
         return;
     }
     ++t.delivering;
-    const auto handler = (*at)->handler;
-    void* ctx          = (*at)->box.ctx();
-    const void* event  = t.last.data();
+    const auto  handler = (*at)->handler;
+    void*       ctx     = (*at)->box.ctx();
+    const void* event   = t.last.data();
     call(reinterpret_cast<void*>(handler), (*at)->where, [handler, ctx, event] { handler(ctx, event); });
     if (--t.delivering == 0 && t.dirty) {
         std::erase_if(t.subs, [](const auto& s) { return s->dead; });
@@ -217,8 +215,7 @@ void hub::deliver_last(std::uint64_t id) {
     }
 }
 
-std::uint64_t hub::timer(std::chrono::milliseconds first, std::chrono::milliseconds every, void (*run)(void*),
-                         void (*drop)(void*), void* ctx, std::string_view where) {
+std::uint64_t hub::timer(std::chrono::milliseconds first, std::chrono::milliseconds every, void (*run)(void*), void (*drop)(void*), void* ctx, std::string_view where) {
     closure box{drop, ctx};
     if (!run) {
         return 0;
@@ -235,8 +232,7 @@ std::uint64_t hub::timer(std::chrono::milliseconds first, std::chrono::milliseco
     return id;
 }
 
-void hub::add_timer(std::uint64_t id, clock::duration first, clock::duration every, void (*run)(void*), closure box,
-                    std::string where) {
+void hub::add_timer(std::uint64_t id, clock::duration first, clock::duration every, void (*run)(void*), closure box, std::string where) {
     timers_.emplace(id, std::make_unique<timer_entry>(timer_entry{every, run, std::move(box), std::move(where)}));
     due_.emplace(now_() + first, id);
 }
@@ -247,13 +243,13 @@ void hub::run_timers(clock::time_point now) {
         due_.pop();
         const auto found = timers_.find(id);
         if (found == timers_.end()) {
-            continue;  // снят
+            continue; // снят
         }
         timer_entry& t     = *found->second;
         running_timer_     = id;
         running_cancelled_ = false;
         const auto run     = t.run;
-        void* ctx          = t.box.ctx();
+        void*      ctx     = t.box.ctx();
         call(reinterpret_cast<void*>(run), t.where, [run, ctx] { run(ctx); });
         running_timer_ = 0;
         if (running_cancelled_ || t.every == clock::duration::zero()) {
@@ -271,10 +267,10 @@ void hub::run_timers(clock::time_point now) {
 
 void hub::drain(clock::duration budget) {
     const clock::time_point started = now_();
-    std::size_t count               = 0;
+    std::size_t             count   = 0;
     {
         const std::lock_guard held{queue_lock_};
-        count = queue_.size();  // поставленное по ходу — на следующий кадр
+        count = queue_.size(); // поставленное по ходу — на следующий кадр
     }
     for (std::size_t i = 0; i < count; ++i) {
         task t;
@@ -323,7 +319,7 @@ hub* g_active = nullptr;
 }
 
 hub& host() {
-    static hub* const the = new hub;  // не разрушается: объекты движка умирают и после статиков
+    static hub* const the = new hub; // не разрушается: объекты движка умирают и после статиков
     return *the;
 }
 
@@ -353,7 +349,7 @@ void frame(float dt, std::uint64_t number) {
     h.frame(frame_budget());
 }
 
-}  // namespace graft::events
+} // namespace graft::events
 
 // ── Мост events.hpp на стороне хоста: хост сам себе хост ───────────────────────
 namespace graft::detail {
@@ -374,8 +370,7 @@ bool post(void (*run)(void*), void (*drop)(void*), void* ctx, const char* where)
     return events::active().post(run, drop, ctx, where ? where : "");
 }
 
-std::uint64_t subscribe(const char* topic, std::uint32_t size, void (*handler)(void*, const void*), void (*drop)(void*),
-                        void* ctx, const char* where) {
+std::uint64_t subscribe(const char* topic, std::uint32_t size, void (*handler)(void*, const void*), void (*drop)(void*), void* ctx, const char* where) {
     return events::active().subscribe(topic ? topic : "", size, handler, drop, ctx, where ? where : "");
 }
 
@@ -387,10 +382,8 @@ bool publish(const char* topic, std::uint32_t size, const void* event, bool stat
     return events::active().publish(topic ? topic : "", size, event, state);
 }
 
-std::uint64_t add_timer(std::uint32_t first_ms, std::uint32_t every_ms, void (*run)(void*), void (*drop)(void*), void* ctx,
-                        const char* where) {
-    return events::active().timer(std::chrono::milliseconds{first_ms}, std::chrono::milliseconds{every_ms}, run, drop, ctx,
-                                  where ? where : "");
+std::uint64_t add_timer(std::uint32_t first_ms, std::uint32_t every_ms, void (*run)(void*), void (*drop)(void*), void* ctx, const char* where) {
+    return events::active().timer(std::chrono::milliseconds{first_ms}, std::chrono::milliseconds{every_ms}, run, drop, ctx, where ? where : "");
 }
 
-}  // namespace graft::detail
+} // namespace graft::detail

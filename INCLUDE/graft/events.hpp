@@ -46,18 +46,20 @@ namespace graft {
 
 // ── События самого хоста ─────────────────────────────────────────────────────
 // Этапы — состояния: подписавшийся позже получит их сразу (на ближайшем кадре).
-struct linked {  // движок зовётся: классы находятся, нативы привязаны
+struct linked { // движок зовётся: классы находятся, нативы привязаны
     static constexpr std::string_view name = "graft.linked";
 };
-struct running {  // пошли кадры, у объектного графа есть корень (graft::game())
+
+struct running { // пошли кадры, у объектного графа есть корень (graft::game())
     static constexpr std::string_view name = "graft.running";
 };
+
 // Кадр — на потоке скрипта, раз в кадр, после старых тиков. Только для работы, которой и правда
 // нужен каждый кадр; остальное — события, таймеры, post.
 struct tick {
-    static constexpr std::string_view name = "graft.tick";
-    float dt = 0;               // timeslice движка
-    std::uint64_t number = 0;   // номер кадра с начала процесса
+    static constexpr std::string_view name   = "graft.tick";
+    float                             dt     = 0; // timeslice движка
+    std::uint64_t                     number = 0; // номер кадра с начала процесса
 };
 
 template <class E>
@@ -69,16 +71,14 @@ namespace detail {
 
 // Мост к хосту. У плагина — поля graft_host_api (client.cpp), у самого хоста — его хаб
 // (events.cpp). Неудача (нет хоста 0.6, отказ) — drop уже позван: замыкание не течёт.
-bool events_ready();
-bool on_script_thread();
-bool script_thread_known();  // кадры уже идут: поток скрипта известен
-bool post(void (*run)(void*), void (*drop)(void*), void* ctx, const char* where);
-std::uint64_t subscribe(const char* topic, std::uint32_t size, void (*handler)(void*, const void*),
-                        void (*drop)(void*), void* ctx, const char* where);
-void unsubscribe(std::uint64_t id);
-bool publish(const char* topic, std::uint32_t size, const void* event, bool state);
-std::uint64_t add_timer(std::uint32_t first_ms, std::uint32_t every_ms, void (*run)(void*), void (*drop)(void*),
-                        void* ctx, const char* where);
+bool          events_ready();
+bool          on_script_thread();
+bool          script_thread_known(); // кадры уже идут: поток скрипта известен
+bool          post(void (*run)(void*), void (*drop)(void*), void* ctx, const char* where);
+std::uint64_t subscribe(const char* topic, std::uint32_t size, void (*handler)(void*, const void*), void (*drop)(void*), void* ctx, const char* where);
+void          unsubscribe(std::uint64_t id);
+bool          publish(const char* topic, std::uint32_t size, const void* event, bool state);
+std::uint64_t add_timer(std::uint32_t first_ms, std::uint32_t every_ms, void (*run)(void*), void (*drop)(void*), void* ctx, const char* where);
 
 // «файл:строка» без выделений: строка уходит хосту на копию.
 struct where_text {
@@ -86,14 +86,14 @@ struct where_text {
 };
 
 inline where_text where_of(std::source_location at) {
-    where_text out;
+    where_text       out;
     std::string_view file = at.file_name();
     // Путь сборщика у всех свой; в журнал — хвост, по которому файл и так узнают.
     if (file.size() > 120) {
         file = file.substr(file.size() - 120);
     }
     const auto end = std::format_to_n(out.text, sizeof out.text - 1, "{}:{}", file, at.line());
-    *end.out = '\0';
+    *end.out       = '\0';
     return out;
 }
 
@@ -106,13 +106,15 @@ consteval bool name_is_literal() {
 // Жизнь подписки. busy считает идущие вызовы: снятие с чужого потока ждёт его нуля.
 struct slot {
     std::atomic<bool> alive{true};
-    std::atomic<int> busy{0};
+    std::atomic<int>  busy{0};
 };
 
 template <class F>
 struct boxed : slot {
     F fn;
+
     explicit boxed(F&& f) : fn(std::move(f)) {}
+
     explicit boxed(const F& f) : fn(f) {}
 };
 
@@ -150,15 +152,18 @@ void run_once(void* ctx) {
     (*static_cast<F*>(ctx))();
 }
 
-}  // namespace detail
+} // namespace detail
 
 // Подписка или таймер. Только перемещается; разрушение снимает.
 class subscription {
 public:
     subscription() = default;
+
     subscription(std::uint64_t id, detail::slot* s) noexcept : id_(id), slot_(s) {}
+
     subscription(subscription&& other) noexcept
         : id_(std::exchange(other.id_, 0)), slot_(std::exchange(other.slot_, nullptr)) {}
+
     subscription& operator=(subscription&& other) noexcept {
         if (this != &other) {
             reset();
@@ -167,8 +172,10 @@ public:
         }
         return *this;
     }
+
     subscription(const subscription&)            = delete;
     subscription& operator=(const subscription&) = delete;
+
     ~subscription() { reset(); }
 
     // Снять. После возврата новый вызов не начнётся; с чужого потока — и идущий уже кончился.
@@ -183,7 +190,7 @@ public:
             }
         }
         slot_ = nullptr;
-        detail::unsubscribe(std::exchange(id_, 0));  // после него хост вправе отпустить замыкание
+        detail::unsubscribe(std::exchange(id_, 0)); // после него хост вправе отпустить замыкание
     }
 
     // Оставить до конца процесса: объект забывает подписку, хост её держит. Для подписок плагина «навсегда» —
@@ -194,10 +201,11 @@ public:
     }
 
     explicit operator bool() const noexcept { return id_ != 0; }
+
     std::uint64_t id() const noexcept { return id_; }
 
 private:
-    std::uint64_t id_    = 0;
+    std::uint64_t id_   = 0;
     detail::slot* slot_ = nullptr;
 };
 
@@ -216,11 +224,10 @@ template <event E, class F>
     requires std::invocable<std::decay_t<F>&, const E&>
 [[nodiscard]] subscription on(F&& handler, std::source_location at = std::source_location::current()) {
     static_assert(detail::name_is_literal<E>(), "имя события — строковый литерал: E::name = \"...\"");
-    using box_t      = detail::boxed<std::decay_t<F>>;
-    auto*       box  = new box_t(std::forward<F>(handler));
-    const auto  here = detail::where_of(at);
-    const auto  id   = detail::subscribe(E::name.data(), static_cast<std::uint32_t>(sizeof(E)),
-                                         &detail::call_handler<E, box_t>, &detail::drop_box<box_t>, box, here.text);
+    using box_t     = detail::boxed<std::decay_t<F>>;
+    auto*      box  = new box_t(std::forward<F>(handler));
+    const auto here = detail::where_of(at);
+    const auto id   = detail::subscribe(E::name.data(), static_cast<std::uint32_t>(sizeof(E)), &detail::call_handler<E, box_t>, &detail::drop_box<box_t>, box, here.text);
     return id != 0 ? subscription{id, box} : subscription{};
 }
 
@@ -252,7 +259,8 @@ namespace detail {
 
 inline std::uint32_t as_ms(std::chrono::nanoseconds d) {
     const auto ms = std::chrono::ceil<std::chrono::milliseconds>(d).count();
-    return ms <= 0 ? 0u : ms >= 0xFFFFFFFFll ? 0xFFFFFFFFu : static_cast<std::uint32_t>(ms);
+    return ms <= 0 ? 0u : ms >= 0xFFFFFFFFll ? 0xFFFFFFFFu
+                                             : static_cast<std::uint32_t>(ms);
 }
 
 template <class F>
@@ -264,23 +272,21 @@ subscription start_timer(std::uint32_t first, std::uint32_t every, F&& fn, std::
     return id != 0 ? subscription{id, box} : subscription{};
 }
 
-}  // namespace detail
+} // namespace detail
 
 // Один раз через delay — на потоке скрипта. Точность — кадр.
 template <class Rep, class Period, class F>
     requires std::invocable<std::decay_t<F>&>
-[[nodiscard]] subscription after(std::chrono::duration<Rep, Period> delay, F&& fn,
-                                 std::source_location at = std::source_location::current()) {
+[[nodiscard]] subscription after(std::chrono::duration<Rep, Period> delay, F&& fn, std::source_location at = std::source_location::current()) {
     return detail::start_timer(detail::as_ms(delay), 0, std::forward<F>(fn), at);
 }
 
 // Каждые period — на потоке скрипта. Пропущенное за простой не догоняется пачкой.
 template <class Rep, class Period, class F>
     requires std::invocable<std::decay_t<F>&>
-[[nodiscard]] subscription every(std::chrono::duration<Rep, Period> period, F&& fn,
-                                 std::source_location at = std::source_location::current()) {
+[[nodiscard]] subscription every(std::chrono::duration<Rep, Period> period, F&& fn, std::source_location at = std::source_location::current()) {
     const std::uint32_t ms = detail::as_ms(period) == 0 ? 1u : detail::as_ms(period);
     return detail::start_timer(ms, ms, std::forward<F>(fn), at);
 }
 
-}  // namespace graft
+} // namespace graft

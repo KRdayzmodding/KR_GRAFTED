@@ -374,13 +374,15 @@ TEST(LoaderState, TickHandlersRunInOrderWithDelta) {
 
 // Ловушка — у каждого тика своя: раньше одна на всех, и упавший тик одного плагина отменял в
 // этом кадре тики всех, кто после него. Бросает только по флагу: список тиков — на весь процесс.
-bool g_tick_throws = false;
-int g_after_thrower = 0;
+bool g_tick_throws   = false;
+int  g_after_thrower = 0;
+
 void throwing_tick(float) {
     if (g_tick_throws) {
         throw std::runtime_error("тик упал");
     }
 }
+
 void tick_after_thrower(float) {
     ++g_after_thrower;
 }

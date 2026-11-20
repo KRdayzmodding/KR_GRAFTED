@@ -65,9 +65,9 @@ void* script_root() {
 
 namespace {
 // Где упал чужой код, когда это не натив: ставит fault_place на время вызова.
-thread_local void* g_fault_code        = nullptr;
+thread_local void*       g_fault_code  = nullptr;
 thread_local const char* g_fault_where = nullptr;
-}  // namespace
+} // namespace
 
 fault_place::fault_place(void* code, const char* where) : code_was_(g_fault_code), where_was_(g_fault_where) {
     g_fault_code  = code;
@@ -82,17 +82,18 @@ fault_place::~fault_place() {
 std::string module_of(const void* address) {
     HMODULE mod = nullptr;
     if (!address || !GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                                        static_cast<LPCWSTR>(address), &mod)) {
+                                        static_cast<LPCWSTR>(address),
+                                        &mod)) {
         return {};
     }
-    wchar_t path[MAX_PATH]{};
+    wchar_t     path[MAX_PATH]{};
     const DWORD n = GetModuleFileNameW(mod, path, MAX_PATH);
     if (n == 0) {
         return {};
     }
     const std::wstring file = std::filesystem::path{std::wstring(path, n)}.filename().wstring();
-    const int size = WideCharToMultiByte(CP_UTF8, 0, file.data(), static_cast<int>(file.size()), nullptr, 0, nullptr, nullptr);
-    std::string out(static_cast<std::size_t>(size > 0 ? size : 0), '\0');
+    const int          size = WideCharToMultiByte(CP_UTF8, 0, file.data(), static_cast<int>(file.size()), nullptr, 0, nullptr, nullptr);
+    std::string        out(static_cast<std::size_t>(size > 0 ? size : 0), '\0');
     WideCharToMultiByte(CP_UTF8, 0, file.data(), static_cast<int>(file.size()), out.data(), size, nullptr, nullptr);
     return out;
 }
@@ -120,13 +121,13 @@ void note_fault(void* impl, std::uint32_t code, const void* at, const char* what
     const char* owner = "?";
     const char* class_name = nullptr;
     const char* name = "?";
-    bool native = false;
+    bool        native     = false;
     for (const plugins::entry& e : registry()) {
         if (e.desc && e.desc->impl == impl) {
             owner = e.owner ? e.owner : "?";
             class_name = e.desc->class_name;
             name = e.desc->name;
-            native = true;
+            native     = true;
             break;
         }
     }

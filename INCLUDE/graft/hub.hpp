@@ -32,9 +32,12 @@ using clock = std::chrono::steady_clock;
 class closure {
 public:
     closure() = default;
+
     closure(void (*drop)(void*), void* ctx) : drop_(drop), ctx_(ctx) {}
+
     closure(closure&& other) noexcept
         : drop_(std::exchange(other.drop_, nullptr)), ctx_(std::exchange(other.ctx_, nullptr)) {}
+
     closure& operator=(closure&& other) noexcept {
         if (this != &other) {
             release();
@@ -43,11 +46,14 @@ public:
         }
         return *this;
     }
+
     closure(const closure&)            = delete;
     closure& operator=(const closure&) = delete;
+
     ~closure() { release(); }
 
     void* ctx() const { return ctx_; }
+
     void release();
 
 private:
@@ -74,12 +80,10 @@ public:
     // Своё задание хоста: без замыкания плагина.
     bool post_own(std::move_only_function<void()> fn, std::string_view where);
 
-    std::uint64_t subscribe(std::string_view topic, std::uint32_t size, void (*handler)(void*, const void*),
-                            void (*drop)(void*), void* ctx, std::string_view where);
-    void unsubscribe(std::uint64_t id);
-    bool publish(std::string_view topic, std::uint32_t size, const void* event, bool state);
-    std::uint64_t timer(std::chrono::milliseconds first, std::chrono::milliseconds every, void (*run)(void*),
-                        void (*drop)(void*), void* ctx, std::string_view where);
+    std::uint64_t subscribe(std::string_view topic, std::uint32_t size, void (*handler)(void*, const void*), void (*drop)(void*), void* ctx, std::string_view where);
+    void          unsubscribe(std::uint64_t id);
+    bool          publish(std::string_view topic, std::uint32_t size, const void* event, bool state);
+    std::uint64_t timer(std::chrono::milliseconds first, std::chrono::milliseconds every, void (*run)(void*), void (*drop)(void*), void* ctx, std::string_view where);
 
     // Кадр: сработавшие таймеры, затем очередь в пределах budget (хотя бы одно задание).
     void frame(clock::duration budget);
@@ -89,70 +93,72 @@ public:
 
 private:
     struct sub {
-        std::uint64_t id = 0;
+        std::uint64_t id                    = 0;
         void (*handler)(void*, const void*) = nullptr;
-        closure box;
+        closure     box;
         std::string where;
-        bool dead = false;
+        bool        dead = false;
     };
+
     struct topic {
         std::vector<std::unique_ptr<sub>> subs;
-        std::vector<std::byte> last;
-        bool has_last  = false;
-        int delivering = 0;
-        bool dirty     = false;
+        std::vector<std::byte>            last;
+        bool                              has_last   = false;
+        int                               delivering = 0;
+        bool                              dirty      = false;
     };
+
     struct timer_entry {
         clock::duration every{};
         void (*run)(void*) = nullptr;
-        closure box;
+        closure     box;
         std::string where;
     };
+
     struct task {
         std::move_only_function<void()> fn;
-        void* code = nullptr;  // чей код: по адресу хост называет DLL
-        std::string where;
+        void*                           code = nullptr; // чей код: по адресу хост называет DLL
+        std::string                     where;
     };
+
     struct text_hash {
         using is_transparent = void;
+
         std::size_t operator()(std::string_view s) const noexcept { return std::hash<std::string_view>{}(s); }
     };
 
-    bool size_fits(std::string_view topic, std::uint32_t size, std::string_view where);
+    bool   size_fits(std::string_view topic, std::uint32_t size, std::string_view where);
     topic& topic_of(std::string_view name);
-    void add(std::string_view topic, std::uint64_t id, void (*handler)(void*, const void*), closure box,
-             std::string where);
-    void remove(std::uint64_t id);
-    void publish_here(std::string_view name, const void* event, std::uint32_t size, bool state);
-    void deliver(topic& t, const void* event);
-    void deliver_last(std::uint64_t id);
-    void add_timer(std::uint64_t id, clock::duration first, clock::duration every, void (*run)(void*), closure box,
-                   std::string where);
-    void run_timers(clock::time_point now);
-    void drain(clock::duration budget);
-    void enqueue(task t);
+    void   add(std::string_view topic, std::uint64_t id, void (*handler)(void*, const void*), closure box, std::string where);
+    void   remove(std::uint64_t id);
+    void   publish_here(std::string_view name, const void* event, std::uint32_t size, bool state);
+    void   deliver(topic& t, const void* event);
+    void   deliver_last(std::uint64_t id);
+    void   add_timer(std::uint64_t id, clock::duration first, clock::duration every, void (*run)(void*), closure box, std::string where);
+    void   run_timers(clock::time_point now);
+    void   drain(clock::duration budget);
+    void   enqueue(task t);
     template <class F>
     void call(void* code, const std::string& where, F body) const;
 
-    now_fn now_;
+    now_fn                     now_;
     std::atomic<std::uint32_t> thread_{0};
     std::atomic<std::uint64_t> next_{1};
 
     mutable std::mutex queue_lock_;
-    std::deque<task> queue_;
+    std::deque<task>   queue_;
 
-    std::mutex sizes_lock_;
+    std::mutex                                                                                         sizes_lock_;
     std::unordered_map<std::string, std::pair<std::uint32_t, std::string>, text_hash, std::equal_to<>> sizes_;
 
     // Дальше — только поток скрипта.
     std::unordered_map<std::string, std::unique_ptr<topic>, text_hash, std::equal_to<>> topics_;
-    std::unordered_map<std::uint64_t, topic*> topic_of_sub_;
-    std::unordered_map<std::uint64_t, std::unique_ptr<timer_entry>> timers_;
-    std::priority_queue<std::pair<clock::time_point, std::uint64_t>, std::vector<std::pair<clock::time_point, std::uint64_t>>,
-                        std::greater<>>
-        due_;
-    std::uint64_t running_timer_ = 0;
-    bool running_cancelled_      = false;
+    std::unordered_map<std::uint64_t, topic*>                                           topic_of_sub_;
+    std::unordered_map<std::uint64_t, std::unique_ptr<timer_entry>>                     timers_;
+    std::priority_queue<std::pair<clock::time_point, std::uint64_t>, std::vector<std::pair<clock::time_point, std::uint64_t>>, std::greater<>>
+                  due_;
+    std::uint64_t running_timer_     = 0;
+    bool          running_cancelled_ = false;
 };
 
 // Хаб хоста: живёт до конца процесса (объекты движка умирают и после статиков).
@@ -176,4 +182,4 @@ void frame(float dt, std::uint64_t number);
 // Бюджет очереди за кадр: ключ -graftBudget=<мс>, по умолчанию 2 мс.
 clock::duration frame_budget();
 
-}  // namespace graft::events
+} // namespace graft::events

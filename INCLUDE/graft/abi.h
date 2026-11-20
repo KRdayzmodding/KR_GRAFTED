@@ -114,16 +114,14 @@ typedef struct graft_host_api {
     // уже известен (кадры идут); 0 — потока скрипта ещё нет: кадров не было.
     uint8_t (*on_script_thread)(void);
     // Подписка на тему. size — sizeof события: у другой стороны другой — отказ (0) и drop.
-    uint64_t (*subscribe)(const char* topic, uint32_t size, void (*handler)(void* ctx, const void* event),
-                          void (*drop)(void* ctx), void* ctx, const char* where);
+    uint64_t (*subscribe)(const char* topic, uint32_t size, void (*handler)(void* ctx, const void* event), void (*drop)(void* ctx), void* ctx, const char* where);
     // Снять подписку или таймер. Номера не повторяются; чужой номер — ничего.
     void (*unsubscribe)(uint64_t id);
     // С потока скрипта — подписчикам сразу, по порядку подписки; с другого — копия в очередь.
     // state — запомнить: подписчик, пришедший позже, получит его на ближайшем кадре.
     uint8_t (*publish)(const char* topic, uint32_t size, const void* event, uint8_t state);
     // run(ctx) через first_ms, дальше каждые every_ms (0 — один раз); снимается unsubscribe.
-    uint64_t (*add_timer)(uint32_t first_ms, uint32_t every_ms, void (*run)(void* ctx), void (*drop)(void* ctx),
-                          void* ctx, const char* where);
+    uint64_t (*add_timer)(uint32_t first_ms, uint32_t every_ms, void (*run)(void* ctx), void (*drop)(void* ctx), void* ctx, const char* where);
 } graft_host_api;
 
 // Один натив. POD-зеркало graft::native без указателя на следующий: строки живут в

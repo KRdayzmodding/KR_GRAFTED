@@ -10,8 +10,8 @@
 #include "graft/guard.hpp"
 #include "graft/hub.hpp"
 #include "graft/loader.hpp"
-#include "graft/stages.hpp"
 #include "graft/script.hpp"
+#include "graft/stages.hpp"
 
 // Кадр БЕЗ строки в скрипте.
 //

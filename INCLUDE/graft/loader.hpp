@@ -70,7 +70,7 @@ public:
     fault_place& operator=(const fault_place&) = delete;
 
 private:
-    void* code_was_;
+    void*       code_was_;
     const char* where_was_;
 };
 

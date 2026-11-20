@@ -108,7 +108,7 @@ void say_no_events() {
     }
 }
 
-}  // namespace
+} // namespace
 
 bool events_ready() {
     return g_host && g_host->size >= sizeof(graft_host_api);
@@ -131,8 +131,7 @@ bool post(void (*run)(void*), void (*drop)(void*), void* ctx, const char* where)
     return g_host->post(run, drop, ctx, where) != 0;
 }
 
-std::uint64_t subscribe(const char* topic, std::uint32_t size, void (*handler)(void*, const void*), void (*drop)(void*),
-                        void* ctx, const char* where) {
+std::uint64_t subscribe(const char* topic, std::uint32_t size, void (*handler)(void*, const void*), void (*drop)(void*), void* ctx, const char* where) {
     if (!events_ready()) {
         say_no_events();
         drop(ctx);
@@ -155,8 +154,7 @@ bool publish(const char* topic, std::uint32_t size, const void* event, bool stat
     return g_host->publish(topic, size, event, state ? 1u : 0u) != 0;
 }
 
-std::uint64_t add_timer(std::uint32_t first_ms, std::uint32_t every_ms, void (*run)(void*), void (*drop)(void*), void* ctx,
-                        const char* where) {
+std::uint64_t add_timer(std::uint32_t first_ms, std::uint32_t every_ms, void (*run)(void*), void (*drop)(void*), void* ctx, const char* where) {
     if (!events_ready()) {
         say_no_events();
         drop(ctx);
@@ -165,7 +163,7 @@ std::uint64_t add_timer(std::uint32_t first_ms, std::uint32_t every_ms, void (*r
     return g_host->add_timer(first_ms, every_ms, run, drop, ctx, where);
 }
 
-}  // namespace graft::detail
+} // namespace graft::detail
 
 namespace graft::script {
 

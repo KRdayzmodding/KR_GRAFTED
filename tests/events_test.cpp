@@ -27,33 +27,37 @@ using namespace std::chrono_literals;
 using graft::events::clock;
 
 clock::time_point fake_now{};
+
 clock::time_point now_for_tests() {
     return fake_now;
 }
 
 struct ping {
     static constexpr std::string_view name = "test.ping";
-    int n = 0;
+    int                               n    = 0;
 };
-struct ping_wide {  // то же имя, другой размер
+
+struct ping_wide { // то же имя, другой размер
     static constexpr std::string_view name = "test.ping";
-    double n = 0;
-    int k    = 0;
+    double                            n    = 0;
+    int                               k    = 0;
 };
+
 struct mood {
     static constexpr std::string_view name = "test.mood";
-    int v = 0;
+    int                               v    = 0;
 };
 
 class Events : public ::testing::Test {
 protected:
-    graft::events::hub hub{&now_for_tests};
+    graft::events::hub    hub{&now_for_tests};
     graft::events::scoped use{hub};
 
     void SetUp() override {
         fake_now = clock::time_point{} + 1h;
         hub.bind_here();
     }
+
     void frame(clock::duration budget = 1h) { hub.frame(budget); }
 };
 
@@ -65,8 +69,8 @@ std::string tid() {
 
 TEST_F(Events, PublishOnScriptThreadCallsSubscribersInOrder) {
     std::vector<std::string> seen;
-    auto a = graft::on<ping>([&](const ping& p) { seen.push_back(std::format("a{}", p.n)); });
-    auto b = graft::on<ping>([&](const ping& p) { seen.push_back(std::format("b{}", p.n)); });
+    auto                     a = graft::on<ping>([&](const ping& p) { seen.push_back(std::format("a{}", p.n)); });
+    auto                     b = graft::on<ping>([&](const ping& p) { seen.push_back(std::format("b{}", p.n)); });
     ASSERT_TRUE(a);
     ASSERT_TRUE(b);
     EXPECT_TRUE(graft::publish(ping{.n = 1}));
@@ -75,7 +79,7 @@ TEST_F(Events, PublishOnScriptThreadCallsSubscribersInOrder) {
 
 TEST_F(Events, PublishFromOtherThreadArrivesOnScriptThreadNextFrame) {
     std::vector<std::string> seen;
-    auto a = graft::on<ping>([&](const ping& p) { seen.push_back(std::format("{}@{}", p.n, tid())); });
+    auto                     a = graft::on<ping>([&](const ping& p) { seen.push_back(std::format("{}@{}", p.n, tid())); });
     std::thread([] { EXPECT_TRUE(graft::publish(ping{.n = 7})); }).join();
     EXPECT_TRUE(seen.empty());
     frame();
@@ -108,8 +112,8 @@ TEST_F(Events, ReleasedSubscriptionLivesOnAfterTheObject) {
 
 TEST_F(Events, UnsubscribeInsideOwnHandlerKeepsClosureAliveUntilReturn) {
     graft::subscription self;
-    int calls = 0;
-    self = graft::on<ping>([&, kept = std::string("замыкание")](const ping&) {
+    int                 calls = 0;
+    self                      = graft::on<ping>([&, kept = std::string("замыкание")](const ping&) {
         ++calls;
         self.reset();
         EXPECT_EQ(kept, "замыкание");
@@ -120,9 +124,9 @@ TEST_F(Events, UnsubscribeInsideOwnHandlerKeepsClosureAliveUntilReturn) {
 }
 
 TEST_F(Events, SubscriberAddedDuringDeliveryMissesCurrentEvent) {
-    std::vector<int> late_seen;
+    std::vector<int>    late_seen;
     graft::subscription late;
-    auto first = graft::on<ping>([&](const ping&) {
+    auto                first = graft::on<ping>([&](const ping&) {
         if (!late) {
             late = graft::on<ping>([&](const ping& p) { late_seen.push_back(p.n); });
         }
@@ -133,14 +137,14 @@ TEST_F(Events, SubscriberAddedDuringDeliveryMissesCurrentEvent) {
 }
 
 TEST_F(Events, SubscriptionIdsAreNeverReused) {
-    int b_calls = 0;
-    auto a      = graft::on<ping>([](const ping&) {});
-    auto b      = graft::on<ping>([&](const ping&) { ++b_calls; });
-    const auto b_id = b.id();
+    int        b_calls = 0;
+    auto       a       = graft::on<ping>([](const ping&) {});
+    auto       b       = graft::on<ping>([&](const ping&) { ++b_calls; });
+    const auto b_id    = b.id();
     a.reset();
     auto c = graft::on<ping>([](const ping&) {});
     EXPECT_NE(c.id(), b_id);
-    c.reset();  // снять свою, а не чужую
+    c.reset(); // снять свою, а не чужую
     graft::publish(ping{});
     EXPECT_EQ(b_calls, 1);
 }
@@ -148,8 +152,8 @@ TEST_F(Events, SubscriptionIdsAreNeverReused) {
 TEST_F(Events, StateReachesLateSubscriberOnNextFrame) {
     EXPECT_TRUE(graft::publish_state(mood{.v = 5}));
     std::vector<int> seen;
-    auto s = graft::on<mood>([&](const mood& m) { seen.push_back(m.v); });
-    EXPECT_TRUE(seen.empty());  // не внутри подписки: объект подписчика может быть недостроен
+    auto             s = graft::on<mood>([&](const mood& m) { seen.push_back(m.v); });
+    EXPECT_TRUE(seen.empty()); // не внутри подписки: объект подписчика может быть недостроен
     frame();
     EXPECT_EQ(seen, (std::vector<int>{5}));
     graft::publish_state(mood{.v = 6});
@@ -158,7 +162,7 @@ TEST_F(Events, StateReachesLateSubscriberOnNextFrame) {
 
 TEST_F(Events, LateSubscriberRemovedBeforeFrameGetsNoState) {
     graft::publish_state(mood{.v = 1});
-    int n  = 0;
+    int  n = 0;
     auto s = graft::on<mood>([&](const mood&) { ++n; });
     s.reset();
     frame();
@@ -166,7 +170,7 @@ TEST_F(Events, LateSubscriberRemovedBeforeFrameGetsNoState) {
 }
 
 TEST_F(Events, SizeMismatchIsRefused) {
-    int n  = 0;
+    int  n = 0;
     auto a = graft::on<ping>([&](const ping&) { ++n; });
     auto b = graft::on<ping_wide>([](const ping_wide&) {});
     EXPECT_TRUE(a);
@@ -178,9 +182,9 @@ TEST_F(Events, SizeMismatchIsRefused) {
 
 TEST_F(Events, ThrowingHandlerDoesNotStopOthers) {
     const auto faults_were = graft::loader::fault_count();
-    int n  = 0;
-    auto a = graft::on<ping>([](const ping&) { throw std::runtime_error("обработчик упал"); });
-    auto b = graft::on<ping>([&](const ping&) { ++n; });
+    int        n           = 0;
+    auto       a           = graft::on<ping>([](const ping&) { throw std::runtime_error("обработчик упал"); });
+    auto       b           = graft::on<ping>([&](const ping&) { ++n; });
     graft::publish(ping{});
     EXPECT_EQ(n, 1);
     EXPECT_EQ(graft::loader::fault_count(), faults_were + 1);
@@ -189,23 +193,23 @@ TEST_F(Events, ThrowingHandlerDoesNotStopOthers) {
 TEST_F(Events, HardwareFaultInHandlerIsCaughtAndOffThreadResetDoesNotHang) {
     const auto faults_were = graft::loader::fault_count();
     int* volatile nowhere  = nullptr;
-    auto a = graft::on<ping>([&](const ping&) { *nowhere = 1; });
+    auto a                 = graft::on<ping>([&](const ping&) { *nowhere = 1; });
     graft::publish(ping{});
     EXPECT_EQ(graft::loader::fault_count(), faults_were + 1);
-    std::thread([&] { a.reset(); }).join();  // busy снят __finally — ждать нечего
+    std::thread([&] { a.reset(); }).join(); // busy снят __finally — ждать нечего
     EXPECT_FALSE(a);
 }
 
 TEST_F(Events, ResetFromOtherThreadWaitsForRunningHandler) {
     std::atomic<int> stage{0};
-    auto s = graft::on<ping>([&](const ping&) {
+    auto             s                 = graft::on<ping>([&](const ping&) {
         stage.store(1);
         stage.notify_all();
         std::this_thread::sleep_for(50ms);
         stage.store(2);
     });
-    int stage_after_reset = -1;
-    std::thread other([&] {
+    int              stage_after_reset = -1;
+    std::thread      other([&] {
         stage.wait(0);
         s.reset();
         stage_after_reset = stage.load();
@@ -295,7 +299,7 @@ TEST_F(Events, FaultInTaskDoesNotStopTheQueue) {
 // ── Таймеры ──────────────────────────────────────────────────────────────────
 
 TEST_F(Events, AfterFiresOnceWhenDue) {
-    int n  = 0;
+    int  n = 0;
     auto t = graft::after(100ms, [&] { ++n; });
     ASSERT_TRUE(t);
     frame();
@@ -309,12 +313,12 @@ TEST_F(Events, AfterFiresOnceWhenDue) {
 }
 
 TEST_F(Events, EveryRepeatsWithoutCatchUpBurst) {
-    int n  = 0;
+    int  n = 0;
     auto t = graft::every(10ms, [&] { ++n; });
     fake_now += 10ms;
     frame();
     EXPECT_EQ(n, 1);
-    fake_now += 100ms;  // простой: десять сроков пропущено
+    fake_now += 100ms; // простой: десять сроков пропущено
     frame();
     EXPECT_EQ(n, 2);
     fake_now += 10ms;
@@ -323,7 +327,7 @@ TEST_F(Events, EveryRepeatsWithoutCatchUpBurst) {
 }
 
 TEST_F(Events, ResetTimerStopsIt) {
-    int n  = 0;
+    int  n = 0;
     auto t = graft::every(10ms, [&] { ++n; });
     t.reset();
     fake_now += 50ms;
@@ -332,7 +336,7 @@ TEST_F(Events, ResetTimerStopsIt) {
 }
 
 TEST_F(Events, TimerCancelledInsideItsCallback) {
-    int n = 0;
+    int                 n = 0;
     graft::subscription t;
     t = graft::every(10ms, [&] {
         ++n;
@@ -346,10 +350,10 @@ TEST_F(Events, TimerCancelledInsideItsCallback) {
 }
 
 TEST_F(Events, TimerStartedFromOtherThreadRunsOnScriptThread) {
-    std::string where;
+    std::string         where;
     graft::subscription t;
     std::thread([&] { t = graft::after(5ms, [&] { where = tid(); }); }).join();
-    frame();  // заявка таймера дошла
+    frame(); // заявка таймера дошла
     fake_now += 5ms;
     frame();
     EXPECT_EQ(where, tid());
@@ -362,7 +366,7 @@ TEST_F(Events, PrintFromOtherThreadWaitsForScriptThread) {
     std::thread([&] { said = graft::print("строка с чужого потока"); }).join();
     EXPECT_TRUE(said);
     EXPECT_EQ(hub.queued(), 1u);
-    frame();  // движка в тесте нет — строка уйдёт в системный журнал, но уже с потока скрипта
+    frame(); // движка в тесте нет — строка уйдёт в системный журнал, но уже с потока скрипта
     EXPECT_EQ(hub.queued(), 0u);
 }
 
@@ -370,8 +374,8 @@ TEST_F(Events, PrintFromOtherThreadWaitsForScriptThread) {
 
 TEST_F(Events, HostFramePublishesTickAndDrainsQueue) {
     std::vector<std::uint64_t> ticks;
-    auto s = graft::on<graft::tick>([&](const graft::tick& t) { ticks.push_back(t.number); });
-    int n = 0;
+    auto                       s = graft::on<graft::tick>([&](const graft::tick& t) { ticks.push_back(t.number); });
+    int                        n = 0;
     graft::post([&] { ++n; });
     graft::events::frame(0.016f, 41);
     EXPECT_EQ(ticks, (std::vector<std::uint64_t>{41}));
@@ -416,4 +420,4 @@ TEST(EventsAbi, NewHostApiExtendsTheOldLayout) {
     SUCCEED();
 }
 
-}  // namespace
+} // namespace
