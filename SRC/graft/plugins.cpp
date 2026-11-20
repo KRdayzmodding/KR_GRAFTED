@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <cstring>
 #include <format>
 #include <optional>
@@ -127,6 +128,13 @@ std::string profile_dir(std::string_view cmdline) {
         path.pop_back();
     }
     return path;
+}
+
+std::uint32_t frame_budget_ms(std::string_view cmdline) {
+    const std::string text = value_of(split_args(cmdline), "graftBudget").value_or("");
+    std::uint32_t     ms   = 0;
+    const auto [end, oops] = std::from_chars(text.data(), text.data() + text.size(), ms);
+    return oops == std::errc{} && end == text.data() + text.size() && !text.empty() ? ms : 2u;
 }
 
 std::string_view profile_folder(std::uint32_t app_id) {

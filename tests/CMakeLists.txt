@@ -62,6 +62,13 @@ FetchContent_Declare(googletest
 # проект собирается со статическим CRT (см. CMAKE_MSVC_RUNTIME_LIBRARY) — gtest тоже
 set(gtest_force_shared_crt OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
+# gtest под Clang 21+ с /WX: char8_t → char32_t в gtest-printers.h (-Wcharacter-conversion) — чужой код; старый Clang
+# этого ключа не знает, отсюда и -Wno-unknown-warning-option.
+foreach(t gtest gtest_main gmock gmock_main)
+    if(TARGET ${t})
+        target_compile_options(${t} PUBLIC $<$<CXX_COMPILER_ID:Clang>:-Wno-unknown-warning-option -Wno-character-conversion>)
+    endif()
+endforeach()
 
 add_executable(graft_tests
     plugins/ping.cpp
@@ -90,6 +97,7 @@ add_executable(graft_tests
     callout_test.cpp
     enfparse_test.cpp
     runtime_test.cpp
+    events_test.cpp
 )
 # graft::hook — ради hook_test: врезка проверяется на своей же функции, без игры.
 target_link_libraries(graft_tests PRIVATE graft::host graft::gen graft::hook GTest::gtest_main)

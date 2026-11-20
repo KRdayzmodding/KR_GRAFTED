@@ -43,6 +43,7 @@ void mark(const char* what);
 // Список обработчиков держит хост, а не каждый плагин: скриптовый натив GraftTick один
 // на процесс, и веером по плагинам должен расходиться он.
 void add_tick(void (*fn)(float));
+// Каждый тик — под своей ловушкой: упавший не отменяет тики остальных плагинов в этом кадре.
 void run_ticks(float dt);
 std::size_t tick_count();
 
@@ -58,6 +59,23 @@ void* script_root();
 void note_fault(void* impl, std::uint32_t code, const void* at, const char* what);
 std::size_t fault_count();
 std::string last_fault();
+
+// Сбой не в нативе (тик, обработчик события, задание): нативов с таким адресом в реестре нет,
+// и журнал назовёт DLL по адресу кода и место по where. Держится, пока жив объект.
+class fault_place {
+public:
+    fault_place(void* code, const char* where);
+    ~fault_place();
+    fault_place(const fault_place&)            = delete;
+    fault_place& operator=(const fault_place&) = delete;
+
+private:
+    void*       code_was_;
+    const char* where_was_;
+};
+
+// Имя DLL (или exe), в которой лежит адрес: «QS_CORE.grafted.dll». Пусто — не нашлось.
+std::string module_of(const void* address);
 
 // Хранилище результата — им наполняет load(). Отдельно от загрузки, чтобы класс Graft
 // линковался и в инструмент, где загрузчика нет (см. loader_state.cpp).

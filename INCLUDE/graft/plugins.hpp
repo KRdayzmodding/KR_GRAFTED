@@ -27,6 +27,10 @@ std::vector<std::string> mod_dirs(std::string_view cmdline);
 // нет, тогда профиль — %LOCALAPPDATA%\<profile_folder>. Хвостовой разделитель снят.
 std::string profile_dir(std::string_view cmdline);
 
+// Бюджет очереди событий за кадр, мс: ключ -graftBudget=<мс> (или следующим аргументом).
+// Нет ключа или не число — 2.
+std::uint32_t frame_budget_ms(std::string_view cmdline);
+
 // Имя папки профиля по умолчанию в %LOCALAPPDATA% по номеру приложения Steam: "DayZ",
 // у экспериментальной ветки "DayZ Exp", у внутренней "DayZ Int".
 std::string_view profile_folder(std::uint32_t app_id);

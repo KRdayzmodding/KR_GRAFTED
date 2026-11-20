@@ -11,6 +11,8 @@
 
 #include "graft/callout.hpp"
 #include "graft/engine.hpp"
+#include "graft/events.hpp"
+#include "graft/hub.hpp"
 #include "graft/script.hpp"
 #include "graft/types.hpp"
 
@@ -166,8 +168,23 @@ void reach(step at) {
         return;
     }
     // Лестница монотонная: перескакивать ступени можно, возвращаться — нет.
-    g_at = at;
+    const step was = g_at;
+    g_at           = at;
     log(std::format("stage: {}", name_of(at)));
+    // Плагинам 0.6 — событиями-состояниями: опоздавший получит их на ближайшем кадре. Перескок
+    // ступени не теряет её: linked публикуется и тогда, когда пришли сразу в running.
+    const auto passed = [was, at](step s) {
+        return static_cast<std::uint8_t>(was) < static_cast<std::uint8_t>(s) &&
+               static_cast<std::uint8_t>(at) >= static_cast<std::uint8_t>(s);
+    };
+    if (passed(step::linked)) {
+        const graft::linked ev{};
+        events::active().publish(graft::linked::name, sizeof ev, &ev, true);
+    }
+    if (passed(step::running)) {
+        const graft::running ev{};
+        events::active().publish(graft::running::name, sizeof ev, &ev, true);
+    }
     // Копия списка: подписчик вправе подписаться на следующий этап прямо отсюда.
     const std::vector<waiter> now = waiters();
     for (const waiter& w : now) {

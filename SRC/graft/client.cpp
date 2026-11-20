@@ -13,13 +13,16 @@
 // либо один раз на пару <класс, метод> (вызывающая сторона мемоизирует), либо на пути
 // ошибки. Появится здесь что-то с горячего пути — плагин потеряет в скорости ровно на
 // переход через таблицу импорта, и вентиль Perf_HotPathBudget это увидит.
+#include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "graft/abi.h"
 #include "graft/engine.hpp"
+#include "graft/events.hpp"
 #include "graft/native.hpp"
 #include "graft/script.hpp"
 
@@ -89,6 +92,78 @@ bool error(std::string_view line) {
 }
 
 }  // namespace graft
+
+// ── События (graft/events.hpp): поля хоста «С 0.6» ───────────────────────────
+// Хост старше 0.6 этих полей не имеет — size короче. Тогда событий нет: замыкание
+// отпускаем сами (контракт: неудача — drop уже позван), а хосту одной строкой говорим почему.
+namespace graft::detail {
+namespace {
+
+void say_no_events() {
+    static std::atomic<bool> said{false};
+    if (g_host && !said.exchange(true)) {
+        g_host->log((std::string{"! "} + (graft_plugin_name_ ? graft_plugin_name_ : "plugin") +
+                     ": хост старше graft 0.6 — событий, post и таймеров нет; обновите graft")
+                        .c_str());
+    }
+}
+
+} // namespace
+
+bool events_ready() {
+    return g_host && g_host->size >= sizeof(graft_host_api);
+}
+
+bool on_script_thread() {
+    return events_ready() && g_host->on_script_thread() == 1;
+}
+
+bool script_thread_known() {
+    return events_ready() && g_host->on_script_thread() != 0;
+}
+
+bool post(void (*run)(void*), void (*drop)(void*), void* ctx, const char* where) {
+    if (!events_ready()) {
+        say_no_events();
+        drop(ctx);
+        return false;
+    }
+    return g_host->post(run, drop, ctx, where) != 0;
+}
+
+std::uint64_t subscribe(const char* topic, std::uint32_t size, void (*handler)(void*, const void*), void (*drop)(void*), void* ctx, const char* where) {
+    if (!events_ready()) {
+        say_no_events();
+        drop(ctx);
+        return 0;
+    }
+    return g_host->subscribe(topic, size, handler, drop, ctx, where);
+}
+
+void unsubscribe(std::uint64_t id) {
+    if (events_ready()) {
+        g_host->unsubscribe(id);
+    }
+}
+
+bool publish(const char* topic, std::uint32_t size, const void* event, bool state) {
+    if (!events_ready()) {
+        say_no_events();
+        return false;
+    }
+    return g_host->publish(topic, size, event, state ? 1u : 0u) != 0;
+}
+
+std::uint64_t add_timer(std::uint32_t first_ms, std::uint32_t every_ms, void (*run)(void*), void (*drop)(void*), void* ctx, const char* where) {
+    if (!events_ready()) {
+        say_no_events();
+        drop(ctx);
+        return 0;
+    }
+    return g_host->add_timer(first_ms, every_ms, run, drop, ctx, where);
+}
+
+} // namespace graft::detail
 
 namespace graft::script {
 
@@ -274,7 +349,9 @@ extern "C" __declspec(dllexport) uint32_t __cdecl graft_plugin_entry(const graft
     // host == nullptr — это генератор объявлений в обычном процессе: движка нет,
     // сервисы не понадобятся, заполняем только описание.
     if (host) {
-        if (host->size < sizeof(graft_host_api) || host->abi != GRAFT_ABI_VERSION) {
+        // Хост 0.5 (ABI тот же, без полей «С 0.6») — годится: события тогда недоступны
+        // (detail::events_ready). Короче 0.5 — хост не наш.
+        if (host->size < offsetof(graft_host_api, post) || host->abi != GRAFT_ABI_VERSION) {
             return GRAFT_ERR_ABI;
         }
         if (host->layout != GRAFT_LAYOUT_VERSION) {
