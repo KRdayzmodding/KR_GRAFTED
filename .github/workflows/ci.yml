@@ -67,6 +67,14 @@ jobs:
       # CMake 3.30+ и Ninja одним действием: полагаться на то, что есть в образе, дороже.
       - uses: lukka/get-cmake@latest
 
+      # STL образа (MSVC 14.52 и новее) требует Clang 22+, а LLVM образа отстаёт: «STL1000: expected Clang 22 or newer».
+      - name: LLVM не старше STL образа
+        shell: pwsh
+        run: |
+          choco upgrade llvm -y --no-progress
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & "C:/Program Files/LLVM/bin/clang-cl.exe" --version
+
       # Правило уровня проекта: зашитых адресов движка в коде быть не должно — они
       # уезжают на первом же патче игры. Проверка дешёвая, поэтому стоит до сборки.
       - name: Зашитых адресов нет
@@ -108,6 +116,14 @@ jobs:
           arch: x64
 
       - uses: lukka/get-cmake@latest
+
+      # STL образа (MSVC 14.52 и новее) требует Clang 22+, а LLVM образа отстаёт: «STL1000: expected Clang 22 or newer».
+      - name: LLVM не старше STL образа
+        shell: pwsh
+        run: |
+          choco upgrade llvm -y --no-progress
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & "C:/Program Files/LLVM/bin/clang-cl.exe" --version
 
       # gtest тянется FetchContent'ом по тегу — качать его каждый раз незачем.
       - uses: actions/cache@v6
