@@ -74,7 +74,7 @@ private:
     const char* where_was_;
 };
 
-// Имя DLL (или exe), в которой лежит адрес: «QS_CORE.grafted.dll». Пусто — не нашлось.
+// Имя DLL (или exe), в которой лежит адрес: «MYMOD.grafted.dll». Пусто — не нашлось.
 std::string module_of(const void* address);
 
 // Хранилище результата — им наполняет load(). Отдельно от загрузки, чтобы класс Graft

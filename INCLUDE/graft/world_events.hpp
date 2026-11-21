@@ -21,7 +21,7 @@ inline constexpr std::chrono::milliseconds mission_every{250};
 inline constexpr std::chrono::milliseconds players_every{1000};
 
 // Что знает движок. В игре — engine_probe(), в тестах — подделка. Ник — только вошедшим: раз в секунду
-// спрашивать имена всех 127 незачем.
+// спрашивать имена всех незачем.
 struct probe {
     std::move_only_function<std::optional<std::string>()>              mission; // имя мира, когда миссия есть
     std::move_only_function<std::optional<std::vector<std::string>>()> players; // uid; пусто — игры ещё нет
