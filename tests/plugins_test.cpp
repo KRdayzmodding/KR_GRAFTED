@@ -54,8 +54,8 @@ TEST(ModDirs, HandlesQuotedListWithSpaces) {
 // тогда не находил ни одного мода, а клиент с плагином в `!Workshop` оставался без журнала.
 TEST(ModDirs, HandlesTheWholeArgumentInQuotes) {
     const auto got = graft::plugins::mod_dirs(
-        R"(DayZ_x64.exe -name=me "-mod=F:\DayZ\!Workshop\@@[KR] 404;F:\DayZ\!Workshop\@CF" -port=1)");
-    EXPECT_EQ(got, (std::vector<std::string>{R"(F:\DayZ\!Workshop\@@[KR] 404)", R"(F:\DayZ\!Workshop\@CF)"}));
+        R"(DayZ_x64.exe -name=me "-mod=F:\DayZ\!Workshop\@@[My] Mod;F:\DayZ\!Workshop\@CF" -port=1)");
+    EXPECT_EQ(got, (std::vector<std::string>{R"(F:\DayZ\!Workshop\@@[My] Mod)", R"(F:\DayZ\!Workshop\@CF)"}));
 }
 
 TEST(ModDirs, SkipsEmptyEntriesAndDuplicates) {
